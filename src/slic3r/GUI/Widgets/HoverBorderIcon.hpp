@@ -19,8 +19,9 @@ public:
     void msw_rescale();
     void set_force_paint(bool force_paint) { m_force_paint = force_paint; }
     void setEnable(bool enable);
-    void setDisableIcon(const wxString& disableIconName);
+    void setDisableIcon(const wxString& disableIconName, int px_cnt = 18);
 
+    void SetIconScaleFactor(double factor);
 protected:
     void paintEvent(wxPaintEvent& evt);
 
@@ -42,6 +43,8 @@ protected:
     bool m_force_paint;
     bool           m_bSetEnable = true;
     ScalableBitmap m_bmpDiableIcon;
+    double         m_icon_size_or_scale = 13.0;
+    double         m_icon_rel_scale     = 0.6; // default: 75% of min DIP size
 
 
     wxDECLARE_EVENT_TABLE();

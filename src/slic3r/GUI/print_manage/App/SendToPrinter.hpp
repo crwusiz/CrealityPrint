@@ -84,6 +84,8 @@ private:
     double get_gcode_total_weight();
     void get_gcode_display_info(wxString& total_weight_str, wxString& print_time, Slic3r::GUI::PartPlate* plate);
     void get_filament_length_info(std::vector<int> plate_extruders, Slic3r::GUI::PartPlate* plate, nlohmann::json& jsonArray);
+    void get_temperature_info(std::vector<int> plate_extruders, Slic3r::GUI::PartPlate* plate,  nlohmann::json& json_data);
+    void get_gcode_temperature_info(Slic3r::GUI::PartPlate* plate,  nlohmann::json& json_data);
     void notify_update_plate_thumbnail_data(const nlohmann::json& json_data);
     void post_notify_event(const std::vector<int>& plate_extruders, const std::vector<std::string>& extruder_match_colors, bool bUpdateSelf=true);
     void restore_extruder_colors();

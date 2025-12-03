@@ -13,7 +13,11 @@ void MQTTClient::ActionCallback::connection_lost(const std::string& cause) {
 
 void MQTTClient::ActionCallback::message_arrived(mqtt::const_message_ptr msg) {
     std::string topic = msg->get_topic();
-    std::string payload = msg->to_string();
+    // Preserve the raw bytes from the payload; some messages are not UTF-8 encoded.
+    const auto& payload_ref = msg->get_payload_ref();
+    std::string payload;
+    if (!payload_ref.empty())
+        payload.assign(payload_ref.data(), payload_ref.size());
     
     // 查找对应的回调函数
     auto it = client_.topic_callbacks_.find(topic);

@@ -330,55 +330,47 @@ AboutDialog::AboutDialog()
     wxBoxSizer *info_sizer  = new wxBoxSizer(wxHORIZONTAL);
 
     info_sizer->AddSpacer(FromDIP(15));
-    wxStaticText *website_text = new wxStaticText(this, wxID_ANY, _L("aboutusdialog_webside"), wxDefaultPosition, wxDefaultSize);
+    wxStaticText *website_text = new wxStaticText(this, wxID_ANY, _L("aboutusdialog_webside") + " ", wxDefaultPosition, wxDefaultSize);
     website_text->SetBackgroundColour(font_bg);
     info_sizer->Add(website_text, 0, wxALL | wxALIGN_LEFT , 0);
-    m_website_html = new wxHtmlWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHW_SCROLLBAR_NEVER /*NEVER*/);
+    m_website_html = new wxStaticText(this, wxID_ANY, "");
     {
-          wxFont font = get_default_font(this);
-          const int fs = font.GetPointSize()-1;
-          int size[] = {fs,fs,fs,fs,fs,fs,fs};
-          m_website_html->SetFonts(font.GetFaceName(), font.GetFaceName(), size);
-          m_website_html->SetMinSize(wxSize(FromDIP(-1), FromDIP(16)));
-          m_website_html->SetBorders(2);
-          wxString website_url = _L("offical_webside");
-          const auto text = from_u8(
-              (boost::format(
-              "<html>"
-              "<body>"
-              "<p style=\"text-align:left\"><a  href=\"%1%\">%1%</ a></p>"
-              "</body>"
-              "</html>")
-            % website_url).str());
-          m_website_html->SetPage(text);
+         bool is_dark = Slic3r::GUI::wxGetApp().dark_mode();
+         wxColour color = is_dark ? wxColor("#4287FF") : wxColour("#387DFF");
+         wxString website_url = _L("offical_webside");
+
+          //m_website_html->SetBackgroundColour(wxColour(1, 200, 200));
+          m_website_html->SetForegroundColour(color);
+          m_website_html->SetLabel(website_url);
+          m_website_html->SetCursor(wxCURSOR_HAND);
+          m_website_html->Bind(wxEVT_LEFT_DOWN, [this, website_url](wxMouseEvent&) {
+              wxGetApp().open_browser_with_warning_dialog(website_url);
+              });
           info_sizer->Add(m_website_html, 1, wxALL | wxALIGN_LEFT, 0);
           m_website_html->Bind(wxEVT_HTML_LINK_CLICKED, &AboutDialog::onLinkClicked, this);
       }
 
     info_sizer->AddSpacer(FromDIP(5));
-    wxStaticText *email_text = new wxStaticText(this, wxID_ANY, _L("aboutusdialog_email"), wxDefaultPosition, wxDefaultSize);
+    wxStaticText *email_text = new wxStaticText(this, wxID_ANY, _L("aboutusdialog_email") + " ", wxDefaultPosition, wxDefaultSize);
     email_text->SetBackgroundColour(font_bg);
     info_sizer->Add(email_text, 0, wxLEFT | wxALIGN_LEFT , 0);
     info_sizer->AddSpacer(FromDIP(5));
-    m_email_html = new wxHtmlWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHW_SCROLLBAR_NEVER /*NEVER*/);
+    m_email_html = new wxStaticText(this, wxID_ANY,"");
     {
-          wxFont font = get_default_font(this);
-          const int fs = font.GetPointSize()-1;
-          int size[] = {fs,fs,fs,fs,fs,fs,fs};
-          m_email_html->SetFonts(font.GetFaceName(), font.GetFaceName(), size);
-          m_email_html->SetMinSize(wxSize(FromDIP(-1), FromDIP(16)));
-          m_email_html->SetBorders(2);
           wxString email_url = _L("offical_email");
-          const auto text = from_u8(
-              (boost::format(
-              "<html>"
-              "<body>"
-              "<p style=\"text-align:left\"><a  href=\"%1%\">%1%</ a></p>"
-              "</body>"
-              "</html>")
-            % email_url).str());
-          m_email_html->SetPage(text);
-          info_sizer->Add(m_email_html, 1, wxLEFT |wxALIGN_LEFT, 0);
+          bool is_dark = Slic3r::GUI::wxGetApp().dark_mode();
+          wxColour color = is_dark ? wxColor("#4287FF") : wxColour("#387DFF");
+          wxString website_url = _L("offical_webside");
+
+          //m_email_html->SetMinSize(wxSize(FromDIP(-1), FromDIP(16)));
+          //m_email_html->SetBackgroundColour(wxColour(122, 122, 122));
+          m_email_html->SetForegroundColour(color);
+          m_email_html->SetLabel(email_url);
+          m_email_html->SetCursor(wxCURSOR_HAND);
+          m_email_html->Bind(wxEVT_LEFT_DOWN, [this, website_url](wxMouseEvent&) {
+              wxGetApp().open_browser_with_warning_dialog(website_url);
+              });
+          info_sizer->Add(m_email_html, 1, wxALL | wxALIGN_LEFT, 0);
           m_email_html->Bind(wxEVT_HTML_LINK_CLICKED, &AboutDialog::onLinkClicked, this);
       }
 
@@ -452,8 +444,8 @@ void AboutDialog::on_dpi_changed(const wxRect &suggested_rect)
     const wxFont& font = GetFont();
     const int fs = font.GetPointSize() - 1;
     int font_size[] = { fs, fs, fs, fs, fs, fs, fs };
-    m_website_html->SetFonts(font.GetFaceName(), font.GetFaceName(), font_size);
-    m_email_html->SetFonts(font.GetFaceName(), font.GetFaceName(), font_size);
+    //m_website_html->SetFonts(font.GetFaceName(), font.GetFaceName(), font_size);
+    //m_email_html->SetFonts(font.GetFaceName(), font.GetFaceName(), font_size);
 
     const int& em = em_unit();
 

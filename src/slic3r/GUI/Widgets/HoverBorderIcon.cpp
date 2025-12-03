@@ -43,8 +43,18 @@ void HoverBorderIcon::Create(wxWindow* parent, const wxString& text, const wxStr
 #endif // !__APPLE__
 
     state_handler.update_binds();
+    //int m_icon_px_cnt_DIP = 24;
+    int dip_w = ToDIP(size.GetWidth());
+    int dip_h = ToDIP(size.GetHeight());
+    int dip_min = std::min(dip_w, dip_h);
+    if (dip_min > 0) {
+        m_icon_size_or_scale = std::max(1, (int)std::lround(dip_min * m_icon_rel_scale));
+    } else {
+        m_icon_size_or_scale = 20;
+    }
+
     if (!icon.IsEmpty()) {
-        this->m_icon = ScalableBitmap(this, icon.ToStdString(), 13);
+        this->m_icon = ScalableBitmap(this, icon.ToStdString(), m_icon_size_or_scale);
     }
 }
 
@@ -64,7 +74,27 @@ void HoverBorderIcon::SetIcon(const wxString& icon)
 {
     if (this->m_icon.name() == icon.ToStdString())
         return;
-    this->m_icon = ScalableBitmap(this, icon.ToStdString(), FromDIP(14));
+    this->m_icon = ScalableBitmap(this, icon.ToStdString(), m_icon_size_or_scale);
+}
+
+void HoverBorderIcon::SetIconScaleFactor(double factor)
+{
+    // Basic clamp to avoid degenerate values
+    if (factor <= 0.0)
+        factor = 0.1;
+    m_icon_rel_scale = factor;
+
+    int dip_w  = ToDIP(GetSize().GetWidth());
+    int dip_h  = ToDIP(GetSize().GetHeight());
+    int dip_min = std::min(dip_w, dip_h);
+    if (dip_min > 0) {
+        m_icon_size_or_scale = std::max(1, (int)std::lround(dip_min * m_icon_rel_scale));
+    }
+
+    if (!m_icon.name().empty()) {
+        this->m_icon = ScalableBitmap(this, m_icon.name(), m_icon_size_or_scale);
+        Refresh();
+    }
 }
 
 void HoverBorderIcon::on_sys_color_changed(bool is_dark_mode)
@@ -96,9 +126,9 @@ void HoverBorderIcon::setEnable(bool enable)
     Refresh();
 }
 
-void HoverBorderIcon::setDisableIcon(const wxString& disableIconName)
+void HoverBorderIcon::setDisableIcon(const wxString& disableIconName, int px_cnt/* = 18*/)
 {
-    m_bmpDiableIcon = ScalableBitmap(this, disableIconName.ToStdString(), FromDIP(18));
+    m_bmpDiableIcon = ScalableBitmap(this, disableIconName.ToStdString(), FromDIP(px_cnt));
 }
 
 void HoverBorderIcon::OnMouseMove(wxMouseEvent& event)
@@ -220,7 +250,8 @@ void ImgBtn::Create(wxWindow* parent, const wxString& text, const wxString& icon
 
     state_handler.update_binds();
     if (!icon.IsEmpty()) {
-        int emUnit   = Slic3r::GUI::wxGetApp().em_unit();
-        this->m_icon = ScalableBitmap(this, icon.ToStdString(), FromDIP(91) * (10.0f / emUnit));
+        int emUnit = Slic3r::GUI::wxGetApp().em_unit();
+        m_icon_size_or_scale = FromDIP(91) * (10.0f / emUnit);
+        this->m_icon = ScalableBitmap(this, icon.ToStdString(), m_icon_size_or_scale);
     }
 }

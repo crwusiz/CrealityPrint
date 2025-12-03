@@ -30,6 +30,9 @@
 #include <mutex>
 #include <stack>
 #include "ModelDownloader.h"
+#if AUTO_CONVERT_3MF
+#include "AutoConvert3mfMgr.hpp"
+#endif
 
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
@@ -203,6 +206,10 @@ public:
         GCodeViewer
     };
 
+#if AUTO_CONVERT_3MF
+    AutoConvert3mfMgr auto_convert_3mf_mgr;
+#endif
+
 private:
     bool            m_initialized { false };
     bool            m_post_initialized { false };
@@ -314,6 +321,7 @@ private:
     bool            isAlpha();
     bool            isDevelopParams(const std::string key);
 	std::string     getDevelopParamsType(const std::string key);
+    const std::map<std::string, std::string> getUserKeys();
     void            check_filaments_in_blacklist(std::string tag_supplier, std::string tag_material, bool& in_blacklist, std::string& action, std::string& info);
     std::string     get_local_models_path();
     bool            OnInit() override;
@@ -449,6 +457,8 @@ private:
     void            recreate_GUI(const wxString& message);
     void            system_info();
     void            keyboard_shortcuts();
+    // Creality:in purpose of skipping confirmation about unsaved preset when loading project
+    bool            discard_all_current_preset_changes();
     void            load_project(wxWindow *parent, wxString& input_file) const;
     void            import_model(wxWindow *parent, wxArrayString& input_files, bool Category_or_not = false) const;
     void            import_zip(wxWindow* parent, wxString& input_file) const;
@@ -753,6 +763,9 @@ private:
     int             updating_bambu_networking();
     bool            on_init_inner(bool isdump_launcher = false);
     void            parse_args();
+#if AUTO_CONVERT_3MF
+    void parse_convert_3mf_args();
+#endif
     void            on_init_custom_config();
     void            copy_network_if_available();
     bool            on_init_network(bool try_backup = false);
@@ -806,6 +819,11 @@ private:
 DECLARE_APP(GUI_App)
 wxDECLARE_EVENT(EVT_CONNECT_LAN_MODE_PRINT, wxCommandEvent);
 wxDECLARE_EVENT(EVT_TEST_HELPER_CMD, wxCommandEvent);
+
+#if AUTO_CONVERT_3MF
+wxDECLARE_EVENT(EVT_SLICE_ALL_PLATE_FINISHED, wxCommandEvent);
+wxDECLARE_EVENT(EVT_ARRANGE_PLATE_FINISHED, wxCommandEvent);
+#endif
 
 bool is_support_filament(int extruder_id);
 } // namespace GUI

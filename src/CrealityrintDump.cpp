@@ -4,8 +4,14 @@
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/BBLStatusBar.hpp"
 #include "libslic3r_version.h"
+#include "libslic3r/Platform.hpp"
 #include "nlohmann/json.hpp"
 #include "miniz/miniz.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#include <winternl.h>
+#endif
 // 自定义对话框类
 
 
@@ -149,6 +155,30 @@ wxString ErrorReportDialog::getSystemInfo()
         return std::string(buffer_utf8.data());
     };
 
+    // 获取系统架构信息的函数
+    auto get_system_architecture = []() -> std::string {
+        Slic3r::PlatformFlavor flavor = Slic3r::platform_flavor();
+        switch (flavor) {
+            case Slic3r::PlatformFlavor::OSXOnX86:
+                return "x86_64";
+            case Slic3r::PlatformFlavor::OSXOnArm:
+                return "arm64";
+            default:
+                // 对于其他平台，使用编译时检测
+#if defined(__x86_64__) || defined(_M_X64) || defined(__amd64)
+                return "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+                return "arm64";
+#elif defined(__i386__) || defined(_M_IX86)
+                return "x86";
+#elif defined(__arm__)
+                return "arm";
+#else
+                return "unknown";
+#endif
+        }
+    };
+
     nlohmann::json j;
     j["osDescription"]      = m_info.osDescription.ToStdString();
     j["graphicsCardVendor"] = m_info.graphicsCardVendor.ToStdString();
@@ -156,7 +186,8 @@ wxString ErrorReportDialog::getSystemInfo()
     j["build"]              = m_info.build.ToStdString();
     j["uuid"]               = m_info.uuid.ToStdString();
     j["uuid"]               = m_info.uuid.ToStdString();
-    j["userEmail"]              = intoU8(m_InfoInput->GetTextCtrl()->GetValue()); // m_InfoInput->GetTextCtrl()->GetValue().ToStdString();
+    j["userEmail"]          = intoU8(m_InfoInput->GetTextCtrl()->GetValue()); // m_InfoInput->GetTextCtrl()->GetValue().ToStdString();
+    j["systemArchitecture"] = get_system_architecture();
     try {
         // 获取临时目录路径
         std::filesystem::path tempDir(wxFileName::GetTempDir().ToStdString());
@@ -400,6 +431,36 @@ void ErrorReportDialog::GetErrorReport()
     {
         // 获取错误报告
         wxString osDescription = wxGetOsDescription();
+        
+        // 改进的Windows 11检测逻辑
+        #ifdef _WIN32
+        // 检查是否为Windows 11
+        OSVERSIONINFOEXW osvi = {};
+        osvi.dwOSVersionInfoSize = sizeof(osvi);
+        
+        // 使用RtlGetVersion获取真实版本信息
+        typedef NTSTATUS(WINAPI* RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+        HMODULE hMod = GetModuleHandleW(L"ntdll.dll");
+        if (hMod) {
+            RtlGetVersionPtr fxPtr = (RtlGetVersionPtr)GetProcAddress(hMod, "RtlGetVersion");
+            if (fxPtr != nullptr) {
+                RTL_OSVERSIONINFOW rovi = {};
+                rovi.dwOSVersionInfoSize = sizeof(rovi);
+                if (fxPtr(&rovi) == 0) {
+                    // Windows 11的判断条件：版本10.0且构建号>=22000
+                    if (rovi.dwMajorVersion == 10 && rovi.dwMinorVersion == 0 && rovi.dwBuildNumber >= 22000) {
+                        // 替换操作系统描述中的"Windows 10"为"Windows 11"
+                        osDescription.Replace("Windows 10", "Windows 11");
+                        // 如果没有找到"Windows 10"，但确实是Windows 11，则添加构建号信息
+                        if (!osDescription.Contains("Windows 11")) {
+                            osDescription += wxString::Format(" (Build %lu - Windows 11)", rovi.dwBuildNumber);
+                        }
+                    }
+                }
+            }
+        }
+        #endif
+        
         m_info.osDescription   = osDescription;
         m_info.build           = wxString(CREALITYPRINT_VERSION, wxConvUTF8);
         m_info.uuid = Slic3r::GUI::wxGetApp().app_config->get("language") + wxDateTime::Now().Format("%Y%m%d%H%M%S") +

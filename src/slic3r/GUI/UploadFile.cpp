@@ -253,7 +253,7 @@ vector<AlibabaCloud::OSS::Part> UploadFile::uploadParts(AlibabaCloud::OSS::OssCl
                        const string& filePath,
                        Slic3r::GUI::ProgressCallback callback) {
     vector<AlibabaCloud::OSS::Part> partList;
-    ifstream file(filePath, ios::binary | ios::ate);
+    boost::nowide::ifstream file(filePath, ios::binary | ios::ate);
     
     if (!file.is_open()) {
         throw ErrorCodeException("uploadParts",1001,"Failed to open file: " + filePath);

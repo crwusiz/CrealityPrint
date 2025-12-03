@@ -11,6 +11,8 @@ set(AUTOMATION_TOOL OFF)
 #    set(AUTOMATION_TOOL ON)
 #endif()
 
+set(AUTO_CONVERT_3MF OFF)
+
 message("aaaa SLIC3R_APP_NAME=${SLIC3R_APP_NAME}")
 if(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/libslic3r_version.h")
     if(GENERATE_ORCA_HEADER)

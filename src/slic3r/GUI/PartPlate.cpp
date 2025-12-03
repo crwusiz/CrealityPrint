@@ -5136,12 +5136,12 @@ bool PartPlateList::is_are_the_slice_results_ready_to_export() const
 //check whether all plates ready for slice
 bool PartPlateList::is_all_plates_ready_for_slice() const
 {
-    for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
-	{
-		if (m_plate_list[i]->can_slice())
-			return true;
-	}
-	return false;
+    for (const auto& plate : m_plate_list) {
+        if (!plate->can_slice()) {
+            return false;
+        }
+    }
+    return !m_plate_list.empty();
 }
 
 //will create a plate and load gcode, return the plate index

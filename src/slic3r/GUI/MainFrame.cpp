@@ -62,6 +62,10 @@
 #include <fstream>
 #include <string_view>
 
+#include <boost/uuid/detail/md5.hpp>
+#include <boost/algorithm/hex.hpp>
+#include <boost/filesystem.hpp>
+
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
 #include "Notebook.hpp"
@@ -86,6 +90,7 @@
 #include "UpdateParams.hpp"
 #include "libslic3r/common_header/common_header.h"
 #include "CommunicateWithCXCloud.hpp"
+#include "slic3r/Utils/TestHelper.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -375,6 +380,7 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             first_frame = true;
             if (wxGetApp().is_enable_test()) {
                 this->Maximize();
+                Test::Visitor().call_cmd("app_ready", "{}");
             }
             ADD_TEST_RESPONE("APP", "READY", 0, "");
         }
@@ -648,7 +654,23 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
 
         evt.Skip();
     });
-
+    Bind(wxEVT_IDLE, ([this](wxIdleEvent &e) {
+             if (m_topbar && m_plater) {
+                 m_topbar->EnableSaveItem(can_save());
+                 m_topbar->EnableUndoItem(m_plater->can_undo());
+                 m_topbar->EnableRedoItem(m_plater->can_redo());
+             }
+             #ifdef __linux__
+                
+                m_plater->sidebar().Refresh();
+                m_plater->sidebar().Update();
+                
+                if (this->m_param_panel) {
+                    this->m_param_panel->Refresh();
+                    this->m_param_panel->Update();
+                }
+            #endif
+         }));
 #ifdef _MSW_DARK_MODE
     wxGetApp().UpdateDarkUIWin(this);
 #endif // _MSW_DARK_MODE
@@ -1094,10 +1116,10 @@ void MainFrame::init_tabpanel() {
         }
 #ifndef __APPLE__
         if (sel == tp3DEditor) {
-            m_topbar->EnableUndoRedoItems();
+            //m_topbar->EnableUndoRedoItems();
         }
         else {
-            m_topbar->DisableUndoRedoItems();
+            //m_topbar->DisableUndoRedoItems();
         }
 #endif
 
@@ -1124,13 +1146,17 @@ void MainFrame::init_tabpanel() {
     });
 
     if (wxGetApp().is_editor()) {
+
         m_webview         = new WebViewPanel(m_tabpanel);
+#if !AUTO_CONVERT_3MF
         Bind(EVT_LOAD_URL, [this](wxCommandEvent &evt) {
             wxString url = evt.GetString();
             select_tab(MainFrame::tpHome);
             m_webview->load_url(url);
         });
+#endif
         m_tabpanel->AddPage(m_webview, "", "tab_home_active", "tab_home_active", false);
+
         m_param_panel = new ProcessParamsPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBK_LEFT | wxTAB_TRAVERSAL);
         //m_param_panel->create_image_tooltip_panel();
         m_param_panel->set_border_panel_color(wxColour(49, 139, 86));
@@ -1386,7 +1412,7 @@ void MainFrame::create_preset_tabs()
     m_param_dialog = new ParamsDialog(m_plater);
     m_printer_dialog = new PrinterDialog(m_plater);
 
-    m_param_dialog->SetSize({ 120 * em_unit(), 66 * em_unit() });
+    //m_param_dialog->SetSize({ 130 * em_unit(), 66 * em_unit() });
 
     add_created_tab(new TabPrint(m_param_panel), "cog");
     add_created_tab(new TabPrintPlate(m_param_panel), "cog");
@@ -1456,7 +1482,7 @@ bool MainFrame::can_save() const
     return (m_plater != nullptr) &&
         !m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(false) &&
         m_plater->is_project_dirty() && !m_plater->using_exported_file() && !m_plater->only_gcode_mode()
-        && (m_topbar && m_topbar->GetSaveProjectItemEnabled());
+        ;
 }
 
 bool MainFrame::can_save_as() const
@@ -1722,6 +1748,10 @@ wxBoxSizer* MainFrame::create_side_tools()
 
     // m_publish_btn = new Button(this, _L("Upload"), "bar_publish", 0, FromDIP(16));
     m_slice_btn = new SideButton(this, _L("Slice plate"), "");
+    // Creality:for slice aotomation in test_framework
+    constexpr wxWindowID slice_btn_id_for_automation = Test::toWxWinId(Test::Button::Slice);
+    m_slice_btn->SetId(slice_btn_id_for_automation);
+
     m_slice_option_btn = new SideButton(this, "", "sidebutton_dropdown", 0, FromDIP(14));
     m_print_btn = new SideButton(this, _L("Print plate"), "");
     m_print_option_btn = new SideButton(this, "", "sidebutton_dropdown", 0, FromDIP(14));
@@ -1907,6 +1937,9 @@ wxBoxSizer* MainFrame::create_side_tools()
                     p->Dismiss();
                     });
 
+                // Creality:for slice aotomation in test_framework
+                constexpr wxWindowID export_gcode_btn_id_for_automation = Test::toWxWinId(Test::Button::ExportGCode);
+                export_sliced_file_btn->SetId(export_gcode_btn_id_for_automation);
                 export_sliced_file_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
                     m_print_btn->SetLabel(/*_L("Export plate sliced file")*/ _L("Export G-code"));
                     m_print_select = eExportSlicedFile;
@@ -3265,141 +3298,143 @@ void MainFrame::init_menubar_as_editor()
         "", nullptr,
         [this]() {return m_plater->is_view3D_shown()&& m_tabpanel->GetSelection() == TabPosition::tp3DEditor;; }, this);
 
-    append_menu_item(
-        calibMenu, wxID_ANY, _L("VFA"), _L("VFA"),
-        [this](wxCommandEvent&) {
-            if (!m_vfa_test_dlg)
-                m_vfa_test_dlg = new VFA_Test_Dlg((wxWindow*)this, wxID_ANY, m_plater);
-            m_vfa_test_dlg->ShowModal();
-        },
-        "", nullptr,
-        [this]() {return m_plater->is_view3D_shown()&& m_tabpanel->GetSelection() == TabPosition::tp3DEditor;; }, this); 
+    if (Slic3r::GUI::wxGetApp().isAlpha())
+    {
+        append_menu_item(
+            calibMenu, wxID_ANY, _L("VFA"), _L("VFA"),
+            [this](wxCommandEvent&) {
+                if (!m_vfa_test_dlg)
+                    m_vfa_test_dlg = new VFA_Test_Dlg((wxWindow*)this, wxID_ANY, m_plater);
+                m_vfa_test_dlg->ShowModal();
+            },
+            "", nullptr,
+            [this]() {return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;; }, this);
 
-     // creality add
-    auto speed_menu = new wxMenu();
-    append_menu_item(
-        speed_menu, wxID_ANY, _L("Limit speed"), _L("Limit speed"),
-        [this](wxCommandEvent&) {
-            if (!m_limit_speed_dlg)
-                m_limit_speed_dlg = new Limit_Speed_Dlg((wxWindow*) this, wxID_ANY, m_plater);
-            m_limit_speed_dlg->ShowModal();
-        },
-        "", nullptr,
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
-    append_menu_item(
-        speed_menu, wxID_ANY, _L("Speed tower"), _L("Speed tower"),
-        [this](wxCommandEvent&) {
-            if (!m_speed_tower_dlg)
-                m_speed_tower_dlg = new Speed_Tower_Dlg((wxWindow*) this, wxID_ANY, m_plater);
-            m_speed_tower_dlg->ShowModal();
-        },
-        "", nullptr,
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
-    append_menu_item(
-        speed_menu, wxID_ANY, _L("Jitter speed"), _L("Jitter speed"),
-        [this](wxCommandEvent&) {
-            if (!m_jitter_speed_dlg)
-                m_jitter_speed_dlg = new Jitter_Speed_Dlg((wxWindow*) this, wxID_ANY, m_plater);
-            m_jitter_speed_dlg->ShowModal();
-        },
-        "", nullptr,
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
-    append_menu_item(
-        speed_menu, wxID_ANY, _L("Fan speed"), _L("Fan speed"),
-        [this](wxCommandEvent&) {
-            if (!m_fan_speed_dlg)
-                m_fan_speed_dlg = new Fan_Speed_Dlg((wxWindow*) this, wxID_ANY, m_plater);
-            m_fan_speed_dlg->ShowModal();
-        },
-        "", nullptr,
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
-    //calibMenu->AppendSubMenu(speed_menu, _L("Speed calib"));
-    append_submenu(
-        calibMenu, speed_menu, wxID_ANY, _L("Speed calib"), _L("Speed calib"), "",
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
+        // creality add
+        auto speed_menu = new wxMenu();
+        append_menu_item(
+            speed_menu, wxID_ANY, _L("Limit speed"), _L("Limit speed"),
+            [this](wxCommandEvent&) {
+                if (!m_limit_speed_dlg)
+                    m_limit_speed_dlg = new Limit_Speed_Dlg((wxWindow*)this, wxID_ANY, m_plater);
+                m_limit_speed_dlg->ShowModal();
+            },
+            "", nullptr,
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
+        append_menu_item(
+            speed_menu, wxID_ANY, _L("Speed tower"), _L("Speed tower"),
+            [this](wxCommandEvent&) {
+                if (!m_speed_tower_dlg)
+                    m_speed_tower_dlg = new Speed_Tower_Dlg((wxWindow*)this, wxID_ANY, m_plater);
+                m_speed_tower_dlg->ShowModal();
+            },
+            "", nullptr,
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
+        append_menu_item(
+            speed_menu, wxID_ANY, _L("Jitter speed"), _L("Jitter speed"),
+            [this](wxCommandEvent&) {
+                if (!m_jitter_speed_dlg)
+                    m_jitter_speed_dlg = new Jitter_Speed_Dlg((wxWindow*)this, wxID_ANY, m_plater);
+                m_jitter_speed_dlg->ShowModal();
+            },
+            "", nullptr,
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
+        append_menu_item(
+            speed_menu, wxID_ANY, _L("Fan speed"), _L("Fan speed"),
+            [this](wxCommandEvent&) {
+                if (!m_fan_speed_dlg)
+                    m_fan_speed_dlg = new Fan_Speed_Dlg((wxWindow*)this, wxID_ANY, m_plater);
+                m_fan_speed_dlg->ShowModal();
+            },
+            "", nullptr,
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
+        //calibMenu->AppendSubMenu(speed_menu, _L("Speed calib"));
+        append_submenu(
+            calibMenu, speed_menu, wxID_ANY, _L("Speed calib"), _L("Speed calib"), "",
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
 
-    auto acc_menu = new wxMenu();
-    append_menu_item(
-        acc_menu, wxID_ANY, _L("Limit acceleration"), _L("Limit acceleration"),
-        [this](wxCommandEvent&) {
-            if (!m_limit_acc_dlg)
-                m_limit_acc_dlg = new Limit_Acceleration_Dlg((wxWindow*) this, wxID_ANY, m_plater);
-            m_limit_acc_dlg->ShowModal();
-        },
-        "", nullptr,
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
-    append_menu_item(
-        acc_menu, wxID_ANY, _L("Acceleration tower"), _L("Acceleration tower"), 
-        [this](wxCommandEvent&) {
-            if (!m_acc_tower_dlg)
-                m_acc_tower_dlg = new Acceleration_Tower_Dlg((wxWindow*) this, wxID_ANY, m_plater);
-            m_acc_tower_dlg->ShowModal();
-        },
-        "", nullptr,
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
-    append_menu_item(
-        acc_menu, wxID_ANY, _L("Deceleration acceleration"), _L("Deceleration acceleration"),
-        [this](wxCommandEvent&) {
-            if (!m_dec_acc_dlg)
-                m_dec_acc_dlg = new Dec_Acceleration_Dlg((wxWindow*) this, wxID_ANY, m_plater);
-            m_dec_acc_dlg->ShowModal();
-        },
-        "", nullptr,
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
-    //calibMenu->AppendSubMenu(acc_menu, _L("Acceleration calib"));
-    append_submenu(
-        calibMenu, acc_menu, wxID_ANY, _L("Acceleration calib"), _L("Acceleration calib"), "",
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
+        auto acc_menu = new wxMenu();
+        append_menu_item(
+            acc_menu, wxID_ANY, _L("Limit acceleration"), _L("Limit acceleration"),
+            [this](wxCommandEvent&) {
+                if (!m_limit_acc_dlg)
+                    m_limit_acc_dlg = new Limit_Acceleration_Dlg((wxWindow*)this, wxID_ANY, m_plater);
+                m_limit_acc_dlg->ShowModal();
+            },
+            "", nullptr,
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
+        append_menu_item(
+            acc_menu, wxID_ANY, _L("Acceleration tower"), _L("Acceleration tower"),
+            [this](wxCommandEvent&) {
+                if (!m_acc_tower_dlg)
+                    m_acc_tower_dlg = new Acceleration_Tower_Dlg((wxWindow*)this, wxID_ANY, m_plater);
+                m_acc_tower_dlg->ShowModal();
+            },
+            "", nullptr,
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
+        append_menu_item(
+            acc_menu, wxID_ANY, _L("Deceleration acceleration"), _L("Deceleration acceleration"),
+            [this](wxCommandEvent&) {
+                if (!m_dec_acc_dlg)
+                    m_dec_acc_dlg = new Dec_Acceleration_Dlg((wxWindow*)this, wxID_ANY, m_plater);
+                m_dec_acc_dlg->ShowModal();
+            },
+            "", nullptr,
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
+        //calibMenu->AppendSubMenu(acc_menu, _L("Acceleration calib"));
+        append_submenu(
+            calibMenu, acc_menu, wxID_ANY, _L("Acceleration calib"), _L("Acceleration calib"), "",
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
 
         append_menu_item(
-        calibMenu, wxID_ANY, _L("Arc fitting test"), _L("Arc fitting test"),
-        [this](wxCommandEvent&) {
-            if (m_plater)
-                m_plater->calib_Arc_lerance();
-        },
-        "", nullptr,
-        [this]() {
-            return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
-            ;
-        },
-        this);
-
+            calibMenu, wxID_ANY, _L("Arc fitting test"), _L("Arc fitting test"),
+            [this](wxCommandEvent&) {
+                if (m_plater)
+                    m_plater->calib_Arc_lerance();
+            },
+            "", nullptr,
+            [this]() {
+                return m_plater->is_view3D_shown() && m_tabpanel->GetSelection() == TabPosition::tp3DEditor;
+                ;
+            },
+            this);
+    }
         append_menu_item(calibMenu, wxID_ANY, _L("Tutorial"), _L("Calibration help"),
         [this](wxCommandEvent&) {
             std::string url = "https://wiki.creality.com/zh/software/update-released/Basic-introduction/calibration-tutorial";
@@ -4399,7 +4434,11 @@ void MainFrame::add_to_recent_projects(const wxString& filename)
         }
         wxGetApp().app_config->set_recent_projects(recent_projects);
         wxGetApp().app_config->set_project_times(m_recent_projects.GetFileOpenTimeVector());
-        m_webview->SendRecentList(0);
+
+        if (m_webview) {
+            m_webview->SendRecentList(0);
+        }
+
     }
 }
 
@@ -4437,7 +4476,59 @@ void MainFrame::FileHistory::AddFileToHistory(const wxString &file)
     wxFileHistory::AddFileToHistory(file);
     if (m_load_called)
     {
-        m_thumbnails.push_front(bbs_3mf_get_thumbnail(into_u8(file).c_str()));
+        // Use the same disk cache logic as in LoadThumbnails().
+        const std::string proj_path = into_u8(file);
+
+        // Prepare cache directory under user data folder.
+        const boost::filesystem::path cache_dir = boost::filesystem::path(Slic3r::data_dir()) / "thumbnail_cache";
+        try { boost::filesystem::create_directories(cache_dir); } catch (...) {}
+
+        auto md5_hex = [](const std::string &data) -> std::string {
+            using boost::uuids::detail::md5;
+            md5              hasher;
+            md5::digest_type digest{};
+            hasher.process_bytes(data.data(), data.size());
+            hasher.get_digest(digest);
+            std::string out;
+            boost::algorithm::hex(digest, digest + std::size(digest), std::back_inserter(out));
+            return out;
+        };
+
+        auto read_file = [](const boost::filesystem::path &p, std::string &out) -> bool {
+            std::ifstream ifs(p.string(), std::ios::binary);
+            if (!ifs) return false;
+            ifs.seekg(0, std::ios::end);
+            std::streamoff size = ifs.tellg();
+            if (size <= 0) return false;
+            out.resize(static_cast<size_t>(size));
+            ifs.seekg(0, std::ios::beg);
+            ifs.read(&out[0], size);
+            return static_cast<bool>(ifs);
+        };
+
+        auto write_file = [](const boost::filesystem::path &p, const std::string &data) -> bool {
+            std::ofstream ofs(p.string(), std::ios::binary | std::ios::trunc);
+            if (!ofs) return false;
+            ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
+            return static_cast<bool>(ofs);
+        };
+
+        boost::system::error_code ec;
+        std::time_t             mtime = boost::filesystem::last_write_time(proj_path, ec);
+        if (ec) mtime = 0;
+        const std::string key   = proj_path + "|" + std::to_string(static_cast<long long>(mtime));
+        const std::string hash  = md5_hex(key);
+        const auto        cpath = cache_dir / (hash + ".png");
+
+        std::string thumbnail;
+        if (!read_file(cpath, thumbnail) || thumbnail.empty()) {
+            thumbnail = bbs_3mf_get_thumbnail(proj_path.c_str());
+            if (!thumbnail.empty()) {
+                write_file(cpath, thumbnail);
+            }
+        }
+
+        m_thumbnails.push_front(std::move(thumbnail));
         m_file_open_time.push_front(getCurrentTime());
     }
     else
@@ -4463,11 +4554,64 @@ size_t MainFrame::FileHistory::FindFileInHistory(const wxString & file)
 
 void MainFrame::FileHistory::LoadThumbnails()
 {
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, GetCount()), [this](tbb::blocked_range<size_t> range) {
+    // Prepare cache directory under user data folder.
+    const boost::filesystem::path cache_dir = boost::filesystem::path(Slic3r::data_dir()) / "thumbnail_cache";
+    try { boost::filesystem::create_directories(cache_dir); } catch (...) {}
+
+    // Helper lambdas for MD5, file IO.
+    auto md5_hex = [](const std::string &data) -> std::string {
+        using boost::uuids::detail::md5;
+        md5              hasher;
+        md5::digest_type digest{};
+        hasher.process_bytes(data.data(), data.size());
+        hasher.get_digest(digest);
+        std::string out;
+        boost::algorithm::hex(digest, digest + std::size(digest), std::back_inserter(out));
+        return out; // 32 hex chars
+    };
+
+    auto read_file = [](const boost::filesystem::path &p, std::string &out) -> bool {
+        std::ifstream ifs(p.string(), std::ios::binary);
+        if (!ifs) return false;
+        ifs.seekg(0, std::ios::end);
+        std::streamoff size = ifs.tellg();
+        if (size <= 0) return false;
+        out.resize(static_cast<size_t>(size));
+        ifs.seekg(0, std::ios::beg);
+        ifs.read(&out[0], size);
+        return static_cast<bool>(ifs);
+    };
+
+    auto write_file = [](const boost::filesystem::path &p, const std::string &data) -> bool {
+        std::ofstream ofs(p.string(), std::ios::binary | std::ios::trunc);
+        if (!ofs) return false;
+        ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
+        return static_cast<bool>(ofs);
+    };
+
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, GetCount()), [this, cache_dir, md5_hex, read_file, write_file](tbb::blocked_range<size_t> range) {
         for (size_t i = range.begin(); i < range.end(); ++i) {
-            auto thumbnail = bbs_3mf_get_thumbnail(into_u8(GetHistoryFile(i)).c_str());
+            const std::string proj_path = into_u8(GetHistoryFile(i));
+            // Build cache key using path + last write time.
+            boost::system::error_code ec;
+            std::time_t             mtime = boost::filesystem::last_write_time(proj_path, ec);
+            if (ec) mtime = 0; // fallback
+            const std::string key     = proj_path + "|" + std::to_string(static_cast<long long>(mtime));
+            const std::string hash    = md5_hex(key);
+            const auto        cpath   = cache_dir / (hash + ".png");
+
+            std::string thumbnail;
+            // Try cache first.
+            if (!read_file(cpath, thumbnail) || thumbnail.empty()) {
+                thumbnail = bbs_3mf_get_thumbnail(proj_path.c_str());
+                if (!thumbnail.empty()) {
+                    // Best-effort write to cache.
+                    write_file(cpath, thumbnail);
+                }
+            }
+
             if (!thumbnail.empty()) {
-                m_thumbnails[i] = thumbnail;
+                m_thumbnails[i] = std::move(thumbnail);
             }
         }
     });

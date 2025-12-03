@@ -260,7 +260,49 @@ void ModelObject::clear_volumes()
 
 bool ModelObject::is_fdm_support_painted() const
 {
-    return std::any_of(this->volumes.cbegin(), this->volumes.cend(), [](const ModelVolume *mv) { return mv->is_fdm_support_painted(); });
+    try {
+        // 关键安全检查：验证当前ModelObject的ObjectID是否仍然有效
+        // 这可以检测到对象是否已被释放或无效化
+        if (!this->id().valid()) {
+            BOOST_LOG_TRIVIAL(error) << "is_fdm_support_painted: ModelObject has invalid ObjectID, object may have been deleted";
+            return false;
+        }
+        
+        // 安全检查：确保volumes容器有效
+        if (this->volumes.empty()) {
+            return false;
+        }
+        
+        return std::any_of(this->volumes.cbegin(), this->volumes.cend(), [this](const ModelVolume *mv) { 
+            // 安全检查：确保ModelVolume指针有效
+            if (!mv) {
+                BOOST_LOG_TRIVIAL(error) << "is_fdm_support_painted: ModelVolume pointer is null";
+                return false;
+            }
+            
+            // 验证ModelVolume的ObjectID是否有效
+            if (!mv->id().valid()) {
+                BOOST_LOG_TRIVIAL(error) << "is_fdm_support_painted: ModelVolume has invalid ObjectID, volume may have been deleted";
+                return false;
+            }
+            
+            // 再次验证父对象在访问子对象前仍然有效
+            if (!this->id().valid()) {
+                BOOST_LOG_TRIVIAL(error) << "is_fdm_support_painted: ModelObject ObjectID became invalid during volume iteration";
+                return false;
+            }
+            
+            return mv->is_fdm_support_painted(); 
+        });
+    }
+    catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "is_fdm_support_painted: Exception caught: " << e.what();
+        return false;
+    }
+    catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "is_fdm_support_painted: Unknown exception caught";
+        return false;
+    }
 }
 
 bool ModelObject::is_seam_painted() const

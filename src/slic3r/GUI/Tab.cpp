@@ -13,6 +13,7 @@
 #include "Search.hpp"
 #include "OG_CustomCtrl.hpp"
 
+#include <memory>
 #include <boost/any.hpp>
 #include <string>
 #include <wx/app.h>
@@ -1411,9 +1412,65 @@ void Tab::toggle_option(const std::string& opt_key, bool toggle, int opt_index/*
 {
     if (!m_active_page)
         return;
+
     Field* field = m_active_page->get_field(opt_key, opt_index);
     if (field)
         field->toggle(toggle);
+}
+
+void Tab::toggleByUserMode()
+{
+    if (!m_active_page)
+        return;
+
+    if (Slic3r::GUI::wxGetApp().isAlpha())
+    {
+        return;
+    }
+
+    std::string factoryrMode = Slic3r::GUI::wxGetApp().app_config->get("is_factory_mode");
+    bool isFactoryrMode = factoryrMode == "true";
+    //if(isFactoryrMode)
+    //    return;
+
+    const std::map<std::string, std::string> keys = Slic3r::GUI::wxGetApp().getUserKeys();
+    for (auto data : keys)
+    {
+        std::string keyStr = data.first;
+
+        Field* field = m_active_page->get_field(keyStr);
+        if ("nozzle_volume" == keyStr)
+        {
+            int a = 5;
+        }
+
+        if (!field)
+        {
+            field = m_active_page->get_field(keyStr + "#0");
+            if (!field)
+            {
+                field = m_active_page->get_field(keyStr + "#1");
+            }
+        }
+
+        if (!field)
+        {
+            continue;
+        }
+
+        if (data.second == "1")
+        {
+            auto vtp = wxGetApp().preset_bundle->get_current_vendor_type();
+            if (vtp != VendorType::Creality || isFactoryrMode)
+            {
+                field->initField();
+            }
+            else
+            {
+                field->toggle(false);
+            }
+        }
+    }
 }
 
 void Tab::toggle_line(const std::string &opt_key, bool toggle)
@@ -2817,7 +2874,7 @@ void TabPrint::toggle_options()
     toggle_line("tpms_gradual_direction", is_gradual_tpms);
     toggle_line("sparse_infill_density", !is_gradual_tpms);
 
-
+    toggleByUserMode();
 }
 
 void TabPrint::update()
@@ -4053,6 +4110,8 @@ void TabFilament::toggle_options()
                         "filament_cooling_initial_speed", "filament_cooling_final_speed"})
             toggle_option(el, !is_BBL_printer);
     }
+
+    toggleByUserMode();
 }
 
 void TabFilament::update()
@@ -5507,6 +5566,8 @@ void TabPrinter::toggle_options()
             toggle_option("machine_max_acceleration_travel", gcf != gcfMarlinLegacy && gcf != gcfKlipper, i);
         toggle_line("machine_max_acceleration_travel", gcf != gcfMarlinLegacy && gcf != gcfKlipper);
     }
+
+    toggleByUserMode();
 }
 
 void TabPrinter::update()
@@ -5891,10 +5952,19 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
     }
     else if (printer_tab)
         no_transfer = true;
-    if (current_dirty && ! may_discard_current_dirty_preset(nullptr, preset_name, no_transfer) && !force_select) {
+#if AUTO_CONVERT_3MF
+    if (current_dirty && false) {
         canceled = true;
         BOOST_LOG_TRIVIAL(info) << boost::format("current dirty and cancelled");
-    } else if (print_tab) {
+    }
+#else
+    if (current_dirty && !may_discard_current_dirty_preset(nullptr, preset_name, no_transfer) && !force_select) {
+        canceled = true;
+        BOOST_LOG_TRIVIAL(info) << boost::format("current dirty and cancelled");
+    }
+#endif
+
+    else if (print_tab) {
         // Before switching the print profile to a new one, verify, whether the currently active filament or SLA material
         // are compatible with the new print.
         // If it is not compatible and the current filament or SLA material are dirty, let user decide
@@ -5946,8 +6016,13 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
             for (PresetUpdate &pu : updates) {
                 pu.old_preset_dirty = (old_printer_technology == pu.technology) && pu.presets->current_is_dirty();
                 pu.new_preset_compatible = (new_printer_technology == pu.technology) && is_compatible_with_printer(pu.presets->get_edited_preset_with_vendor_profile(), new_printer_preset_with_vendor_profile);
-                if (!canceled)
+                if (!canceled) {
+#if AUTO_CONVERT_3MF
+                    canceled = pu.old_preset_dirty && !may_transfer_current_dirty_preset(pu.presets, preset_name) && !pu.new_preset_compatible && !force_select;
+#else
                     canceled = pu.old_preset_dirty && !may_discard_current_dirty_preset(pu.presets, preset_name) && !pu.new_preset_compatible && !force_select;
+#endif
+                    }
             }
             if (!canceled) {
                 for (PresetUpdate &pu : updates) {
@@ -6206,6 +6281,42 @@ bool Tab::may_discard_current_dirty_preset(PresetCollection* presets /*= nullptr
 
     return true;
 }
+
+#if AUTO_CONVERT_3MF
+bool Tab::may_transfer_current_dirty_preset(PresetCollection* presets, const std::string& new_printer_name, bool no_transfer)
+{
+    if (presets == nullptr)
+        presets = m_presets;
+
+    UnsavedChangesDialog dlg(m_type, presets, new_printer_name, no_transfer);
+
+    // if (dlg.transfer_changes()) // move selected changes
+    if (1) {
+        if (presets->get_edited_preset().type == Preset::TYPE_PRINT) {
+            m_nPrintUnsavedChanges = 2;
+        }
+        std::vector<std::string> selected_options = dlg.get_selected_options();
+        if (m_type == presets->type()) // move changes for the current preset from this tab
+        {
+            if (m_type == Preset::TYPE_PRINTER) {
+                auto it = std::find(selected_options.begin(), selected_options.end(), "extruders_count");
+                if (it != selected_options.end()) {
+                    // erase "extruders_count" option from the list
+                    selected_options.erase(it);
+                    // cache the extruders count
+                    static_cast<TabPrinter*>(this)->cache_extruder_cnt();
+                }
+            }
+
+            // copy selected options to the cache from edited preset
+            cache_config_diff(selected_options);
+        } else
+            wxGetApp().get_tab(presets->type())->cache_config_diff(selected_options);
+    }
+
+    return true;
+}
+#endif
 
 void Tab::clear_pages()
 {
@@ -7567,9 +7678,9 @@ void Page::update_visibility(ConfigOptionMode mode, bool update_contolls_visibil
     m_show = ret_val;
 #ifdef __WXMSW__
     if (!m_show) return;
-    // BBS: fix field control position
-    wxTheApp->CallAfter([this]() {
-        for (auto group : m_optgroups) {
+    // BBS: fix field control position(
+    wxTheApp->CallAfter([shared_this = shared_from_this()]() {
+        for (auto group : shared_this->m_optgroups) {
             if (group->custom_ctrl) group->custom_ctrl->fixup_items_positions();
         }
     });
@@ -7850,6 +7961,7 @@ void TabSLAMaterial::toggle_options()
     const Preset &current_printer = wxGetApp().preset_bundle->printers.get_edited_preset();
     std::string model = current_printer.config.opt_string("printer_model");
     m_config_manipulation.toggle_field("material_print_speed", model != "SL1");
+    toggleByUserMode();
 }
 
 void TabSLAMaterial::update()
@@ -8004,6 +8116,8 @@ void TabSLAPrint::toggle_options()
 {
     if (m_active_page)
         m_config_manipulation.toggle_print_sla_options(m_config);
+
+    toggleByUserMode();
 }
 
 void TabSLAPrint::update()

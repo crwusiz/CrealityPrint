@@ -118,7 +118,14 @@ const t_field& OptionsGroup::build_field(const t_config_option_key& id, const Co
 	field->m_back_to_sys_value = [this](std::string opt_id) {
 		if (!this->m_disabled)
 			this->back_to_sys_value(opt_id);
-	};
+    };
+
+
+    if (id == "filament_start_gcode" || id == "filament_end_gcode") {
+        field->getWindow()->SetMinSize(wxSize(-1, opt.height));
+        field->getWindow()->SetSize(wxSize(-1, opt.height));
+    }
+
 
 	// assign function objects for callbacks, etc.
     return field;

@@ -336,7 +336,8 @@ private:
         // Write a string into a file.
         void write(const std::string& what) { this->write(what.c_str()); }
         void write(const char* what);
-
+        void write_with_noprocess(const std::string& what);
+        void process_gcode(const std::string& gcode);
         // Write a string into a file.
         // Add a newline, if the string does not end with a newline already.
         // Used to export a custom G-code section processed by the PlaceholderParser.

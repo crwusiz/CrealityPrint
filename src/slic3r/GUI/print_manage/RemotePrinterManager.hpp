@@ -12,6 +12,12 @@
 #include "Device/KlipperCXInterface.hpp"
 #include <condition_variable>
 namespace RemotePrint {
+
+// 上传任务心跳检测间隔时间（秒）
+#define REMOTE_PRINTER_UPLOAD_TIMEOUT_SECONDS 6
+// 重试次数
+const int MAX_RETRY = 100;
+
 enum class RemotePrinerType {
     REMOTE_PRINTER_TYPE_NONE = -1,
     REMOTE_PRINTER_TYPE_LAN,        // lan
@@ -41,6 +47,15 @@ public:
     static void destroyInstance() {
         instance.reset();
     }
+    struct UploadTask
+    {
+        std::string                                     fileName;
+        std::string                                     filePath;
+        std::function<void(std::string, float, double)> progressCallback;
+        std::function<void(std::string, int)>           uploadStatusCallback;
+        std::function<void(std::string, std::string)>   onCompleteCallback;
+    };
+
 
     ~RemotePrinterManager();
 
@@ -69,6 +84,11 @@ public:
     void setKlipperPrinterMap(const std::string& ipAddress,int port);
     int getKlipperPrinterMap(const std::string& ipAddress);
     void addDownloadTask(const std::function<void()>& task);
+    void retryUpload(const std::string& ipAddress);
+
+    void setUploadTimeout(int seconds) { m_uploadTimeoutSeconds = seconds; }
+    int getUploadTimeout() const { return m_uploadTimeoutSeconds; }
+
 private:
     RemotePrinterManager();
 
@@ -105,6 +125,11 @@ private:
     std::condition_variable condition;
     std::atomic<bool> stop_flag;
     std::mutex queue_mutex;
+    std::map<std::string, UploadTask> m_lastUploadMap;
+
+    int m_uploadTimeoutSeconds = REMOTE_PRINTER_UPLOAD_TIMEOUT_SECONDS;
+    std::unordered_map<std::string, int>               m_retryCountMap;
+    std::unordered_map<std::string, std::atomic<bool>> m_cancelUploadMap;
 };
 } // namespace RemotePrintManage
 

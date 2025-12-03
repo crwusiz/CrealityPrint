@@ -47,7 +47,10 @@ def make_parameter_package(server_id, engine_version):
     for printer in machine_data.get('printerList', []):
         printer_name = printer["name"].strip()
         if printer_name.find("Creality") == -1:
-            printer_name = "Creality "+printer_name
+            if printer_name.find("SPARKX") >= 0:
+                printer_name = printer_name
+            else:
+                printer_name = "Creality "+printer_name
         creality_list.append({
             "name": printer_name,
             "showVersion": printer.get("showVersion"),
@@ -185,7 +188,10 @@ def make_parameter_package(server_id, engine_version):
         for printer in printerList:
             printer_name = printer["name"].strip()
             if printer_name.find("Creality") == -1:
-                printer_name = "Creality "+printer_name
+                if printer_name.find("SPARKX") >= 0:
+                    printer_name = printer_name
+                else:
+                    printer_name = "Creality "+printer_name
             printer["name"] = printer_name
             #print(f"---------------------process printer {printer_name}")
             param_pack_dir = os.path.join(os.path.join(working_path,f"server_{server_id}","orca","default"),"parampack",printer["printerIntName"])
@@ -259,10 +265,14 @@ def process_machine_model_json(printerList, default_materials_map, out_path):
         machine_model_data["default_materials"] = ';'.join(map(str, default_materials_map[printerIntName]))
         if os.path.exists(os.path.join(out_path,f"{printerIntName}_buildplate_model.stl")):
             machine_model_data["bed_model"] = f"{printerIntName}_buildplate_model.stl"
+        elif printerIntName.find("SPARKX") != -1:
+            machine_model_data["bed_model"] = "Creality F022_buildplate_model.stl"
         else:
             machine_model_data["bed_model"] = "creality_k1_buildplate_model.stl"
         if os.path.exists(os.path.join(out_path,f"{printerIntName}_buildplate_texture.png")):
             machine_model_data["bed_texture"] = f"{printerIntName}_buildplate_texture.png"
+        elif printerIntName.find("SPARKX") != -1:
+            machine_model_data["bed_texture"] = ""
         else:
             machine_model_data["bed_texture"] = ""
         

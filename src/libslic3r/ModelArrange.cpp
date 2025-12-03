@@ -176,8 +176,13 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
     if (enable_support && (support_type == stNormalAuto || support_type == stNormal))
         ap.brim_width = 6.0;
     else if (enable_support) {
+#if AUTO_CONVERT_3MF
+        ap.brim_width       = 50.0; 
+        ap.has_tree_support = true;
+#else
         ap.brim_width = 24.0; // 2*MAX_BRANCH_RADIUS_FIRST_LAYER
         ap.has_tree_support = true;
+#endif
     }
 
     auto size = obj->instance_convex_hull_bounding_box(instance).size();

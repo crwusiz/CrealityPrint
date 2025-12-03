@@ -118,8 +118,9 @@ public:
         int choice = 0;
         if (m_bed_type_choice != nullptr)
             choice =  m_bed_type_choice->GetSelection();
-        return choice;
+        return selection2bedtype(choice);
     };
+    int selection2bedtype(int selection);
 
     wxString get_plate_name() const;
     void set_plate_name(const wxString& name);

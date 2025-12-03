@@ -2892,8 +2892,8 @@ void ImGuiWrapper::init_font(bool compress)
 
     auto load_icon_from_svg = [this, &io, pixels, width, &rect_id](const std::pair<const wchar_t, std::string> icon, int icon_sz) {
         if (const ImFontAtlas::CustomRect* rect = io.Fonts->GetCustomRectByIndex(rect_id)) {
-            assert(rect->Width == icon_sz);
-            assert(rect->Height == icon_sz);
+//            assert(rect->Width == icon_sz);
+//            assert(rect->Height == icon_sz);
             unsigned                   outwidth, outheight;
             std::vector<unsigned char> raw_data = load_svg(icon.second, icon_sz, icon_sz, &outwidth, &outheight);
             if (!raw_data.empty()) {

@@ -1449,7 +1449,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
         } else if (before_layer_gcode_resets_extruder)
             return {L("\"G92 E0\" was found in before_layer_gcode, which is incompatible with absolute extruder "
                       "addressing."),
-                    nullptr, "before_layer_change_gcode"};
+                    nullptr, ""};
         else if (layer_gcode_resets_extruder)
             return {L("\"G92 E0\" was found in layer_gcode, which is incompatible with absolute extruder addressing."),
                     nullptr, "layer_change_gcode"};
@@ -1617,7 +1617,65 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     }
                }
             }
-            
+
+            //fix:[11440]In the process parameters, when the acceleration value exceeds the limit, a warning is displayed for the global process, but the object-level process lacks this warning.
+            // Also check object-specific acceleration overrides to provide per-object warnings.
+            if (warning != nullptr && warning->string.empty()) {
+                const double limit_extruding = m_config.machine_max_acceleration_extruding.values[0];
+                const bool   support_travel_acc_obj = (m_config.gcode_flavor == gcfRepetier || m_config.gcode_flavor == gcfMarlinFirmware ||
+                                                       m_config.gcode_flavor == gcfRepRapFirmware);
+                auto check_obj_setting = [](const PrintObjectConfig& cfg, const std::vector<std::string>& keys, double limit) -> std::string {
+                    for (const auto& key : keys) {
+                        if (cfg.get_abs_value(key) > limit)
+                            return key;
+                    }
+                    return std::string();
+                };
+                std::vector<std::string> keys_common = {
+                    "default_acceleration",
+                    "inner_wall_acceleration",
+                    "outer_wall_acceleration",
+                    "bridge_acceleration",
+                    "initial_layer_acceleration",
+                    "sparse_infill_acceleration",
+                    "internal_solid_infill_acceleration",
+                    "top_surface_acceleration",
+                };
+                if (limit_extruding > 0) {
+                    for (const PrintObject* pobj : m_objects) {
+                        const PrintObjectConfig& ocfg = pobj->config();
+                        std::string over_key = check_obj_setting(ocfg, keys_common, limit_extruding);
+                        if (over_key.empty() && !support_travel_acc_obj) {
+                            over_key = check_obj_setting(ocfg, std::vector<std::string>{"travel_acceleration"}, limit_extruding);
+                        }
+                        if (!over_key.empty()) {
+                            warning->string  = L("The acceleration setting exceeds the printer's maximum acceleration "
+                                                  "(machine_max_acceleration_extruding).\nCrealityPrint will "
+                                                  "automatically cap the acceleration speed to ensure it doesn't surpass the printer's "
+                                                  "capabilities.\nYou can adjust the "
+                                                  "machine_max_acceleration_extruding value in your printer's configuration to get higher speeds.");
+                            warning->opt_key = over_key;
+                            warning->object  = pobj;
+                            break;
+                        }
+                        if (support_travel_acc_obj) {
+                            const double limit_travel = m_config.machine_max_acceleration_travel.values[0];
+                            if (limit_travel > 0 && ocfg.get_abs_value("travel_acceleration") > limit_travel) {
+                                warning->string  = L(
+                                    "The travel acceleration setting exceeds the printer's maximum travel acceleration "
+                                    "(machine_max_acceleration_travel).\nCrealityPrint will "
+                                    "automatically cap the travel acceleration speed to ensure it doesn't surpass the printer's "
+                                    "capabilities.\nYou can adjust the "
+                                    "machine_max_acceleration_travel value in your printer's configuration to get higher speeds.");
+                                warning->opt_key = "travel_acceleration";
+                                warning->object  = pobj;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             // check speed
             // Orca: disable the speed check for now as we don't cap the speed
             // if (warning_key.empty()) {

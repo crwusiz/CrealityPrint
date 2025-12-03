@@ -661,8 +661,8 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
             }
             if (surface.is_internal()) {
             	assert(surface.surface_type == stInternal || surface.surface_type == stInternalSolid);
-            	if (! has_infill && lower_layer != nullptr)
-            		polygons_append(voids, surface.expolygon);
+//             	if (! has_infill && lower_layer != nullptr)
+//             		polygons_append(voids, surface.expolygon);
                 if (surface.surface_type == stInternalSolid)
                     surfaces_append(internal,
                                     intersection_ex(offset(surface.expolygon.contour, infill_margin, EXTERNAL_SURFACES_OFFSET_PARAMETERS),
@@ -930,10 +930,13 @@ void LayerRegion::prepare_fill_surfaces()
                 surface.surface_type = stInternal;
     }
 
-    if (!spiral_mode && fabs(this->region().config().sparse_infill_density.value - 100.) < EPSILON) {
+    if (!spiral_mode && this->region().config().sparse_infill_density.value > 0) {
+        // Turn too small internal regions into solid regions according to the user setting
+        // scaling an area requires two calls!
+        double min_area    = scale_(scale_(this->region().config().minimum_sparse_infill_area.value));
         // Turn all internal sparse infill into solid infill, if sparse_infill_density is 100%
-        for (Surface &surface : this->fill_surfaces.surfaces)
-            if (surface.surface_type == stInternal)
+        for (Surface& surface : this->fill_surfaces.surfaces)
+            if (surface.surface_type == stInternal && (fabs(this->region().config().sparse_infill_density.value - 100.) < EPSILON || surface.area() <= min_area))
                 surface.surface_type = stInternalSolid;
     }
 

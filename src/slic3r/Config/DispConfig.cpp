@@ -1,4 +1,4 @@
-#include "DispConfig.h"
+ï»¿#include "DispConfig.h"
 #include "../GUI/GLTexture.hpp"
 #include "../GUI/GUI_App.hpp"
 #include "../GUI/ImGuiWrapper.hpp"
@@ -107,13 +107,11 @@ void* DispConfig::getTextureId(TextureType tt, bool hover, bool sel) {
 
 GLTexture* DispConfig::getTexture(TextureType tt, bool hover, bool sel) {
     auto& tex = s_texture[tt][(sel?1:0)+(hover?2:0)];
-    if (tex ==nullptr)
-    {
-        //tuple0:base name
-        //tuple1:needDarkLight
-        //tuple2:needHover
-        //tuple3:needSel
-        static std::map<TextureType, std::tuple<std::string,bool,bool,bool>> s_names = {
+    // tuple0:base name
+    // tuple1:needDarkLight
+    // tuple2:needHover
+    // tuple3:needSel
+    static std::map<TextureType, std::tuple<std::string,bool,bool,bool>> s_names = {
             {e_tt_home,{"home.svg",true,true,false}},
             {e_tt_collapse,{"collapse_bk.svg",true,false,false}},
             {e_tt_collapse_item,{"collapse.svg",true,true,true}},
@@ -142,15 +140,33 @@ GLTexture* DispConfig::getTexture(TextureType tt, bool hover, bool sel) {
             {e_tt_normal_tip_block_notification_close, {"block_notification_close.svg", true, false, false}},
             {e_tt_normal_tip_block_notification_close_hover, {"block_notification_close_hover.svg", true, false, false}}
         };
-        std::string path = resources_dir() + "/images/";
-        const auto &[name,needDark,needHover,needSel] = s_names[tt];
-        if (needDark)
-            path += s_isDark ? "dark/" : "light/";
-        if (needSel)
-            path += sel ? "select_" : "unselect_";
-        if (needHover)
-            path += hover ? "hover_" : "none_";
-        path += name;
+    std::string path = resources_dir() + "/images/";
+    const auto &[name,needDark,needHover,needSel] = s_names[tt];
+    // Creality F022 override: use dedicated bed icons for smooth/texture
+    std::string base_name = name;
+    if (tt == e_tt_bed_texture || tt == e_tt_bed_smooth) {
+        auto bundle = wxGetApp().preset_bundle;
+        if (bundle != nullptr) {
+            const std::string model_name = bundle->printers.get_edited_preset().config.opt_string("printer_model");
+            auto vendor_type = bundle->get_current_vendor_type();
+            if (vendor_type == VendorType::Creality && !model_name.empty() && model_name.find("SPARKX") != std::string::npos) {
+                base_name = (tt == e_tt_bed_texture) ? std::string("texture_F022.png") : std::string("smooth_F022.png");
+            }
+        }
+    }
+    if (needDark)
+        path += s_isDark ? "dark/" : "light/";
+    if (needSel)
+        path += sel ? "select_" : "unselect_";
+    if (needHover)
+        path += hover ? "hover_" : "none_";
+    path += base_name;
+
+    if (tex == nullptr || tex->get_source() != path) {
+        if (tex != nullptr) {
+            delete tex;
+            tex = nullptr;
+        }
         tex = new GLTexture();
         tex->load_from_png_svg_file(path);
     }
@@ -424,11 +440,11 @@ ImVec2 DispConfig::boldTextWrapped(const std::string& str, float scale, float wr
 {
     Loc_pushBoldStyle(scale);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX());
-    ImGui::PushTextWrapPos(wrap_start_x); // ÉèÖÃ»»ĞĞÆğµã
+    ImGui::PushTextWrapPos(wrap_start_x); // è®¾ç½®æ¢è¡Œèµ·ç‚¹
     ImGui::TextWrapped("%s", str.c_str());
     ImGui::PopTextWrapPos();
     Loc_popBoldStyle(scale);
-    return ImGui::CalcTextSize(str.c_str()); //  ×¢Òâ£ºTextWrapped ²»·µ»ØÊµ¼Ê³ß´ç
+    return ImGui::CalcTextSize(str.c_str()); //  æ³¨æ„ï¼šTextWrapped ä¸è¿”å›å®é™…å°ºå¯¸
 }
 
 

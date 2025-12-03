@@ -169,6 +169,7 @@ CxSentToPrinterDialog::~CxSentToPrinterDialog()
     UnregisterHandler("get_threeMF");
     UnregisterHandler("get_machine_list");
     UnregisterHandler("get_webrtc_local_param");
+    UnregisterHandler("get_region");
 
 }
 void CxSentToPrinterDialog::OnCloseWindow(wxCloseEvent& event)
@@ -347,6 +348,8 @@ void CxSentToPrinterDialog::OnScriptMessage(wxWebViewEvent& evt)
         } else if (strCmd == "common_openurl") {
             wxLaunchDefaultBrowser(j["url"]);
             wxPostEvent(this, wxCloseEvent(wxEVT_CLOSE_WINDOW));
+        }else if (strCmd == "common_open_wiki_url") {
+            wxLaunchDefaultBrowser(j["url"]);
         }
         
         if (DM::AppMgr::Ins().Invoke(m_browser, evt.GetString().ToUTF8().data()))
@@ -1242,7 +1245,10 @@ std::string CxSentToPrinterDialog::get_onlygcode_plate_data_on_show()
             get_filament_length_info(extruders_vec, plate, filamentJsonArray);
             json_data["filament_length"] = filamentJsonArray;
 
+            get_gcode_temperature_info(plate,json_data);
+
             json_array.push_back(json_data);
+
         }else if (!current_result->filename.empty()){
             if (plate && plate->thumbnail_data.is_valid()) {
                 wxImage image(plate->thumbnail_data.width, plate->thumbnail_data.height);
@@ -1481,6 +1487,8 @@ std::string CxSentToPrinterDialog::get_plate_data_on_show()
             nlohmann::json filamentJsonArray = nlohmann::json::array();
             get_filament_length_info(plate_extruders,plate,filamentJsonArray);
             json_data["filament_length"] = filamentJsonArray;
+
+			get_temperature_info(plate_extruders,plate,json_data);     
 
             json_array.push_back(json_data);
         }
@@ -1729,6 +1737,94 @@ void CxSentToPrinterDialog::get_filament_length_info(std::vector<int> plate_extr
         jsonObj["extruderIndex"] = idx+1;
         jsonArray.push_back(jsonObj);
     }
+
+    return ;
+}
+
+void CxSentToPrinterDialog::get_gcode_temperature_info(Slic3r::GUI::PartPlate* plate,  nlohmann::json& json_data)
+{
+    if(!plate) 
+        return;
+	Slic3r::Print* print = nullptr;
+	plate->get_print((Slic3r::PrintBase **)&print, nullptr, nullptr);
+    if(!print) return;
+
+    GCodeProcessorResult* gcode_process_result = plate->get_slice_result();
+    if (!gcode_process_result) 
+    {
+        return;
+    }
+
+    float nozzleDiameter = gcode_process_result->nozzle_diameter;
+    int maxBedTemp = gcode_process_result->max_printer_bed_temp;
+    int maxNozzleTem = gcode_process_result->max_printer_nozzle_temp;
+
+    json_data["max_nozzle_temperature"] = maxNozzleTem;
+    json_data["max_bed_temperature"] = maxBedTemp;
+    json_data["nozzle_diameter"] = nozzleDiameter; 
+
+    return ;
+}
+
+void CxSentToPrinterDialog::get_temperature_info(std::vector<int> plate_extruders, Slic3r::GUI::PartPlate* plate,  nlohmann::json& json_data)
+{
+    if(!plate) 
+        return;
+	Slic3r::Print* print = nullptr;
+	plate->get_print((Slic3r::PrintBase **)&print, nullptr, nullptr);
+    if(!print) return;
+
+    const PrintConfig& config = print->config();
+    const ConfigOption* bed_type_opt = config.option("curr_bed_type");
+    if (!bed_type_opt)
+        return ;
+    int curr_bed_type = bed_type_opt->getInt();
+    const ConfigOptionInts* bed_temp_1st_layer_opt = config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key((BedType)curr_bed_type));
+    const ConfigOptionInts* bed_temp_other_layer = config.option<ConfigOptionInts>(get_bed_temp_key((BedType)curr_bed_type));
+    if(!bed_temp_1st_layer_opt || !bed_temp_other_layer)
+    {
+        return ;
+    }
+
+    int maxBedTemFirstLayer = 0;
+    for (auto extruderID : plate_extruders) {
+        int bedTemp = bed_temp_1st_layer_opt->get_at(extruderID - 1);
+        if (bedTemp > maxBedTemFirstLayer)
+            maxBedTemFirstLayer = bedTemp;
+    }
+
+    int maxBedTemOtherLayer = 0;
+    for (auto extruderID : plate_extruders) {
+        int bedTemp = bed_temp_other_layer->get_at(extruderID - 1);
+        if (bedTemp > maxBedTemOtherLayer)
+            maxBedTemOtherLayer = bedTemp;
+    }
+    int maxBedTemp = maxBedTemFirstLayer > maxBedTemOtherLayer ? maxBedTemFirstLayer : maxBedTemOtherLayer;
+
+
+    GCodeProcessorResult* gcode_process_result = plate->get_slice_result();
+    if (!gcode_process_result) 
+    {
+        return ;
+    } 
+    PrintEstimatedStatistics ps = gcode_process_result->print_statistics;
+
+    int maxNozzleTem = 0;
+    for (size_t i = 0; i < plate_extruders.size(); i++) 
+    {
+        int idx = plate_extruders[i] - 1;
+        if (idx < 0) 
+            continue;
+
+        int nozzleTemFirstLayer = print->config().nozzle_temperature_initial_layer.get_at(idx);
+        int nozzleTemp = print->config().nozzle_temperature.get_at(idx);
+        nozzleTemFirstLayer = nozzleTemFirstLayer > nozzleTemp ? nozzleTemFirstLayer : nozzleTemp ;
+        maxNozzleTem = maxNozzleTem > nozzleTemFirstLayer ? maxNozzleTem : nozzleTemFirstLayer ;
+    }
+    float nozzleDiameter = gcode_process_result->nozzle_diameter;
+    json_data["max_nozzle_temperature"] = maxNozzleTem;
+    json_data["max_bed_temperature"] = maxBedTemp;
+    json_data["nozzle_diameter"] = nozzleDiameter; 
 
     return ;
 }

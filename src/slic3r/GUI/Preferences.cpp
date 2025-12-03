@@ -774,6 +774,7 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         //panel->SetBackgroundColour(DESIGN_GRAY400_COLOR); // 设置面板背景颜色
         bool     is_dark = Slic3r::GUI::wxGetApp().dark_mode();
         wxColour color   = is_dark ? wxColor("#4b4b4d") : wxColour(255, 255, 255);
+        wxColour textColor = is_dark ? wxColor("#4287FF") : wxColour("#387DFF");
 
         wxString text = _L("(Content of the collected data)");
         wxBitmap   bitmap(1, 1);
@@ -782,7 +783,7 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         dc.SetBackground(color);        
         dc.SetBackgroundMode(wxBRUSHSTYLE_TRANSPARENT); 
         dc.SetFont(::Label::Body_13);
-        dc.SetTextForeground(*wxBLUE);
+        dc.SetTextForeground(textColor);
         wxCoord w, h;
         dc.GetTextExtent(text, &w, &h);
         bitmap.Create(w, h, wxBITMAP_SCREEN_DEPTH);

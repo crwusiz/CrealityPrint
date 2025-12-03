@@ -2,6 +2,7 @@
 #define slic3r_Debugger_hpp_
 
 #include "libslic3r/Print.hpp"
+#include "libslic3r/support_new/TreeSupport.hpp"
 #include "libslic3r/SurfaceCollection.hpp"
 #include "libslic3r/GCode/SeamPlacer.hpp"
 
@@ -36,12 +37,36 @@ namespace Slic3r {
     ////////////////////using immediate window for debug////////////////////////////
     void to_svg(const char* path, const ExPolygons& expolygons, bool fill = true);
     void to_svg(const char* path, const ExPolygon& expolygon, bool fill = true);
-
     void to_svg(const char* path, const ExPolygons& expolys0, const ExPolygons& expolys1, bool fill = true);
     void to_svg(const char* path, const ExPolygon& expoly0, const ExPolygon& expoly1, bool fill = true);
-
     void to_svg(const char* path, const ExPolygons& expolys0, const ExPolygon& expoly, bool fill = true);
     void to_svg(const char* path, const ExPolygon& expoly, const ExPolygons& expolys1, bool fill = true);
+
+    void to_svg(const char* path, const ExPolygon& expoly, const BoundingBox& bbox, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& expolys, const BoundingBox& bbox, bool fill = true);
+    
+    void to_svg(const char* path, const ExPolygons& expolys, const Polylines& polylines, bool fill = true);
+
+    void to_svg(const char* path, const ExPolygon& expoly, const Point& pt0, bool fill = true);
+    void to_svg(const char* path, const ExPolygon& expoly, const Point& pt0, const Point& pt1, bool fill = true);
+    void to_svg(const char* path, const ExPolygon& expoly, const Point& pt0, const Point& pt1, const Point& pt2, bool fill = true);
+
+    void to_svg(const char* path, const ExPolygons& expolys, const Point& pt0, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& expolys, const Point& pt0, const Point& pt1, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& expolys, const Point& pt0, const Point& pt1, const Point& pt2, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& expolys, const Point& pt0, const Point& pt1, const Point& pt2, const Point& pt3, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& expolys, const Point& pt0, const Point& pt1, const Point& pt2, const Point& pt3, const Point& pt4, bool fill = true);
+    
+    void to_svg(const char* path, const ExPolygons& expolys0, const ExPolygons& expolys1, const Point& pt0, const Point& pt1, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& expolys0, const ExPolygons& expolys1, const Point& pt0, const Point& pt1, const Point& pt2, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& expolys0, const ExPolygons& expolys1, const Point& pt0, const Point& pt1, const Point& pt2, const Point& pt3, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& expolys0, const ExPolygons& expolys1, const Point& pt0, const Point& pt1, const Point& pt2, const Point& pt3, const Point& pt4, bool fill = true);
+
+    void to_svg(const char* path, const ExPolygons& overhangs, const std::vector<SupportNode*>& layer_nodes, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& overhangs, const ExPolygons& outline, const std::vector<SupportNode*>& layer_nodes, bool fill = true);
+    void to_svg(const char* path, const ExPolygons& overhangs,const ExPolygons& avoidance,const ExPolygons& collision, const std::vector<SupportNode*>& origin_nodes,const std::vector<SupportNode*>& move_nodes, bool fill = true);
+
+
 
     void to_svg(const char* dir, const std::vector<ExPolygons>& expolyss, bool fill = true);
 
@@ -80,6 +105,7 @@ namespace Slic3r {
     void to_obj(const char* path, const TriangleMesh& tm);
     void to_obj(const char* path, const std::vector<TriangleMesh>& tms);
     void to_obj(const char* dir, const std::vector<std::vector<TriangleMesh>>& tmss, bool sperate_file = false);
+
     ///////////////////////////////////////////////////////////////////////////////
 }
 

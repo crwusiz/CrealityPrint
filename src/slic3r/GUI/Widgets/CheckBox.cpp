@@ -4,15 +4,15 @@
 
 CheckBox::CheckBox(wxWindow *parent, int id)
     : wxBitmapToggleButton(parent, id, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
-    , m_on(this, "check_on", 18)
+    , m_on(this, "check_on", 30)
     , m_half(this, "check_half", 18)
-    , m_off(this, "check_off", 18)
-    , m_on_disabled(this, "check_on_disabled", 18)
+    , m_off(this, "check_off", 30)
+    , m_on_disabled(this, "check_on_disabled", 30)
     , m_half_disabled(this, "check_half_disabled", 18)
-    , m_off_disabled(this, "check_off_disabled", 18)
-    , m_on_focused(this, "check_on_focused", 18)
+    , m_off_disabled(this, "check_off_disabled", 30)
+    , m_on_focused(this, "check_on_focused", 30)
     , m_half_focused(this, "check_half_focused", 18)
-    , m_off_focused(this, "check_off_focused", 18)
+    , m_off_focused(this, "check_off_focused", 30)
 {
 	//SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
 	if (parent)

@@ -4,6 +4,8 @@
 #include <future>
 #include <functional>
 #include <string>
+#include <map>
+#include <mutex>
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/GUI/FileUploader.hpp"
 namespace RemotePrint {
@@ -20,6 +22,7 @@ private:
 	const std::string urlSuffixUpload = "/upload/";
     std::map<std::string, Slic3r::Http*> mapHttp; // ipAddress -> port
 	std::map<std::string, HttpFileUploader*> mapFileUploader; // ipAddress -> port
+    mutable std::mutex               mapHttpMutex;
 	//Slic3r::Http*     m_pHttp         = nullptr;
     bool              m_bCancelSend   = false;
     };

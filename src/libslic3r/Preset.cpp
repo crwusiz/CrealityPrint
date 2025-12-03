@@ -3851,10 +3851,26 @@ namespace PresetUtils {
         const VendorProfile::PrinterModel* pm = PresetUtils::system_printer_model(preset);
         if (pm != nullptr && !pm->bed_model.empty()) {
             out = Slic3r::data_dir() + "/vendor/" + preset.vendor->id + "/";
-            out += (preset.vendor->id == "Creality") ? "creality_k1_buildplate_model.stl" : pm->bed_model;
+            // Special-case Creality F022 to use its dedicated buildplate model.
+            if (preset.vendor->id == "Creality") {
+                // Prefer explicit F022 model when available; otherwise keep legacy K1 default.
+                if (pm->name == "Creality F022" || pm->id == "Creality F022" || pm->bed_model == "Creality F022_buildplate_model.stl")
+                    out += "Creality F022_buildplate_model.stl";
+                else
+                    out += "creality_k1_buildplate_model.stl";
+            } else {
+                out += pm->bed_model;
+            }
             if (!boost::filesystem::exists(boost::filesystem::path(out))) {
                 out = Slic3r::resources_dir() + "/profiles/" + preset.vendor->id + "/";
-                out += (preset.vendor->id == "Creality") ? "creality_k1_buildplate_model.stl": pm->bed_model;
+                if (preset.vendor->id == "Creality") {
+                    if (pm->name == "Creality F022" || pm->id == "Creality F022" || pm->bed_model == "Creality F022_buildplate_model.stl")
+                        out += "Creality F022_buildplate_model.stl";
+                    else
+                        out += "creality_k1_buildplate_model.stl";
+                } else {
+                    out += pm->bed_model;
+                }
             }
 
         }
@@ -3865,12 +3881,28 @@ namespace PresetUtils {
     {
         std::string out;
         const VendorProfile::PrinterModel* pm = PresetUtils::system_printer_model(preset);
-        if (pm != nullptr && !pm->bed_texture.empty()) {
+        if (pm != nullptr) {
             out = Slic3r::data_dir() + "/vendor/" + preset.vendor->id + "/";
-            out += (preset.vendor->id == "Creality") ? "creality_k1_buildplate_texture.png": pm->bed_texture;
+            // Creality: use smooth_F022.png for F022, smooth.png for others;
+            // for non-Creality, use pm->bed_texture when provided.
+            if (preset.vendor->id == "Creality") {
+                if (pm->name == "Creality F022" || pm->id == "Creality F022" || pm->bed_texture == "smooth_F022.png" || pm->bed_texture == "texture_F022.png")
+                    out += "smooth_F022.png";
+                else
+                    out += "smooth.png";
+            } else if (!pm->bed_texture.empty()) {
+                out += pm->bed_texture;
+            }
             if (!boost::filesystem::exists(boost::filesystem::path(out))) {
                 out = Slic3r::resources_dir() + "/profiles/" + preset.vendor->id + "/";
-                out += (preset.vendor->id == "Creality") ? "creality_k1_buildplate_texture.png" : pm->bed_texture;
+                if (preset.vendor->id == "Creality") {
+                    if (pm->name == "Creality F022" || pm->id == "Creality F022" || pm->bed_texture == "smooth_F022.png" || pm->bed_texture == "texture_F022.png")
+                        out += "smooth_F022.png";
+                    else
+                        out += "smooth.png";
+                } else if (!pm->bed_texture.empty()) {
+                    out += pm->bed_texture;
+                }
             }
         }
         return out;

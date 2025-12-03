@@ -697,9 +697,9 @@ void AppConfig::set_defaults()
         set_bool("is_split_compound", false);
     }
 
-    /*if (get("gcode_preview_lite_mode").empty()) {
-        set("gcode_preview_lite_mode", "true");
-    }*/
+    if (get("gcode_preview_lite_mode").empty()) {
+        set("gcode_preview_lite_mode", "false");
+    }
 
     // Remove legacy window positions/sizes
 	if (get("enable_lod").empty())

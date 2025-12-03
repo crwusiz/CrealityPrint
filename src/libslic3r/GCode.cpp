@@ -14,6 +14,7 @@
 #include "GCode/WipeTower.hpp"
 #include "libslic3r/FDM/MachineVender.hpp"
 #include "libslic3r/ModelInstance.hpp"
+#include "libslic3r/ModelVolume.hpp"
 #include "ShortestPath.hpp"
 #include "Print.hpp"
 #include "Utils.hpp"
@@ -2240,7 +2241,7 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
         }
     }
 
-    m_processor.finalize(true, print->m_print_statistics.total_used_filament, print->config().creality_flush_time);
+    m_processor.finalize(true, print->m_print_statistics.total_used_filament, print->config().creality_flush_time,print->config().multicolor_method);
     //file.write_md5(path_tmp);
     //    DoExport::update_print_estimated_times_stats(m_processor, print->m_print_statistics);
     DoExport::update_print_estimated_stats(m_processor, m_writer.extruders(), print->m_print_statistics, print->config());
@@ -3544,6 +3545,81 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
         //SF TODO
 //      file.write_format("; variable_layer_height = %d\n", print.ad.adaptive_layer_height ? 1 : 0);
    
+	// use for gcode preview to judge whether all print object has shell
+	{
+		auto dynamic_config_value_greather_zero = [](const DynamicPrintConfig& global_config, const t_config_option_key& key) {
+            bool result = true;
+            if (global_config.has(key)) {
+                int value = global_config.opt_int(key);
+                result    = value > 0;
+            }
+            return result;
+        };
+
+		auto model_config_value_greather_zero = [](const ModelConfig& config, const t_config_option_key& key) {
+            bool result = true;
+            if (config.has(key)) {
+                int value = config.opt_int(key);
+                result    = value > 0;
+            }
+            return result;
+        };
+
+		bool has_surface_layers = true;
+        for (const PrintObject* print_object : print.objects()) {
+            const PrintInstances& print_instances = print_object->instances();
+            for (const auto& instance : print_instances) {
+                ModelObject*     obj     = instance.model_instance->get_object();
+                
+				//volumes
+                for (ModelVolume* vol : obj->volumes) {
+                    ModelConfigObject& vol_config = vol->config;
+                    has_surface_layers &= model_config_value_greather_zero(vol_config, "top_shell_layers");
+                    has_surface_layers &= model_config_value_greather_zero(vol_config, "bottom_shell_layers");
+                    has_surface_layers &= model_config_value_greather_zero(vol_config, "wall_loops");
+                    if (has_surface_layers == false)
+                        break;
+                }
+                if (has_surface_layers == false)
+                    break;
+
+				// current object
+                const ModelConfigObject& config = obj->config;
+                has_surface_layers &= model_config_value_greather_zero(config, "top_shell_layers");
+                has_surface_layers &= model_config_value_greather_zero(config, "bottom_shell_layers");
+                has_surface_layers &= model_config_value_greather_zero(config, "wall_loops");
+                if (has_surface_layers == false)
+                    break;
+
+				//object`s range profile
+                t_layer_config_ranges& range_config = obj->layer_config_ranges;
+                for (auto i = range_config.begin(); i != range_config.end(); ++i) {
+                    const ModelConfig& range_config = i->second;
+                    has_surface_layers &= model_config_value_greather_zero(range_config, "top_shell_layers");
+                    has_surface_layers &= model_config_value_greather_zero(range_config, "bottom_shell_layers");
+                    has_surface_layers &= model_config_value_greather_zero(range_config, "wall_loops");
+                    if (has_surface_layers == false)
+                        break;
+				}
+				if (has_surface_layers == false)
+                    break;
+
+            }
+            if (has_surface_layers == false)
+                break;
+        }
+
+		
+        if (has_surface_layers) {
+            const DynamicPrintConfig& global_cfg = print.full_print_config();
+            has_surface_layers &= dynamic_config_value_greather_zero(global_cfg, "top_shell_layers");
+            has_surface_layers &= dynamic_config_value_greather_zero(global_cfg, "bottom_shell_layers");
+            has_surface_layers &= dynamic_config_value_greather_zero(global_cfg, "wall_loops");
+		}
+
+          file.write_format("; all_surface_with_shell = %d\n", has_surface_layers ? 1 : 0);
+	}
+
       file.write("; CONFIG_BLOCK_END\n\n");
 
     }
@@ -3655,10 +3731,53 @@ void GCode::process_layers(
 		m_last_flow = processor.layer_flow();
 		m_last_time = layerTime;
 		first_layer = false;
-		output_stream.write(s); 
+        output_stream.process_gcode(s);
+        float layerTime_new = processor.layer_time();
+        float current_layer_time = layerTime_new - layerTime;
+        if(current_layer_time > 60.0f)
+        {
+            int n = current_layer_time / 60.0f +1; //split to n segments, each segment time less than 60s
+            n = std::max(1, n);
+            float segment_time = current_layer_time / n;
 
+            std::vector<std::string> lines;
+            lines.reserve(std::count(s.begin(), s.end(), '\n') + 1);
+            std::size_t start = 0;
+            while (start < s.size()) {
+                const auto pos = s.find('\n', start);
+                if (pos == std::string::npos) {
+                    lines.emplace_back(s.substr(start));
+                    break;
+                }
+                lines.emplace_back(s.substr(start, pos - start + 1)); // keep newline
+                start = pos + 1;
+            }
 
-		float layerTime_new = processor.layer_time();
+            const std::size_t total_lines = lines.size();
+            const std::size_t base_lines_per_segment = total_lines / static_cast<std::size_t>(n);
+            std::size_t extra_lines = total_lines % static_cast<std::size_t>(n);
+            std::size_t line_index = 0;
+
+            for(int i=0; i<n; i++)
+            {
+                const std::size_t lines_this_segment = base_lines_per_segment + (static_cast<std::size_t>(i) < extra_lines ? 1 : 0);
+                std::string segment_content;
+                for (std::size_t j = 0; j < lines_this_segment && line_index < total_lines; ++j, ++line_index) {
+                    segment_content += lines[line_index];
+                }
+                if (segment_content.empty() && line_index < total_lines) {
+                    continue;
+                }
+                if(i < n -1)
+                    segment_content += ";TIME_ELAPSED:" + std::to_string(layerTime + segment_time*(i+1)) + "\n";
+                output_stream.write_with_noprocess(segment_content);
+            }
+        }else{
+            output_stream.write_with_noprocess(s);
+        }
+        
+		//output_stream.write(s); 
+
 		if (!s.empty())
 		{
 			std::string strTime = ";TIME_ELAPSED:" + std::to_string(layerTime_new) + "\n\n";
@@ -4694,14 +4813,14 @@ LayerResult GCode::process_layer(
         auto _speed = print.calib_params().start + print_z * print.calib_params().step;
         m_calib_config.set_key_value("outer_wall_speed", new ConfigOptionFloat(std::round(_speed)));
     }else if (print.calib_mode() == CalibMode::Calib_Retraction_tower) {
-        auto _length = print.calib_params().start + std::floor(std::max(0.0,print_z-0.4)) * print.calib_params().step;
+        auto _length = print.calib_params().start + std::floor(std::max(0.0, print_z - 0.2 + 0.001 -0.4)) * print.calib_params().step;
         DynamicConfig _cfg;
         _cfg.set_key_value("retraction_length", new ConfigOptionFloats{_length});
         writer().config.apply(_cfg);
         sprintf(buf, "; Calib_Retraction_tower: Z_HEIGHT: %g, length:%g\n", print_z, _length);
         gcode += buf;
     } else if (print.calib_mode() == CalibMode::Calib_Retraction_tower_speed) {
-        auto          _speed = print.calib_params().start + std::floor(std::max(0.0, print_z-0.2+0.001)) * print.calib_params().step;
+        auto _speed = print.calib_params().start + std::floor(std::max(0.0, print_z - 0.2 + 0.001 - 0.4)) * print.calib_params().step;
         DynamicConfig _cfg;
         _cfg.set_key_value("retraction_speed", new ConfigOptionFloats{_speed});
         _cfg.set_key_value("deretraction_speed", new ConfigOptionFloats{_speed});
@@ -6086,6 +6205,29 @@ void GCode::GCodeOutputStream::write_md5(std::string src_gcode_file)
     boost::nowide::ofstream file(src_gcode_file, std::ios::in | std::ios::out | std::ios::ate);
     file << "; MD5 = "<<gcode_file_md5 << std::endl;
     file.close();
+}
+void GCode::GCodeOutputStream::write_with_noprocess(const std::string& what)
+{
+    if (!what.empty()) {
+        const char* gcode = what.c_str();
+        // writes string to file
+        size_t byteSize = ::strlen(gcode);
+        size_t byteWrited = fwrite(gcode, 1, byteSize, this->f);
+        if (byteWrited != byteSize)
+        {
+            char buf[256];
+            sprintf(buf, "G-code export failed: code(%d)", errno);
+            throw std::runtime_error(buf);
+        }
+    }
+}
+
+void GCode::GCodeOutputStream::process_gcode(const std::string& gcode)
+{
+    if (!gcode.empty()) {
+        //FIXME don't allocate a string, maybe process a batch of lines?
+        m_processor.process_buffer(gcode);
+    }
 }
 void GCode::GCodeOutputStream::write(const char *what)
 {

@@ -284,7 +284,7 @@ wxString WebViewPanel::GetURL()
     #ifdef _DEBUG1
      //for dev: 使用局域网地址：可以找【刘明，或其他前端开发同事】，按要求启动一个 http 服务，用于调试
      port = 9090;
-     type = std::string("Beta");
+     type = std::string("Alpha");
      
      url = wxString::Format(
          "http://localhost:%d/index.html?lang=%s&version=%s&type=%s&region=%s&use_inches=%s&debug=false&ai=true&time=%d&privacy=%d#/Community/Home Page", port, lang,
@@ -629,6 +629,9 @@ void WebViewPanel::OpenModelDetail(std::string id, NetworkAgent* agent)
 
 void WebViewPanel::SendLoginInfo()
 {
+#if AUTO_CONVERT_3MF
+    return;
+#endif
     if (wxGetApp().getAgent()) {
         std::string login_info = wxGetApp().getAgent()->build_login_info();
         wxString    strJS      = wxString::Format("window.handleStudioCmd(%s)", login_info);
@@ -817,6 +820,10 @@ void WebViewPanel::OnScriptMessage(wxWebViewEvent& evt)
     if (DM::AppMgr::Ins().Invoke(m_browser, evt.GetString().ToUTF8().data())) {
         return;
     }
+
+#if AUTO_CONVERT_3MF
+    return;
+#endif
 
     std::string response = wxGetApp().handle_web_request(evt.GetString().ToUTF8().data());
     if (response.empty())

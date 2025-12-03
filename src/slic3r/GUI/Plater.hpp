@@ -77,6 +77,7 @@ class GLToolbar;
 class PlaterPresetComboBox;
 class PartPlateList;
 class DeviceDataEvent;
+class View3D;
 
 using t_optgroups = std::vector <std::shared_ptr<ConfigOptionsGroup>>;
 
@@ -315,7 +316,7 @@ public:
     int new_project(bool skip_confirm = false, bool silent = false, const wxString& project_name = wxString());
     // BBS: save & backup
     void load_project(wxString const & filename = "", wxString const & originfile = "-");
-    int  save_project(bool saveAs = false, FileType ft = FileType::FT_3MF, En3mfType type_3mf = En3mfType::From_Creality);
+    int  save_project(bool saveAs = false, FileType ft = FileType::FT_3MF, En3mfType type_3mf = En3mfType::From_Creality, bool with_gcode = false);
     int  save_project_nogcode(bool saveAs = false, FileType ft = FileType::FT_3MF, En3mfType type_3mf = En3mfType::From_Creality);
     //BBS download project by project id
     void import_model_id(wxString download_info);
@@ -498,6 +499,7 @@ public:
     void upload_gcode(bool isall = false);
     void export_gcode(bool prefer_removable);
     void export_gcode_3mf(bool export_all = false);
+    int export_gcode_3mf_headless(const fs::path& output_path_in, bool export_all, std::string& err); // Creality
     void send_gcode_finish(wxString name);
     void export_core_3mf();
     void export_cxprj();
@@ -605,6 +607,7 @@ public:
     GLCanvas3D* get_preview_canvas3D();
     GLCanvas3D* get_assmeble_canvas3D();
     wxWindow* get_select_machine_dialog();
+    View3D*  get_vew3D();
 
     void arrange();
     void orient();

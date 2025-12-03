@@ -12,9 +12,34 @@
 #include "slic3r/GUI/print_manage/data/DataCenter.hpp"
 #include "slic3r/GUI/print_manage/AccountDeviceMgr.hpp"
 #include "CrProject.hpp"
+#include "libslic3r/Platform.hpp"
 
 namespace Slic3r {
 namespace GUI {
+
+// 获取系统架构信息的辅助函数
+std::string get_system_architecture() {
+    PlatformFlavor flavor = platform_flavor();
+    switch (flavor) {
+        case PlatformFlavor::OSXOnX86:
+            return "x86_64";
+        case PlatformFlavor::OSXOnArm:
+            return "arm64";
+        default:
+            // 对于其他平台，使用编译时检测
+#if defined(__x86_64__) || defined(_M_X64) || defined(__amd64)
+            return "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+            return "arm64";
+#elif defined(__i386__) || defined(_M_IX86)
+            return "x86";
+#elif defined(__arm__)
+            return "arm";
+#else
+            return "unknown";
+#endif
+    }
+}
 
 template <typename T>
 std::string serialize_with_semicolon(const std::vector<T>& items)
@@ -83,6 +108,9 @@ void AnalyticsDataUploadManager::clear_analytics_project_info()
 
 void AnalyticsDataUploadManager::processUploadData(AnalyticsDataEventType dataEventType, int plate_idx, const std::string& device_mac)
 {
+#if AUTO_CONVERT_3MF
+    return;
+#endif
     switch (dataEventType)
     {
     case AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS: 
@@ -387,6 +415,7 @@ void AnalyticsDataUploadManager::uploadSoftwareCrashData()
     js["label"]    = "crash_report_dialog";
     js["app_version"] = GUI_App::format_display_version().c_str();
     js["operating_system"]      = wxGetOsDescription().ToStdString().c_str();
+    js["system_architecture"] = get_system_architecture();
     js["crash_date"] = Slic3r::Utils::utc_timestamp(Slic3r::Utils::get_current_time_utc());
 
     wxGetApp().track_event("software_crash", js.dump());

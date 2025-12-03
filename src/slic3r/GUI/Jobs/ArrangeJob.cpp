@@ -148,6 +148,11 @@ void ArrangeJob::prepare_selected(bool consider_lock) {
                 continue;
             }
 
+#if AUTO_CONVERT_3MF
+            if (!instlist)
+                continue;
+#endif
+
             ModelInstance* mi = mo->instances[i];
             ArrangePolygon&& ap = prepare_arrange_polygon(mo->instances[i]);
 
@@ -297,7 +302,13 @@ void ArrangeJob::prepare_all() {
                 NotificationManager::NotificationLevel::WarningNotificationLevel, into_u8(_L("All the selected objects are on the locked plate,\nWe can not do auto-arrange on these objects.")));
         }
     }
-
+    if (!m_uncompatible_plates.empty()) {
+        auto msg = _L("The following plates are skipped due to different arranging settings from global:");
+        for (int i : m_uncompatible_plates) { msg += "\n"+_L("Plate") + " " + std::to_string(i + 1);
+        }
+        m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
+                       NotificationManager::NotificationLevel::WarningNotificationLevel, into_u8(msg));
+    }
     prepare_wipe_tower();
 
     // add the virtual object into unselect list if has
@@ -413,6 +424,101 @@ void ArrangeJob::prepare_wipe_tower()
     }
 }
 
+#if AUTO_CONVERT_3MF
+void ArrangeJob::prepare_wipe_tower_ex(int plate_index)
+{
+    bool need_wipe_tower = false;
+
+    // if wipe tower is explicitly disabled, no need to estimate
+    DynamicPrintConfig& current_config     = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    auto                op                 = current_config.option("enable_prime_tower");
+    bool                enable_prime_tower = op && op->getBool();
+    if (!enable_prime_tower || params.is_seq_print)
+        return;
+
+    bool smooth_timelapse = false;
+    auto sop              = current_config.option("timelapse_type");
+    if (sop) {
+        smooth_timelapse = sop->getInt() == TimelapseType::tlSmooth;
+    }
+    if (smooth_timelapse) {
+        need_wipe_tower = true;
+    }
+
+    // estimate if we need wipe tower for all plates:
+    // need wipe tower if some object has multiple extruders (has paint-on colors or support material)
+    for (const auto& item : m_selected) {
+        std::set<int> obj_extruders;
+        obj_extruders.insert(item.extrude_ids.begin(), item.extrude_ids.end());
+        if (obj_extruders.size() > 1) {
+            need_wipe_tower = true;
+            BOOST_LOG_TRIVIAL(info) << "arrange: need wipe tower because object " << item.name
+                                    << " has multiple extruders (has paint-on colors)";
+            break;
+        }
+    }
+
+    // if multile extruders have same bed temp, we need wipe tower
+    // 允许不同材料落在相同盘，且所有选定对象中使用了多种热床温度相同的材料
+    if (params.allow_multi_materials_on_same_plate) {
+        std::map<int, std::set<int>> bedTemp2extruderIds;
+        for (const auto& item : m_selected)
+            for (auto id : item.extrude_ids) {
+                bedTemp2extruderIds[item.bed_temp].insert(id);
+            }
+        for (const auto& be : bedTemp2extruderIds) {
+            if (be.second.size() > 1) {
+                need_wipe_tower = true;
+                BOOST_LOG_TRIVIAL(info) << "arrange: need wipe tower because allow_multi_materials_on_same_plate=true and we have multiple "
+                                           "extruders of same type";
+                break;
+            }
+        }
+    }
+    BOOST_LOG_TRIVIAL(info) << "arrange: need_wipe_tower=" << need_wipe_tower;
+
+    ArrangePolygon wipe_tower_ap;
+    wipe_tower_ap.name           = "WipeTower";
+    wipe_tower_ap.is_virt_object = true;
+    wipe_tower_ap.is_wipe_tower  = true;
+    const GLCanvas3D* canvas3D   = static_cast<const GLCanvas3D*>(m_plater->canvas3D());
+
+    std::set<int>  extruder_ids;
+    PartPlateList& ppl         = wxGetApp().plater()->get_partplate_list();
+    int            plate_count = ppl.get_plate_count();
+    if (!only_on_partplate) {
+        extruder_ids = ppl.get_extruders(true);
+    }
+
+    int bedid_unlocked = 0;
+    for (int bedid = 0; bedid < MAX_NUM_PLATES; bedid++) {
+        if (plate_index != bedid)
+            continue;
+
+        int        plate_index_valid = std::min(bedid, plate_count - 1);
+        PartPlate* pl                = ppl.get_plate(plate_index_valid);
+        if (bedid < plate_count && pl->is_locked())
+            continue;
+        if (auto wti = get_wipe_tower(*m_plater, bedid)) {
+            // wipe tower is already there
+            wipe_tower_ap = get_wipetower_arrange_poly(&wti);
+            // wipe_tower_ap.bed_idx = bedid_unlocked;
+            wipe_tower_ap.bed_idx = 0;
+            m_unselected.emplace_back(wipe_tower_ap);
+        } else if (need_wipe_tower) {
+            if (only_on_partplate) {
+                auto plate_extruders = pl->get_extruders(true);
+                extruder_ids.clear();
+                extruder_ids.insert(plate_extruders.begin(), plate_extruders.end());
+            }
+            wipe_tower_ap         = estimate_wipe_tower_info(bedid, extruder_ids);
+            wipe_tower_ap.bed_idx = bedid_unlocked;
+            m_unselected.emplace_back(wipe_tower_ap);
+        }
+        bedid_unlocked++;
+    }
+}
+#endif
 
 //BBS: prepare current part plate for arranging
 void ArrangeJob::prepare_partplate() {
@@ -510,7 +616,11 @@ void ArrangeJob::prepare()
     }
     else if (state == Job::JobPrepareState::PREPARE_STATE_EXTRA) {
         only_on_partplate = true;
+#if AUTO_CONVERT_3MF
+        prepare_auto_convert_3mf_selected(false);
+#else
         prepare_selected(false);
+#endif // AUTO_CONVERT_3MF
     }
 
 #if SAVE_ARRANGE_POLY
@@ -859,7 +969,113 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     m_plater->update();
 
     m_plater->m_arrange_running.store(false);
+
+#if AUTO_CONVERT_3MF
+    wxGetApp().auto_convert_3mf_mgr.on_arrange_job_finished();
+#endif
 }
+
+#if AUTO_CONVERT_3MF
+void ArrangeJob::prepare_auto_convert_3mf_selected(bool consider_lock)
+{
+    PartPlateList& plate_list = m_plater->get_partplate_list();
+
+    clear_input();
+
+    Model& model              = m_plater->model();
+    bool   selected_is_locked = false;
+    // BBS: remove logic for unselected object
+    // double stride = bed_stride_x(m_plater);
+
+    PartPlate* cur_plate = plate_list.get_curr_plate();
+    current_plate_index  = plate_list.get_curr_plate_index();
+
+    std::vector<int> need_arrange_obj_loaded_ids = wxGetApp().auto_convert_3mf_mgr.get_need_arrange_object_ids(current_plate_index);
+
+    // Go through the objects and check if inside the selection
+    for (size_t oidx = 0; oidx < model.objects.size(); ++oidx) {
+        ModelObject* mo = model.objects[oidx];
+        if (!mo || mo->from_loaded_id < 0)
+            continue;
+
+        if (std::find(need_arrange_obj_loaded_ids.begin(), need_arrange_obj_loaded_ids.end(), mo->from_loaded_id) ==
+            need_arrange_obj_loaded_ids.end())
+            continue;
+
+        std::vector<bool> inst_sel(mo->instances.size(), true);
+
+        for (size_t i = 0; i < mo->instances.size(); ++i) {
+            ModelInstance*   mi = mo->instances[i];
+            ArrangePolygon&& ap = prepare_arrange_polygon(mo->instances[i]);
+
+            bool locked = false;
+            if (consider_lock) {
+                // BBS: partplate_list preprocess
+                // remove the locked plate's instances, neither in selected, nor in un-selected
+                locked = plate_list.preprocess_arrange_polygon(oidx, i, ap, inst_sel[i]);
+            }
+
+            if (!locked) {
+                ArrangePolygons& cont = mo->instances[i]->printable ? (inst_sel[i] ? m_selected : m_unselected) : m_unprintable;
+
+                ap.itemid = cont.size();
+
+                // if do selection layout, the selected arrange_poly's setter callback need to be reset to deal with  arrange failing situation
+                if (m_plater->get_prepare_state() == Job::JobPrepareState::PREPARE_STATE_EXTRA) {
+                    ap.instance_id = cont.size(); // use instance_id to for [arrange selected] logic, because the itemid can be changed by
+                                                  // the arrange and used for other logic
+
+                    if (mo->instances[i]->printable && inst_sel[i]) {
+                        m_instance_id_to_instance[ap.instance_id] = mo->instances[i];
+                    }
+                }
+
+                cont.emplace_back(std::move(ap));
+            } else {
+                // skip this object due to be locked in plate
+                ap.itemid = m_locked.size();
+                m_locked.emplace_back(std::move(ap));
+                if (inst_sel[i])
+                    selected_is_locked = true;
+                BOOST_LOG_TRIVIAL(debug) << __FUNCTION__
+                                         << boost::format(": skip locked instance, obj_id %1%, instance_id %2%, name %3%") % oidx % i %
+                                                mo->name;
+            }
+        }
+    }
+
+    // If the selection was empty arrange everything
+    // if (m_selected.empty()) m_selected.swap(m_unselected);
+    if (m_selected.empty()) {
+        if (!selected_is_locked)
+            m_selected.swap(m_unselected);
+        else {
+            m_plater->get_notification_manager()->push_notification(
+                NotificationType::BBLPlateInfo, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                into_u8(_L("All the selected objects are on the locked plate,\nWe can not do auto-arrange on these objects.")));
+        }
+    }
+
+    if (m_plater->get_prepare_state() == Job::JobPrepareState::PREPARE_STATE_EXTRA) {
+        // adjust some offsets between the current plate and the first plate(start point located at (0,0))
+        PartPlateList& plate_list       = m_plater->get_partplate_list();
+        PartPlate*     plate0           = plate_list.get_plate(0);
+        Vec3d          cur_plate_origin = plate_list.get_current_plate_origin();
+        Vec3d          plate_offset     = cur_plate_origin - plate0->get_origin();
+        for (auto& polygon : m_unselected) {
+            polygon.translation.x() -= scaled<double>(plate_offset.x());
+            polygon.translation.y() -= scaled<double>(plate_offset.y());
+        }
+    }
+
+    prepare_wipe_tower_ex(cur_plate->get_index());
+
+    if (m_plater->get_prepare_state() == Job::JobPrepareState::PREPARE_STATE_EXTRA) {
+        // this param is set to false when arrange selected(if have objects contained in the plate)
+        params.do_final_align = m_unselected.empty();
+    }
+}
+#endif
 
 std::optional<arrangement::ArrangePolygon>
 get_wipe_tower_arrangepoly(const Plater &plater)

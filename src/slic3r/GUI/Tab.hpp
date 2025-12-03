@@ -63,7 +63,7 @@ class OG_CustomCtrl;
 // Single Tab page containing a{ vsizer } of{ optgroups }
 // package Slic3r::GUI::Tab::Page;
 using ConfigOptionsGroupShp = std::shared_ptr<ConfigOptionsGroup>;
-class Page// : public wxScrolledWindow
+class Page: public std::enable_shared_from_this<Page>
 {
 	//BBS: GUI refactor
 	wxPanel*		m_tab_owner;
@@ -343,6 +343,12 @@ public:
 	bool		select_preset(std::string preset_name = "", bool delete_current = false, const std::string& last_selected_ph_printer_name = "", bool force_select = false);
 	bool		may_discard_current_dirty_preset(PresetCollection* presets = nullptr, const std::string& new_printer_name = "", bool no_transfer = false);
 
+#if AUTO_CONVERT_3MF
+    bool may_transfer_current_dirty_preset(PresetCollection*  presets          = nullptr,
+                                           const std::string& new_printer_name = "",
+                                           bool               no_transfer      = false);
+#endif
+
     virtual void    clear_pages();
     virtual void    update_description_lines();
     virtual void    activate_selected_page(std::function<void()> throw_if_canceled);
@@ -398,6 +404,7 @@ public:
 
     Field*          get_field(const t_config_option_key &opt_key, Page** selected_page, int opt_index = -1);
     void            toggle_option(const std::string &opt_key, bool toggle, int opt_index = -1);
+    void            toggleByUserMode();
     void            toggle_line(const std::string &opt_key, bool toggle); // BBS: hide some line
 	wxSizer*		description_line_widget(wxWindow* parent, ogStaticText** StaticText, wxString text = wxEmptyString);
 	bool			current_preset_is_dirty() const;

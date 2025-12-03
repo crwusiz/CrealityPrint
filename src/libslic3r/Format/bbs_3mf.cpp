@@ -8911,7 +8911,9 @@ private:
                 {
                     timer t("backup cost");
                     try {
+#if !AUTO_CONVERT_3MF
                         if (callback) callback(1);
+#endif
                     } catch (...) {}
                 }
                 m_other_changes_backup = false;

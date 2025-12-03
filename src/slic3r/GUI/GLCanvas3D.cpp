@@ -1,4 +1,4 @@
-#include "libslic3r/libslic3r.h"
+﻿#include "libslic3r/libslic3r.h"
 #include "GLCanvas3D.hpp"
 
 #include <igl/unproject.h>
@@ -46,9 +46,13 @@
 #include "slic3r/Config/DispConfig.h"
 #include <slic3r/GUI/GUI_Utils.hpp>
 #include "slic3r/GUI/Widgets/SideButton.hpp"
-
+#include "slic3r/Utils/TestHelper.hpp"
 #if ENABLE_RETINA_GL
 #include "slic3r/Utils/RetinaHelper.hpp"
+#endif
+
+#if AUTO_CONVERT_3MF
+#include "AutoConvert3mfMgr.hpp"
 #endif
 
 #include <GL/glew.h>
@@ -2018,6 +2022,16 @@ void GLCanvas3D::render(bool only_init)
         enable_return_toolbar(false);
     }
 
+    // test helper
+    bool is_capture_mode = false;
+    if (Test::enable_test) {
+        std::string mode = Test::Visitor().call_cmd("is_capture_mode", "{}");
+        if (!mode.empty())
+        {
+            is_capture_mode = nlohmann::json::parse(mode)["enable"].get<int>() != 0;
+        }
+    }
+
     m_gcode_viewer.init(wxGetApp().get_mode(), wxGetApp().preset_bundle, !m_main_toolbar.is_enabled());
     if (!m_bed.build_volume().valid()) {
         // this happens at startup when no data is still saved under <>\AppData\Roaming\Slic3rPE
@@ -2149,11 +2163,14 @@ void GLCanvas3D::render(bool only_init)
         _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
         _render_sla_slices();
         _render_selection();
-        if (!no_partplate)
-            _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
-        if (!no_partplate) // BBS: add outline logic
-            _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current,
-                              only_body, hover_id, true);
+        if (!is_capture_mode)
+        {
+            if (!no_partplate)
+                _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
+            if (!no_partplate) // BBS: add outline logic
+                _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current,
+                                    only_body, hover_id, true);
+        }
         _render_objects(GLVolumeCollection::ERenderType::Transparent, !m_gizmos.is_running());
 
         // render clone preview at last, because the clone preview is rendered by Transparent
@@ -2161,18 +2178,21 @@ void GLCanvas3D::render(bool only_init)
             (m_extra_render_callbacks[static_cast<size_t>(ERenderEvent::FillBedOptions)] && get_arrange_settings().checkerboard_layout)) {
             m_selection.render_clone_shells();
         }
-
-        _render_cliper(cnv_size.get_width(), cnv_size.get_height());
+        if (!is_capture_mode)
+            _render_cliper(cnv_size.get_width(), cnv_size.get_height());
     }
     /* preview render */
     else if (m_canvas_type == ECanvasType::CanvasPreview && m_render_preview) {
         _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
         _render_sla_slices();
         _render_selection();
-        if (m_gcode_viewer.m_showBed) {
-            _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
-            _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current, true,
-                              hover_id, false);
+        if (!is_capture_mode)
+        {
+            if (m_gcode_viewer.m_showBed) {
+                _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
+                _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current,
+                                  true, hover_id, false);
+            }
         }
         _render_gcode(cnv_size.get_width(), cnv_size.get_height());
     }
@@ -2223,7 +2243,8 @@ void GLCanvas3D::render(bool only_init)
         m_rectangle_selection.render(*this);
 
     // draw overlays
-    _render_overlays();
+    if (!is_capture_mode)
+        _render_overlays();
 
     if (wxGetApp().plater()->is_render_statistic_dialog_visible() 
 #if 0	
@@ -2296,7 +2317,7 @@ void GLCanvas3D::render(bool only_init)
 
     wxGetApp().plater()->get_mouse3d_controller().render_settings_dialog(*this);
 
-    if (m_canvas_type != ECanvasType::CanvasAssembleView) {
+    if (m_canvas_type != ECanvasType::CanvasAssembleView && !is_capture_mode) {
         wxGetApp().plater()->get_notification_manager()->render_notifications(*this, get_overlay_window_width());
         wxGetApp().plater()->get_dailytips()->render();
     }
@@ -2304,6 +2325,8 @@ void GLCanvas3D::render(bool only_init)
 
     m_canvas->SwapBuffers();
     m_render_stats.increment_fps_counter();
+
+    Test::EVENT_SPREAD("canvas_render_finished");
 }
 
 void GLCanvas3D::render_on_image(wxImage& image)
@@ -2973,8 +2996,11 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
         const DynamicPrintConfig& dconfig           = wxGetApp().preset_bundle->prints.get_edited_preset().config;
         auto                      timelapse_type    = dconfig.option<ConfigOptionEnum<TimelapseType>>("timelapse_type");
         bool                      timelapse_enabled = timelapse_type ? (timelapse_type->value == TimelapseType::tlSmooth) : false;
-
-        if (wt && (timelapse_enabled || filaments_count > 1)) {
+        const Print*              print           = m_process->fff_print();
+        
+        bool purge_in_prime_tower = print->config().purge_in_prime_tower;
+        bool proj_purge_in_prime_tower = dynamic_cast<const ConfigOptionBool*>(wxGetApp().preset_bundle->printers.get_edited_preset().config.option("purge_in_prime_tower"))->value;
+        if (wt && (timelapse_enabled || filaments_count > 1) && (purge_in_prime_tower == proj_purge_in_prime_tower)) {
             for (int plate_id = 0; plate_id < n_plates; plate_id++) {
                 // If print ByObject and there is only one object in the plate, the wipe tower is allowed to be generated.
                 PartPlate* part_plate = ppl.get_plate(plate_id);
@@ -2983,7 +3009,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                     if (ppl.get_plate(plate_id)->printable_instance_size() != 1)
                         continue;
                 }
-
+                const Print* current_print = part_plate->fff_print();
                 int              current_plate_filaments_count = filaments_count;
                 std::vector<int> plate_extruders               = ppl.get_plate(plate_id)->get_extruders(true);
                 if (!plate_extruders.empty() && plate_extruders.size() <= current_plate_filaments_count) {
@@ -2995,16 +3021,19 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                 float y = dynamic_cast<const ConfigOptionFloats*>(proj_cfg.option("wipe_tower_y"))->get_at(plate_id);
                 float w = dynamic_cast<const ConfigOptionFloat*>(m_config->option("prime_tower_width"))->value;
                 int a = dynamic_cast<const ConfigOptionFloat*>(m_config->option("wipe_tower_rotation_angle"))->value;
+                
+                
                 a                            = std::abs(a % 360);
                 float tower_brim_width = dynamic_cast<const ConfigOptionFloat*>(m_config->option("prime_tower_brim_width"))->value;
                 // BBS
                 // float v = dynamic_cast<const ConfigOptionFloat*>(m_config->option("prime_volume"))->value;
                 Vec3d plate_origin = ppl.get_plate(plate_id)->get_origin();
 
-                const Print*              print           = m_process->fff_print();
-                const auto&               wipe_tower_data = print->wipe_tower_data(current_plate_filaments_count);
+                
+                const auto&               wipe_tower_data = current_print->wipe_tower_data(current_plate_filaments_count);
                 float                     brim_width      = wipe_tower_data.brim_width;
                 const DynamicPrintConfig& print_cfg       = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+                
                 Vec3d wipe_tower_size = ppl.get_plate(plate_id)->estimate_wipe_tower_size(print_cfg, w, wipe_tower_data.depth);
 
                 const float   margin     = 15; // WIPE_TOWER_MARGIN + tower_brim_width*2;
@@ -3060,7 +3089,9 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                     } else {
                         y = plate_bbox_y_max_local_coord - margin + wipe_tower_size(1) * std::sin((a-90) * PI / 180);
                     }
-                    need_update = true;
+                    bool is_slicing_in_progress = m_process && m_process->running() && !m_process->finished();
+                    if (!is_slicing_in_progress && !wxGetApp().plater()->is_preview_shown())
+                        need_update = true;
                 }
                 else if (y < margin) {
                     if (a <= 90) {
@@ -6801,19 +6832,23 @@ bool GLCanvas3D::_render_object_clone_options(float left, float right, float bot
 #if BBS_TOOLBAR_ON_TOP
     // float left_pos = m_main_toolbar.get_item("arrange")->render_left_pos;
     const float x = get_input_window_render_left_pos(); //(1 + left_pos) * canvas_w / 2;
-    imgui->set_next_window_pos(x, m_main_toolbar.get_height(), ImGuiCond_Always, 0.0f, 0.0f);
+    imgui->set_next_window_pos(x, m_main_toolbar.get_height(), ImGuiCond_FirstUseEver, 0.0f, 0.0f);
 
 #else
     const float x = canvas_w - m_main_toolbar.get_width();
     const float y = 0.5f * canvas_h - top * float(wxGetApp().plater()->get_camera().get_zoom());
-    imgui->set_next_window_pos(x, y, ImGuiCond_Always, 1.0f, 0.0f);
+    imgui->set_next_window_pos(x, y, ImGuiCond_FirstUseEver, 1.0f, 0.0f);
 #endif
 
     // BBS
     ImGuiWrapper::push_toolbar_style(get_scale());
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, (30.0f * get_scale() - ImGui::GetFontSize()) / 2.0)); // use for titlebar
-    imgui->begin(_L("Object Clone Options"), ImGuiWrapper::TOOLBAR_WINDOW_FLAGS);
+    //imgui->begin(_L("Object Clone Options"), ImGuiWrapper::TOOLBAR_WINDOW_FLAGS);
+    //ImGui::PopStyleVar(1);
+    ImGuiWindowFlags clone = ImGuiWrapper::TOOLBAR_WINDOW_FLAGS;
+    clone &= ~ImGuiWindowFlags_NoMove;
+    imgui->begin(_L("Object Clone Options"), clone);
     ImGui::PopStyleVar(1);
 
     const float slider_icon_width    = imgui->get_slider_icon_size().x;
@@ -7527,6 +7562,23 @@ static const float cameraProjection[16] = {1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.
 
 void GLCanvas3D::_render_3d_navigator()
 {
+    float          sc                  = get_scale();
+    const ImGuiIO& io                  = ImGui::GetIO();
+    const float viewManipulateRight = io.DisplaySize.x;
+    auto        config         = DispConfig();
+    ImVec2      home_icon_size = config.getWindowSize(DispConfig::e_wt_reset, sc);
+    const float icon_ygap      = m_main_toolbar.is_enabled() ? get_main_toolbar_height() + 10 : 10;
+
+    const float xgap = 50.0 + _right_leaning_widget_margin();
+
+    const float manipulate_size = 100 * sc;
+    const float manipulate_xpos = viewManipulateRight - manipulate_size - xgap;
+    const float manipulate_ypos = icon_ygap + home_icon_size.y;
+
+    const float icon_xpos = manipulate_xpos + 10;
+
+    m_view_manipulate_rect = ImVec4(manipulate_xpos, manipulate_ypos, manipulate_size, manipulate_size);
+
     if (!wxGetApp().show_3d_navigator()) {
         return;
     }
@@ -7552,10 +7604,7 @@ void GLCanvas3D::_render_3d_navigator()
     strcpy(style.FaceLabels[ImGuizmo::FACES::FACE_LEFT], _utf8("Left").c_str());
     strcpy(style.FaceLabels[ImGuizmo::FACES::FACE_RIGHT], _utf8("Right").c_str());
 
-    float          sc                  = get_scale();
-    const ImGuiIO& io                  = ImGui::GetIO();
     const float    viewManipulateLeft  = 0;
-    const float    viewManipulateRight = io.DisplaySize.x;
     const float    viewManipulateTop   = io.DisplaySize.y;
     const float    camDistance         = 8.f;
     ImGuizmo::SetID(0);
@@ -7572,20 +7621,6 @@ void GLCanvas3D::_render_3d_navigator()
             cameraView[c * 4 + r] = m(r, c);
         }
     }
-
-    auto        config         = DispConfig();
-    ImVec2      home_icon_size = config.getWindowSize(DispConfig::e_wt_reset, sc);
-    const float icon_ygap      = m_main_toolbar.is_enabled() ? get_main_toolbar_height() + 10 : 10;
-
-    const float xgap = 50.0 + _right_leaning_widget_margin();
-
-    const float manipulate_size = 100 * sc;
-    const float manipulate_xpos = viewManipulateRight - manipulate_size - xgap;
-    const float manipulate_ypos = icon_ygap + home_icon_size.y;
-
-    const float icon_xpos = manipulate_xpos + 10;
-
-    m_view_manipulate_rect = ImVec4(manipulate_xpos, manipulate_ypos, manipulate_size, manipulate_size);
 
     ImGuiWrapper& imgui = *wxGetApp().imgui();
     imgui.push_bold_font();
@@ -10671,7 +10706,7 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
     auto canvas_w = float(cnv_size.get_width());
     auto canvas_h = float(cnv_size.get_height());
 
-    bool is_hovered = false;
+    bool is_hovered = true;
     m_sel_plate_toolbar.set_icon_size(75 * f_scale, 75 * f_scale);
 
     float button_width  = m_sel_plate_toolbar.icon_width;
@@ -10693,7 +10728,7 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
     float window_height = std::min(item_count * (button_height + (frame_padding + margin_size) * 2.0f + button_margin) - button_margin +
                                        28.0f * f_scale,
                                    window_height_max);
-    float window_width  = m_sel_plate_toolbar.icon_width + margin_size * 2 + (show_scroll ? 28.0f * f_scale : 20.0f * f_scale);
+    float window_width  = m_sel_plate_toolbar.icon_width + margin_size * 2 + (show_scroll ? 25.0f * f_scale : 20.0f * f_scale);
 
     ImVec4 window_bg     = ImVec4(0, 0, 0, 0);
     ImVec4 button_active = ImGuiWrapper::COL_CREALITY; // ORCA: Use orca color for selected sliced plate border
@@ -10897,7 +10932,10 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
 
         // draw text
         ImVec2 text_start_pos = ImVec2(start_pos.x + 10.0f, start_pos.y + 8.0f);
-        ImGui::RenderText(text_start_pos, std::to_string(i + 1).c_str());
+        auto*  draw           = ImGui::GetWindowDrawList();
+        const bool is_dark = wxGetApp().dark_mode();
+        ImU32      num_col = is_dark ? IM_COL32(255, 255, 255, 255) : IM_COL32(0, 0, 0, 255);
+        draw->AddText(text_start_pos, num_col, std::to_string(i + 1).c_str());
 
         ImGui::PopID();
     }
@@ -12253,6 +12291,17 @@ void GLCanvas3D::_set_warning_notification_if_needed(EWarning warning)
     }
 
     _set_warning_notification(warning, show);
+
+#if AUTO_CONVERT_3MF
+    if (wxGetApp().is_editor()) {
+        if (current_printer_technology() != ptSLA) {
+            if ((warning == EWarning::ToolHeightOutside || warning == EWarning::ToolpathOutside || warning == EWarning::GCodeConflict) &&
+                show) {
+                wxGetApp().auto_convert_3mf_mgr.set_serious_warning_state(true);
+            }
+        }
+    }
+#endif
 }
 
 void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)

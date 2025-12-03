@@ -1,3 +1,4 @@
+#include "boost/filesystem/operations.hpp"
 #include "libslic3r/Technologies.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
@@ -132,6 +133,7 @@
 #include "Notebook.hpp"
 #include "Widgets/Label.hpp"
 #include "Widgets/ProgressDialog.hpp"
+#include "Widgets/TabCtrl.hpp"
 
 //BBS: DailyTip and UserGuide Dialog
 #include "WebDownPluginDlg.hpp"
@@ -154,7 +156,9 @@
 //#ifdef WIN32
 //#include "BaseException.h"
 //#endif
-
+#ifdef __APPLE__
+#include "libslic3r/MacUtils.hpp"
+#endif
 
 #ifdef __WXMSW__
 #include <dbt.h>
@@ -195,6 +199,9 @@
 #include "print_manage/AppMgr.hpp"
 #include "UpdateParams.hpp"
 #include "PrinterPresetConfig.hpp"
+#if AUTO_CONVERT_3MF
+#include "AutoConvert3mfMgr.hpp"
+#endif
 
 using namespace std::literals;
 namespace pt = boost::property_tree;
@@ -1209,9 +1216,37 @@ void GUI_App::post_init()
                 mainframe->select_tab(size_t(MainFrame::tp3DEditor));
                 plater_->select_view_3D("3D");
                 wxArrayString input_files;
+#if AUTO_CONVERT_3MF
+                //(1) 3mf-to-3mf, format like this: CrealityPrint.exe convert_3mf "input_file.3mf" "printer_name" "output_file"
+                //(2) stl-to-3mf, format like this: CrealityPrint.exe convert_3mf "stl_dir" "printer_name" "output_file"
+
+                // 检查第2个参数是否是目录
+                wxString firstArg = from_u8(this->init_params->input_files[1]);
+                if (wxDirExists(firstArg)) {
+                    // 是目录，遍历目录中的所有 STL 文件
+                    wxDir    dir(firstArg);
+                    wxString filename;
+                    bool     cont = dir.GetFirst(&filename, "*.stl", wxDIR_FILES);
+                    while (cont) {
+                        input_files.push_back(dir.GetNameWithSep() + filename);
+                        cont = dir.GetNext(&filename);
+                    }
+                } else {
+                    // 不是目录，按原方式处理
+                    for (int i = 0; i < this->init_params->input_files.size() - 1; i++) {
+                        input_files.push_back(wxString::FromUTF8(this->init_params->input_files[i]));
+                    }
+                }
+
+                // for (int i = 0; i < this->init_params->input_files.size() - 1; i++) {
+                //     input_files.push_back(wxString::FromUTF8(this->init_params->input_files[i]));
+                // }
+#else
                 for (auto& file : this->init_params->input_files) {
                     input_files.push_back(wxString::FromUTF8(file));
                 }
+#endif
+
 #if AUTOMATION_TOOL
                 if (AutomationMgr::enabled()) {
                     input_files.clear();
@@ -1390,8 +1425,10 @@ void GUI_App::post_init()
         });
     }
 
+#if !AUTO_CONVERT_3MF
     if (is_user_login())
         request_user_handle(0);
+#endif
 
     if(!m_networking_need_update && m_agent) {
         m_agent->set_on_ssdp_msg_fn(
@@ -1506,6 +1543,12 @@ wxDEFINE_EVENT(EVT_SHOW_NO_NEW_VERSION, wxCommandEvent);
 wxDEFINE_EVENT(EVT_SHOW_DIALOG, wxCommandEvent);
 wxDEFINE_EVENT(EVT_CONNECT_LAN_MODE_PRINT, wxCommandEvent);
 wxDEFINE_EVENT(EVT_TEST_HELPER_CMD, wxCommandEvent);
+
+#if AUTO_CONVERT_3MF
+wxDEFINE_EVENT(EVT_SLICE_ALL_PLATE_FINISHED, wxCommandEvent);
+wxDEFINE_EVENT(EVT_ARRANGE_PLATE_FINISHED, wxCommandEvent);
+#endif
+
 IMPLEMENT_APP(GUI_App)
 
 //BBS: remove GCodeViewer as seperate APP logic
@@ -2590,7 +2633,7 @@ std::map<std::string, std::string> GUI_App::get_extra_header()
 
                                                         {"__CXY_PLATFORM_", "11"},
                                                         {"__CXY_BRAND_", "creality"},
-                                                        {"__CXY_APP_CH_", "creality"},
+                                                        {"__CXY_APP_CH_", "CP_Beta"},
                                                         {"__CXY_OS_LANG_", I18nToLangaugeIndex(language.Lower().ToStdString())},
                                                         {"__CXY_DUID_", GetMACAddress()}};
     extra_headers.emplace("__CXY_APP_VER_", CREALITYPRINT_VERSION);
@@ -2609,6 +2652,12 @@ std::map<std::string, std::string> GUI_App::get_extra_header()
 #else()
     extra_headers.emplace("__CXY_OS_VER_", "unknown");
 #endif
+    std::string version = std::string(PROJECT_VERSION_EXTRA);
+    bool        is_release = boost::algorithm::icontains(version, "release");
+    if(is_release)
+    {
+        extra_headers.emplace("__CXY_APP_CH_", "creality");
+    }
     return extra_headers;
 }
 
@@ -2933,6 +2982,11 @@ std::string GUI_App::getDevelopParamsType(const std::string key)
     return "";
 }
 
+const std::map<std::string, std::string> GUI_App::getUserKeys()
+{
+    return m_DevelopParamslist;
+}
+
 std::string GUI_App::get_local_models_path()
 {
     std::string local_path = "";
@@ -2962,6 +3016,42 @@ bool GUI_App::OnInit()
 {
     system_memory_stats(__FUNCTION__);
     try {
+#if AUTO_CONVERT_3MF
+        if (this->init_params->argc >= 2 && this->init_params->argv != nullptr) {
+            std::string _arg1 = this->init_params->argv[1];
+            if (_arg1 == "version") {
+                // 分配控制台
+                AllocConsole();
+
+                // 重定向标准输出到控制台
+                HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+                if (hStdOut != INVALID_HANDLE_VALUE) {
+                    // 设置控制台标题
+                    SetConsoleTitleA("Creality Print Version");
+
+                    // 输出版本信息
+                    std::string versionMsg = "Creality Print Version: " + std::string(CREALITYPRINT_VERSION) + "\n";
+                    DWORD       bytesWritten;
+                    WriteConsoleA(hStdOut, versionMsg.c_str(), versionMsg.length(), &bytesWritten, NULL);
+
+                    // 等待用户按键
+                    WriteConsoleA(hStdOut, "Press any key to exit...\n", 25, &bytesWritten, NULL);
+
+                    // 等待按键
+                    HANDLE hStdIn = GetStdHandle(STD_INPUT_HANDLE);
+                    if (hStdIn != INVALID_HANDLE_VALUE) {
+                        INPUT_RECORD ir;
+                        DWORD        eventsRead;
+                        do {
+                            ReadConsoleInput(hStdIn, &ir, 1, &eventsRead);
+                        } while (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown);
+                    }
+                }
+
+                exit(0);
+            }
+        }
+#endif
         m_app_start_time = std::chrono::steady_clock::now();
         #ifdef _WIN32
         boost::filesystem::path data_dir = boost::filesystem::path(Slic3r::data_dir()).append("applock.data");
@@ -3363,6 +3453,8 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
         // start load profile family after preset updater finished
         ProfileFamilyLoader::init();
 
+#if !AUTO_CONVERT_3MF
+
 #if !defined(CUSTOMIZED) || defined(CUSTOM_CHECKUPDATE_ENABLED)
         Bind(EVT_SLIC3R_VERSION_ONLINE, [this](const wxCommandEvent& evt) {
             if (this->plater_ != nullptr) {
@@ -3410,6 +3502,7 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
                         ;
                     }
                 }
+#endif
             }
             });
 
@@ -3643,6 +3736,10 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
             m_app_end_time = std::chrono::steady_clock::now();
 
             update_publish_status();
+
+#if AUTO_CONVERT_3MF
+            parse_convert_3mf_args();
+#endif
             
         }
         
@@ -3671,9 +3768,10 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
 
+#if !AUTO_CONVERT_3MF
     //  启动同步预设线程
     SyncUserPresets::getInstance().startup();
-
+#endif
     return true;
 }
 void  GUI_App::on_init_custom_config()
@@ -4772,6 +4870,23 @@ void GUI_App::persist_window_geometry(wxTopLevelWindow *window, bool default_max
     }
 }
 
+// Creality:in purpose of skipping confirmation about unsaved preset when loading project, which using in automation
+bool GUI_App::discard_all_current_preset_changes()
+{
+    if (!has_current_preset_changes())
+        return true;
+
+    PrinterTechnology printer_technology = preset_bundle->printers.get_edited_preset().printer_technology();
+    for (const Tab* const tab : tabs_list) {
+        if (tab->supports_printer_technology(printer_technology) && tab->current_preset_is_dirty())
+            tab->m_presets->discard_current_changes();
+    }
+    // 和确认弹框里“Discard”分支一致
+    // 这样进入 load_project() 时已经没有脏改动，弹框自然不会出现。
+    load_current_presets(false);
+    return true;
+}
+
 void GUI_App::load_project(wxWindow *parent, wxString& input_file) const
 {
     input_file.Clear();
@@ -4841,11 +4956,13 @@ wxString GUI_App::transition_tridid(int trid_id)
 //BBS
 void GUI_App::request_login(bool show_user_info)
 {
+#if !AUTO_CONVERT_3MF
     ShowUserLogin();
 
     if (show_user_info) {
         get_login_info();
     }
+#endif
 }
 
 void GUI_App::get_login_info()
@@ -5051,7 +5168,7 @@ bool GUI_App::check_machine_list()
             std::string version = printer["version"].get<std::string>();
             std::string nozzleDiameter = printer["nozzleDiameter"][0].get<std::string>();
             std::string machine_name = "";
-            if(name.find("Creality") != std::string::npos){
+            if(name.find("Creality") != std::string::npos||name.find("SPARKX") != std::string::npos){
                 //Creality Ender-3 0.4 nozzle
                 boost::format fmt("%s %s nozzle");
                 fmt % name % nozzleDiameter;
@@ -5090,7 +5207,10 @@ bool UpdateParamPackage(pt::ptree v,json& profile_json,json& cache_json,json& ma
 {
         std::string printer_model  = v.get_child("name").data();
         if(printer_model.find("Creality") == std::string::npos){
-            printer_model = "Creality " + printer_model;
+            if(printer_model.find("SPARKX") == std::string::npos)
+            {
+                printer_model = "Creality " + printer_model;
+            } 
         }
         std::string showVersion = v.get_child("showVersion").data();
         std::string zipUrl      = v.get_child("zipUrl").data();
@@ -5241,12 +5361,24 @@ bool UpdateParamPackage(pt::ptree v,json& profile_json,json& cache_json,json& ma
                                                                             .append("machine")
                                                                             .append(printer_model + ".json")
                                                                             .string();
-                        if(!fs::exists(out_machine_model_json_file)){
+                        auto machine_model_lists = profile_json["machine_model_list"];  
+                        bool bFound = false;
+                        for(auto& model : machine_model_lists){
+                            if(model["name"].get<std::string>()==printer_model){
+                                bFound = true;
+                                break;
+                            }
+                        }
+                        if(!bFound){
                             json json_out;
                             json_out["type"] = "machine_model";
                             json_out["name"] = printer_model;
                             json_out["nozzle_diameter"] = nozzle;
-                            json_out["bed_model"] = "fdm_creality_common";
+                            json_out["bed_model"] = "creality_k1_buildplate_model.stl";
+                            if(printer_model.find("SPARKX") != std::string::npos)
+                            {
+                                json_out["bed_model"] = "Creality F022_buildplate_model.stl";
+                            }
                             json_out["bed_texture"] = "";
                             json_out["family"] = "Creality";
                             json_out["hotend_model"] = "";
@@ -5577,6 +5709,8 @@ void  GUI_App::init_user_profile()
             boost::nowide::ifstream ifs(user_file.string());
             ifs >> j;
         }catch (const std::exception& e) {
+            fs::remove(user_file);
+            return;
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(",  parse json failed, %1%.") % e.what();
         }
     }else{
@@ -5619,6 +5753,10 @@ std::string escapeForJS(const std::string& input)
 
 std::string GUI_App::handle_web_request(std::string cmd)
 {
+#if AUTO_CONVERT_3MF
+    return "";
+#endif
+
     try {
         //BBS use nlohmann json format
         std::stringstream ss(cmd), oss;
@@ -6435,6 +6573,10 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         #ifdef WIN32
                            wxGetApp().mainframe->topbar()->DisableGuideModeItems();
                         #endif
+                        #ifdef __APPLE__
+                           wxGetApp().mainframe->topbar()->DisableGuideModeItemsMac();
+                           Slic3r::macos_set_menu_bar_hidden(true);
+                        #endif
                            wxGetApp().mainframe->select_tab(size_t(0));
                            wxGetApp().mainframe->m_topbar->SetSelection(size_t(MainFrame::tpHome));
                         #ifdef WIN32
@@ -6455,6 +6597,10 @@ std::string GUI_App::handle_web_request(std::string cmd)
                           
                            #ifdef WIN32
                            mainframe->topbar()->EnableGuideModeItems();
+                           #endif
+                           #ifdef __APPLE__
+                           mainframe->topbar()->EnableGuideModeItemsMac();
+                           Slic3r::macos_set_menu_bar_hidden(false);
                            #endif
                            //mainframe->select_tab(size_t(1));
                            //mainframe->m_topbar->SetSelection(size_t(MainFrame::tpPreview));
@@ -6768,7 +6914,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 }else{
                     startTour_Apple();
                 }
-                        
+                mainframe->topbar()->EnableGuideModeItemsMac();
+                Slic3r::macos_set_menu_bar_hidden(false);
 #elif defined(__linux__) || defined(__LINUX__)
                 startTour_Apple();
 #else
@@ -9088,7 +9235,9 @@ void GUI_App::update_mode(const int mode)
         mainframe->m_param_panel->update_mode();
     if (mainframe->m_param_dialog)
         mainframe->m_param_dialog->panel()->update_mode();
+#if !AUTO_CONVERT_3MF
     mainframe->m_webview->update_mode();
+#endif
     if (mainframe->m_topbar)
         mainframe->m_topbar->update_mode(mode);
 
@@ -9097,8 +9246,22 @@ void GUI_App::update_mode(const int mode)
         dynamic_cast<Notebook*>(mainframe->m_tabpanel)->UpdateMode();
 #endif
 
-    for (auto tab : tabs_list)
+    for (auto tab : tabs_list) {
         tab->update_mode();
+        if (tab->type() == Preset::TYPE_PRINT) {
+            if (mode == comSimple) {
+                std::string selectedItemName = plater()->get_process_toolbar().get_selected_item();
+                if (selectedItemName == "Speed" || selectedItemName.empty()) {
+                    auto item = plater()->get_process_toolbar().get_item(L("Speed"), false);
+                    if (item) {
+                        item->set_state(ProcessBar::GLToolbarItem::EState::Normal);
+                    }
+                    plater()->get_process_toolbar().select_item(L("Quality"));
+                    tab->select_item(L("Quality"));
+                }
+            }
+        }
+    }
     for (auto tab : model_tabs_list)
         tab->update_mode();
 

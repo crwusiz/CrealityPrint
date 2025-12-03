@@ -247,9 +247,11 @@ void show_error_id(int id, const std::string& message)
 
 void show_info(wxWindow* parent, const wxString& message, const wxString& title)
 {
+#if !AUTO_CONVERT_3MF
 	//wxMessageDialog msg_wingow(parent, message, wxString(SLIC3R_APP_NAME " - ") + (title.empty() ? _L("Notice") : title), wxOK | wxICON_INFORMATION);
 	MessageDialog msg_wingow(parent, message, wxString(SLIC3R_APP_FULL_NAME " - ") + (title.empty() ? _L("Notice") : title), wxOK | wxICON_INFORMATION);
 	msg_wingow.ShowModal();
+#endif
 }
 
 void show_info(wxWindow* parent, const char* message, const char* title)
@@ -260,8 +262,10 @@ void show_info(wxWindow* parent, const char* message, const char* title)
 
 void warning_catcher(wxWindow* parent, const wxString& message)
 {
+#if !AUTO_CONVERT_3MF
 	MessageDialog msg(parent, message, _L("Warning"), wxOK | wxICON_WARNING);
 	msg.ShowModal();
+#endif
 }
 
 static wxString bold(const wxString& str)
@@ -379,7 +383,7 @@ void show_substitutions_info(const ConfigSubstitutions& config_substitutions, co
 	wxString changes = "\n";
 	add_config_substitutions(config_substitutions, changes);
 
-#if !AUTOMATION_TOOL
+#if !AUTOMATION_TOOL || !AUTO_CONVERT_3MF
 	InfoDialog msg(nullptr,
 		format_wxstr(_L("Configuration file \"%1%\" was loaded, but some values were not recognized."), from_u8(filename)),
 		substitution_message(changes), true);
@@ -620,9 +624,6 @@ std::string get_cloud_api_url()
     std::string version_type = get_vertion_type();
 	std::string country_code = wxGetApp().app_config->get_country_code();
 	// url = "https://api-dev.crealitycloud.cn";//for dev
-	#ifdef _DEBUG1
-		version_type = "Beta";
-	#endif
     if (version_type == "Alpha") {
         if (country_code == "CN") {
             url = "https://admin-pre.crealitycloud.cn";

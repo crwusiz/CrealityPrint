@@ -26,4 +26,6 @@
 // define automationTool
 #cmakedefine01 AUTOMATION_TOOL
 
+#cmakedefine01 AUTO_CONVERT_3MF
+
 #endif /* __SLIC3R_VERSION_H */

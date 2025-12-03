@@ -3700,7 +3700,11 @@ void PrintObject::remove_bridges_from_contacts(
                     else
                         lines.push_back(polyline);
                     // Offset a polyline into a thick line.
-                    polygons_append(bridges, offset(lines, 0.5f * w + 10.f));
+                    //polygons_append(bridges, offset(lines, 0.5f * w + 10.f));
+
+                    //多层墙的时候，这里桥接路径的间距不太好确定（可以参考make_perimeters函数），所以统一使用外墙的宽度
+                    //解决bug https://zentao.creality.com/zentao/bug-view-11937.html
+                    polygons_append(bridges, offset(lines, 0.5f * (w + fw) + 10.f));
                 }
             }
         bridges = union_(bridges);

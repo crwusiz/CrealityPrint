@@ -1399,8 +1399,10 @@ void PresetUpdater::sync(std::string http_url, std::string language, std::string
                 
                 if (!Slic3r::GUI::CXCloudDataCenter::getInstance().isTokenValid()) {
                     GUI::wxGetApp().CallAfter([] {
+#if !AUTO_CONVERT_3MF
                         GUI::wxGetApp().mainframe->select_tab(Slic3r::GUI::MainFrame::tpHome);
                         GUI::wxGetApp().swith_community_sub_page("token_expired");
+#endif
                     });
                 }
  

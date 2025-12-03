@@ -1,6 +1,12 @@
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
 #include "Tab.hpp"
+#if AUTO_CONVERT_3MF
+#include "Plater.hpp"
+#include "MainFrame.hpp"
+#include "GLToolbar.hpp"
+#include "AutoConvert3mfMgr.hpp"
+#endif
 
 #include "slic3r/Utils/ExportMetas.hpp"
 #include "libslic3r/AutomationMgr.hpp"
@@ -90,5 +96,50 @@ namespace GUI {
 #endif            
         }
     }
+
+#if AUTO_CONVERT_3MF
+    void GUI_App::parse_convert_3mf_args()
+    {
+            if (init_params && init_params->argc > 3)
+            {
+        
+                std::string _arg1 = init_params->argv[1];
+                if (boost::algorithm::starts_with(_arg1, "convert_3mf"))
+			    {
+                    if(init_params->argc < 4    )
+					    return;
+
+                    // 检查第二个参数是否是目录
+                    wxString inputPath = wxString::FromUTF8(init_params->argv[2]);
+
+                    if (wxDirExists(inputPath) && init_params->argc >= 7) {
+                        // stl to 3mf
+                        // convert_3mf 某个文件夹  机型预设  耗材预设  工艺预设   输出的3mf文件名
+                        // 比如:
+                        // convert_3mf "某个stl文件夹"  "Creality K2 Plus 0.4 nozzle"  "Hyper PLA"  "0.20mm Standard"  "outputfile_1.3mf"
+
+                        auto_convert_3mf_mgr.set_printer_preset(init_params->argv[3]);
+                        auto_convert_3mf_mgr.set_output_3mf(init_params->argv[6]);
+
+                        auto_convert_3mf_mgr.set_filament_preset(init_params->argv[4]);
+                        auto_convert_3mf_mgr.set_process_preset(init_params->argv[5]);
+
+                        auto_convert_3mf_mgr.set_conversion_mode(ConversionMode::STL_TO_3MF);
+
+                    } else {
+                        auto_convert_3mf_mgr.set_printer_preset(init_params->argv[3]);
+                        auto_convert_3mf_mgr.set_output_3mf(init_params->argv[4]);
+                        auto_convert_3mf_mgr.set_conversion_mode(ConversionMode::_3MF_TO_3MF);
+                    }
+            
+                    // 开始转换过程
+                    auto_convert_3mf_mgr.start_conversion();
+                
+			} 
+
+        }
+    }
+#endif 
+
 }
 }

@@ -98,8 +98,9 @@ void ButtonsCtrl::SetSelection(int sel)
     if(-1!=sel && m_mapPageButtons.end() == m_mapPageButtons.find(sel))//not found
     {
         if (m_selection >= 0) {
-            StateColor bg_color = StateColor(std::pair{ wxColour(21, 191, 89), (int)StateColor::Hovered },
-                std::pair{ is_dark ? wxColour(1, 1, 1) : wxColour(214, 214, 220), (int)StateColor::Normal });
+            wxColour   hover_bg = is_dark ? wxColour(76, 213, 130) : wxColour(68, 205, 122);
+            StateColor bg_color = StateColor(std::pair{hover_bg, (int) StateColor::Hovered},
+                                             std::pair{is_dark ? wxColour(1, 1, 1) : wxColour(214, 214, 220), (int) StateColor::Normal});
             m_mapPageButtons[m_selection]->SetBackgroundColor(bg_color);
             StateColor text_color = StateColor(std::pair{ is_dark ? wxColour(254, 254, 254) : wxColour(255,255,255), (int)StateColor::Hovered },
                 std::pair{ is_dark ? wxColour(254, 254, 254) : wxColour(0,0,0), (int)StateColor::Normal});
@@ -114,7 +115,8 @@ void ButtonsCtrl::SetSelection(int sel)
     if (-1 == sel) 
     {
         if (m_selection >= 0) {
-            StateColor bg_color = StateColor(std::pair{ wxColour(21, 191, 89), (int) StateColor::Hovered},
+            wxColour   hover_bg = is_dark ? wxColour(76, 213, 130) : wxColour(68, 205, 122);
+            StateColor bg_color = StateColor(std::pair{hover_bg, (int) StateColor::Hovered},
                                              std::pair{is_dark ? wxColour(1, 1, 1) : wxColour(214, 214, 220), (int) StateColor::Normal});
             m_mapPageButtons[m_selection]->SetBackgroundColor(bg_color);
             StateColor text_color = StateColor(std::pair{ is_dark ? wxColour(254, 254, 254) : wxColour(255,255,255), (int)StateColor::Hovered }, 
@@ -130,8 +132,9 @@ void ButtonsCtrl::SetSelection(int sel)
     // BBS: change button color
     wxColour selected_btn_bg("#009688"); // Gradient #009688
     if (m_selection >= 0) {
-        StateColor bg_color = StateColor(std::pair{wxColour(21, 191, 89), (int) StateColor::Hovered},
-             std::pair{ is_dark ? wxColour(1,1,1) : wxColour(214, 214, 220), (int) StateColor::Normal});
+        wxColour   hover_bg = is_dark ? wxColour(76, 213, 130) : wxColour(68, 205, 122);
+        StateColor bg_color = StateColor(std::pair{hover_bg, (int) StateColor::Hovered},
+                                         std::pair{is_dark ? wxColour(1, 1, 1) : wxColour(214, 214, 220), (int) StateColor::Normal});
         m_mapPageButtons[m_selection]->SetBackgroundColor(bg_color);
         StateColor text_color = StateColor(
             std::pair{ is_dark ? wxColour(254, 254, 254) : wxColour(255,255,255), (int)StateColor::Hovered },
@@ -149,8 +152,8 @@ void ButtonsCtrl::SetSelection(int sel)
     m_mapPageButtons[m_selection]->SetSelected(true);
     m_mapPageButtons[m_selection]->SetTextColor(text_color);
 
-    StateColor bg_color = StateColor(std::pair{ wxColour(21, 191, 89), (int)StateColor::Hovered },
-        std::pair{ wxColour(21, 191, 89), (int)StateColor::Normal });
+    StateColor bg_color = StateColor(std::pair{ wxColour(68, 205, 122), (int)StateColor::Hovered },
+                                     std::pair{is_dark ? wxColour(31, 202, 99) : wxColour(21, 192, 89), (int) StateColor::Normal});
     m_mapPageButtons[m_selection]->SetBackgroundColor(bg_color);
     m_mapPageButtons[m_selection]->SetFocus();
 
@@ -166,8 +169,9 @@ void ButtonsCtrl::RefreshColor()
     wxColour default_btn_bg = Slic3r::GUI::wxGetApp().dark_mode() ? wxColour("#010101") : wxColour(214, 214, 220); // Gradient #414B4E
     SetBackgroundColour(default_btn_bg);
     for (auto& [index, button] : m_mapPageButtons) {
-        StateColor bg_color = StateColor(std::pair{ wxColour(21, 191, 89), (int)StateColor::Hovered },
-            std::pair{ is_dark ? wxColour(1, 1, 1) : wxColour(214, 214, 220), (int)StateColor::Normal });
+        wxColour   hover_bg = is_dark ? wxColour(76, 213, 130) : wxColour(68, 205, 122);
+        StateColor bg_color = StateColor(std::pair{hover_bg, (int) StateColor::Hovered},
+                                         std::pair{is_dark ? wxColour(1, 1, 1) : wxColour(214, 214, 220), (int) StateColor::Normal});
         button->SetCornerRadius(FromDIP(3));
         button->SetFontBold(true);
         button->SetBackgroundColor(bg_color);     
@@ -178,8 +182,8 @@ void ButtonsCtrl::RefreshColor()
         if (m_selection == index)
         {
             button->SetSelected(true);
-            bg_color = StateColor(std::pair{ wxColour(21, 191, 89), (int)StateColor::Hovered },
-                std::pair{ wxColour(21, 191, 89), (int)StateColor::Normal });
+            bg_color = StateColor(std::pair{wxColour(68, 205, 122), (int) StateColor::Hovered},
+                std::pair{is_dark ? wxColour(31, 202, 99) : wxColour(21, 192, 89), (int) StateColor::Normal});
             button->SetBackgroundColor(bg_color);
             StateColor text_color = StateColor(std::pair{ is_dark ? wxColour(254, 254, 254) : wxColour(255,255,255), (int)StateColor::Hovered },
                 std::pair{ is_dark ? wxColour(254, 254, 254) : wxColour(255,255,255), (int)StateColor::Normal });
@@ -211,7 +215,8 @@ bool ButtonsCtrl::InsertPage(
     // BBS set size for button
     btn->SetMinSize({(text.empty() ? FromDIP(40) : FromDIP(100)), FromDIP(30)});
     bool is_dark = Slic3r::GUI::wxGetApp().dark_mode();
-    StateColor bg_color = StateColor(std::pair{wxColour(21, 191, 89), (int) StateColor::Hovered},
+    wxColour   hover_bg = is_dark ? wxColour(76, 213, 130) : wxColour(68, 205, 122);
+    StateColor bg_color = StateColor(std::pair{hover_bg, (int) StateColor::Hovered},
                                      std::pair{is_dark ? wxColour(1, 1, 1) : wxColour(214, 214, 220), (int) StateColor::Normal});
 
     btn->SetBackgroundColor(bg_color);
@@ -764,8 +769,31 @@ void BBLTopbar::OnSaveProject(wxAuiToolBarEvent& event)
     MainFrame* main_frame = dynamic_cast<MainFrame*>(m_frame);
     Plater* plater = main_frame->plater();
     plater->save_project(false, FT_PROJECT);
+    EnableSaveItem(false);
 }
 
+void BBLTopbar::EnableSaveItem(bool enable)
+{
+    if (m_save_project_item && GetToolEnabled(m_save_project_item->GetId()) != enable) {
+        this->EnableTool(m_save_project_item->GetId(), enable);
+        Refresh();
+    }
+}
+void BBLTopbar::EnableUndoItem(bool enable)
+{
+    if (m_undo_item && GetToolEnabled(m_undo_item->GetId()) != enable) {
+        this->EnableTool(m_undo_item->GetId(), enable);
+        Refresh();
+    }
+}
+
+void BBLTopbar::EnableRedoItem(bool enable)
+{
+    if (m_redo_item && GetToolEnabled(m_redo_item->GetId()) != enable) {
+        this->EnableTool(m_redo_item->GetId(), enable);
+        Refresh();
+    }
+}
 void BBLTopbar::OnUndo(wxAuiToolBarEvent& event)
 {
     MainFrame* main_frame = dynamic_cast<MainFrame*>(m_frame);
@@ -872,6 +900,44 @@ void BBLTopbar::DisableGuideModeItems()
     Refresh();
 }
 
+
+#ifdef __APPLE__
+void BBLTopbar::DisableGuideModeItemsMac()
+{
+    // Only touch the row buttons and tab control to avoid mac-specific crashes.
+    if (tool_item)
+        this->EnableTool(tool_item->GetId(), false); // Open project
+    if (m_save_project_item)
+        this->EnableTool(m_save_project_item->GetId(), false); // Save project
+    if (m_preference_item)
+        this->EnableTool(m_preference_item->GetId(), false); // Preferences
+    if (m_undo_item)
+        this->EnableTool(m_undo_item->GetId(), false); // Undo
+    if (m_redo_item)
+        this->EnableTool(m_redo_item->GetId(), false); // Redo
+    if (m_tabCtrol)
+        m_tabCtrol->Enable(false); // Tabs: Prepare/Preview/Device
+    Refresh();
+}
+
+void BBLTopbar::EnableGuideModeItemsMac()
+{
+    if (tool_item)
+        this->EnableTool(tool_item->GetId(), true);
+    if (m_save_project_item)
+        this->EnableTool(m_save_project_item->GetId(), true);
+    if (m_preference_item)
+        this->EnableTool(m_preference_item->GetId(), true);
+    if (m_undo_item)
+        this->EnableTool(m_undo_item->GetId(), true);
+    if (m_redo_item)
+        this->EnableTool(m_redo_item->GetId(), true);
+    if (m_tabCtrol)
+        m_tabCtrol->Enable(true);
+    Refresh();
+}
+#endif
+
 void BBLTopbar::EnableGuideModeItems()
 {
     if (logo_item->GetUserData() != 0)
@@ -904,6 +970,19 @@ void BBLTopbar::EnableGuideModeItems()
     m_title_LabelItem->Enable(true);
     this->EnableTool(m_upload_btn->GetId(), true);
 
+    Refresh();
+}
+
+void BBLTopbar::DisableTabs()
+{
+    if (m_tabCtrol)
+        m_tabCtrol->Enable(false);
+    Refresh();
+}
+void BBLTopbar::EnableTabs()
+{
+    if (m_tabCtrol)
+        m_tabCtrol->Enable(true);
     Refresh();
 }
 

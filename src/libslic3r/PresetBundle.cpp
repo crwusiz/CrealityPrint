@@ -538,6 +538,14 @@ std::string PresetBundle::get_texture_for_printer_model(std::string model_name)
         }
     }
 
+    // Override for Creality: F022 uses smooth_F022.png, others use smooth.png
+    if (!vendor_name.empty() && vendor_name == "Creality") {
+        if (model_name == "Creality F022" || texture_name == "smooth_F022.png" || texture_name == "texture_F022.png")
+            texture_name = "smooth_F022.png";
+        else
+            texture_name = "smooth.png";
+    }
+
     if (!texture_name.empty())
     {
         out = Slic3r::data_dir() + "/vendor/" + vendor_name + "/" + texture_name;
@@ -568,7 +576,11 @@ std::string PresetBundle::get_stl_model_for_printer_model(std::string model_name
 
     if (vendor_name.compare("Creality") == 0)
     {
-        stl_name = "creality_k1_buildplate_model.stl";
+        // Special-case F022 to use its dedicated model; others keep legacy K1 default.
+        if (model_name == "Creality F022" || stl_name == "Creality F022_buildplate_model.stl")
+            stl_name = "Creality F022_buildplate_model.stl";
+        else
+            stl_name = "creality_k1_buildplate_model.stl";
     }
 
     if (!stl_name.empty())

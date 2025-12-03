@@ -903,7 +903,7 @@ std::string CoolingBuffer::apply_layer_cooldown(
             need_set_fan = true;
         } else if (line->type & CoolingLine::TYPE_FORCE_RESUME_FAN) {
             // check if any fan speed change request is active
-            if (m_fan_speed != -1 && !std::any_of(fan_speed_change_requests.begin(), fan_speed_change_requests.end(), [](const std::pair<int, bool>& p) { return p.second; })){
+            if (m_fan_speed != -1 /*&& !std::any_of(fan_speed_change_requests.begin(), fan_speed_change_requests.end(), [](const std::pair<int, bool>& p) { return p.second; })*/){
                 fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] = true;
                 need_set_fan = true;
             }
@@ -1014,7 +1014,13 @@ std::string CoolingBuffer::apply_layer_cooldown(
         }
 
         if (need_set_fan) {
-            if (fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START]){
+            if (fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] && m_current_fan_speed != -1)
+            {
+                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_current_fan_speed);
+                fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] = false;
+            }
+            else if(fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START])
+            {
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, overhang_fan_speed);
                 m_current_fan_speed = overhang_fan_speed;
             }
@@ -1022,13 +1028,9 @@ std::string CoolingBuffer::apply_layer_cooldown(
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, supp_interface_fan_speed);
                 m_current_fan_speed = supp_interface_fan_speed;
             }
-            else if(fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] && m_current_fan_speed != -1){
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_current_fan_speed);
-                fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] = false;
-            } else if (fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_END]) {
+            else if (fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_END]) {
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_fan_speed);
                 m_current_fan_speed = m_fan_speed;
-
             }
             else
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_fan_speed);

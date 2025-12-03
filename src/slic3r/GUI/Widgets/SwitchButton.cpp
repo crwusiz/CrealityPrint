@@ -4,29 +4,29 @@
 
 #include "../wxExtensions.hpp"
 #include "../Utils/MacDarkMode.hpp"
+#include "../Utils/WxFontUtils.hpp"
+#ifdef __APPLE__
+#include "libslic3r/MacUtils.hpp"
+#endif
 
-#include <string>
-#include <wx/dcmemory.h>
 #include <wx/dcclient.h>
 #include <wx/dcgraph.h>
+#include <wx/dcmemory.h>
 
-SwitchButton::SwitchButton(wxWindow* parent, wxWindowID id, std::string on, std::string off, bool set_bitmap_margins/* = false*/, const wxSize& bmp_margin_size/* = wxSize(0, 0)*/)
+wxDEFINE_EVENT(wxCUSTOMEVT_SWITCH_POS, wxCommandEvent);
+
+SwitchButton::SwitchButton(wxWindow* parent, wxWindowID id)
 	: wxBitmapToggleButton(parent, id, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxBU_EXACTFIT)
-    , m_on(this, on, 14)
-    , m_off(this, off, 14)
-    , text_color(std::pair{0xfffffe, (int) StateColor::Checked}, std::pair{0x000000, (int) StateColor::Normal})
-    , track_color(0xD9D9D9)
-    , thumb_color(std::pair{0x15BF59, (int) StateColor::Checked}, std::pair{0xD9D9D9, (int) StateColor::Normal})
-    , m_set_bitmap_margins(set_bitmap_margins)
-    , m_bmp_margin_size(bmp_margin_size)
+	, m_on(this, "toggle_on", 16)
+	, m_off(this, "toggle_off", 16)
+    , text_color(std::pair{0xfffffe, (int) StateColor::Checked}, std::pair{0x6B6B6B, (int) StateColor::Normal})
+	, track_color(0xD9D9D9)
+    , thumb_color(std::pair{0x00AE42, (int) StateColor::Checked}, std::pair{0xD9D9D9, (int) StateColor::Normal})
 {
 	SetBackgroundColour(StaticBox::GetParentBackgroundColor(parent));
 	Bind(wxEVT_TOGGLEBUTTON, [this](auto& e) { update(); e.Skip(); });
 	SetFont(Label::Body_12);
 	Rescale();
-
-    if (m_set_bitmap_margins)
-        SetBitmapMargins(m_bmp_margin_size);
 }
 
 void SwitchButton::SetLabels(wxString const& lbl_on, wxString const& lbl_off)
@@ -122,9 +122,7 @@ void SwitchButton::Rescale()
             wxBitmap bmp(std::move(image));
             memdc.SelectObject(bmp);
 #endif
-            wxFont font = dc.GetFont();
-            font.SetPointSize(9);
-            memdc.SetFont(font);
+            memdc.SetFont(dc.GetFont());
             if (fontScale) {
                 memdc.SetFont(dc.GetFont().Scaled(fontScale));
                 textSize[0] = memdc.GetTextExtent(labels[0]);
@@ -132,39 +130,34 @@ void SwitchButton::Rescale()
 			}
 			auto state = i == 0 ? StateColor::Enabled : (StateColor::Checked | StateColor::Enabled);
             {
-				wxGraphicsContext* gc   = wxGraphicsContext::Create(memdc);
-                wxGraphicsPath     path = gc->CreatePath();
-
-                gc->SetBrush(wxBrush(thumb_color.colorForStates(StateColor::Checked | StateColor::Enabled)));
-                double radius = 4;
-                if (i == 1) {
-                    wxRect rect(trackSize.x / 2, 1, trackSize.x / 2-2, trackSize.y-2);
-                    path.MoveToPoint(rect.GetX(), rect.GetY());
-                    path.AddLineToPoint(rect.GetRight() - radius, rect.GetY());
-                    path.AddArcToPoint(rect.GetRight(), rect.GetY(), rect.GetRight(), rect.GetY() + radius, radius);
-                    path.AddLineToPoint(rect.GetRight(), rect.GetBottom() - radius);
-                    path.AddArcToPoint(rect.GetRight(), rect.GetBottom(), rect.GetRight() - radius, rect.GetBottom(), radius);
-                    path.AddLineToPoint(rect.GetX(), rect.GetBottom());
-                    path.AddLineToPoint(rect.GetX(), rect.GetY());
-                    gc->FillPath(path);
-                } else {
-                    wxRect rect(1, 1, trackSize.x-2, trackSize.y-2);
-                    path.MoveToPoint(rect.GetX() + radius, rect.GetY());
-                    path.AddLineToPoint(rect.GetRight() / 2, rect.GetY());
-                    path.AddLineToPoint(rect.GetRight() / 2, rect.GetBottom());
-                    path.AddLineToPoint(rect.GetX() + radius, rect.GetBottom());
-                    path.AddArcToPoint(rect.GetX(), rect.GetBottom(), rect.GetX(), rect.GetBottom() - radius, radius);
-                    path.AddLineToPoint(rect.GetX(), rect.GetY() + radius);
-                    path.AddArcToPoint(rect.GetX(), rect.GetY(), rect.GetX() + radius, rect.GetY(), radius);
-                    gc->FillPath(path);
-                }
-
-                delete gc;
+#ifdef __WXMSW__
+				wxGCDC dc2(memdc);
+#else
+                wxDC &dc2(memdc);
+#endif
+				dc2.SetBrush(wxBrush(track_color.colorForStates(state)));
+				dc2.SetPen(wxPen(track_color.colorForStates(state)));
+                dc2.DrawRoundedRectangle(wxRect({0, 0}, trackSize), trackSize.y / 2);
+				dc2.SetBrush(wxBrush(thumb_color.colorForStates(StateColor::Checked | StateColor::Enabled)));
+				dc2.SetPen(wxPen(thumb_color.colorForStates(StateColor::Checked | StateColor::Enabled)));
+				dc2.DrawRoundedRectangle(wxRect({ i == 0 ? BS : (trackSize.x - thumbSize.x - BS), BS}, thumbSize), thumbSize.y / 2);
 			}
             memdc.SetTextForeground(text_color.colorForStates(state ^ StateColor::Checked));
-            memdc.DrawText(labels[0], {BS + (thumbSize.x - textSize[0].x) / 2, BS + (thumbSize.y - textSize[0].y) / 2});
+            auto text_y = BS + (thumbSize.y - textSize[0].y) / 2;
+#ifdef __APPLE__
+            if (Slic3r::is_mac_version_15()) {
+                text_y -= FromDIP(2);
+            }
+#endif
+            memdc.DrawText(labels[0], {BS + (thumbSize.x - textSize[0].x) / 2, text_y});
             memdc.SetTextForeground(text_color2.count() == 0 ? text_color.colorForStates(state) : text_color2.colorForStates(state));
-            memdc.DrawText(labels[1], {trackSize.x - thumbSize.x - BS + (thumbSize.x - textSize[1].x) / 2, BS + (thumbSize.y - textSize[1].y) / 2});
+            auto text_y_1 = BS + (thumbSize.y - textSize[1].y) / 2;
+#ifdef __APPLE__
+            if (Slic3r::is_mac_version_15()) {
+                text_y_1 -= FromDIP(2);
+            }
+#endif
+            memdc.DrawText(labels[1], {trackSize.x - thumbSize.x - BS + (thumbSize.x - textSize[1].x) / 2, text_y_1});
 			memdc.SelectObject(wxNullBitmap);
 #ifdef __WXOSX__
             bmp = wxBitmap(bmp.ConvertToImage(), -1, scale);
@@ -179,53 +172,166 @@ void SwitchButton::Rescale()
 void SwitchButton::update()
 {
 	SetBitmap((GetValue() ? m_on : m_off).bmp());
+}
 
-    bool isEnabled = false;
-    if(GetValue()) {
-        isEnabled = this->IsThisEnabled();
-    }
-    else {
-        isEnabled = this->IsThisEnabled();
-    }
+SwitchBoard::SwitchBoard(wxWindow *parent, wxString leftL, wxString right, wxSize size)
+ : wxWindow(parent, wxID_ANY, wxDefaultPosition, size)
+{
+#ifdef __WINDOWS__
+    SetDoubleBuffered(true);
+#endif //__WINDOWS__
 
-    wxBitmap hoverBitmap = GetValue() ? m_hover_off : m_hover_on;
-    if (hoverBitmap.IsOk()) {
-        wxLogDebug("Setting hover bitmap");
-        SetBitmapHover(hoverBitmap);
+    SetBackgroundColour(*wxWHITE);
+	leftLabel = leftL;
+    rightLabel = right;
+
+	SetMinSize(size);
+	SetMaxSize(size);
+
+    Bind(wxEVT_PAINT, &SwitchBoard::paintEvent, this);
+    Bind(wxEVT_LEFT_DOWN, &SwitchBoard::on_left_down, this);
+
+    Bind(wxEVT_ENTER_WINDOW, [this](auto &e) { SetCursor(wxCURSOR_HAND); });
+    Bind(wxEVT_LEAVE_WINDOW, [this](auto &e) { SetCursor(wxCURSOR_ARROW); });
+}
+
+void SwitchBoard::updateState(wxString target)
+{
+    if (target.empty()) {
+        switch_left = false;
+        switch_right = false;
     } else {
-        wxLogDebug("Hover bitmap is invalid");
+        if (target == "left") {
+            switch_left = true;
+            switch_right = false;
+        } else if (target == "right") {
+            switch_left  = false;
+            switch_right = true;
+        }
     }
-
+    Refresh();
 }
 
-void SwitchButton::SetBitMapHover(const wxBitmap& bmp)
+void SwitchBoard::paintEvent(wxPaintEvent &evt)
 {
-    if (bmp.IsOk())
+    wxPaintDC dc(this);
+    render(dc);
+}
+
+void SwitchBoard::render(wxDC &dc)
+{
+#ifdef __WXMSW__
+    wxSize     size = GetSize();
+    wxMemoryDC memdc;
+    wxBitmap   bmp(size.x, size.y);
+    memdc.SelectObject(bmp);
+    memdc.Blit({0, 0}, size, &dc, {0, 0});
+
     {
-        wxBitmapToggleButton::SetBitmapHover(bmp);
+        wxGCDC dc2(memdc);
+        doRender(dc2);
     }
-    else
+
+    memdc.SelectObject(wxNullBitmap);
+    dc.DrawBitmap(bmp, 0, 0);
+#else
+    doRender(dc);
+#endif
+}
+
+void SwitchBoard::doRender(wxDC &dc)
+{
+    wxColour disable_color = wxColour(0xCECECE);
+
+    dc.SetPen(*wxTRANSPARENT_PEN);
+
+    if (is_enable) {dc.SetBrush(wxBrush(0xeeeeee));
+    } else {dc.SetBrush(disable_color);}
+    dc.DrawRoundedRectangle(0, 0, GetSize().x, GetSize().y, 8);
+
+	/*left*/
+    if (switch_left) {
+        is_enable ? dc.SetBrush(wxBrush(wxColour(0, 174, 66))) : dc.SetBrush(disable_color);
+        dc.DrawRoundedRectangle(0, 0, GetSize().x / 2, GetSize().y, 8);
+	}
+
+    if (switch_left) {
+		dc.SetTextForeground(*wxWHITE);
+    } else {
+        dc.SetTextForeground(0x333333);
+	}
+
+    dc.SetFont(::Label::Body_13);
+    Slic3r::GUI::WxFontUtils::get_suitable_font_size(0.6 * GetSize().GetHeight(), dc);
+
+    auto left_txt_size = dc.GetTextExtent(leftLabel);
+    dc.DrawText(leftLabel, wxPoint((GetSize().x / 2 - left_txt_size.x) / 2, (GetSize().y - left_txt_size.y) / 2));
+
+	/*right*/
+    if (switch_right) {
+        if (is_enable) {dc.SetBrush(wxBrush(wxColour(0, 174, 66)));
+        } else {dc.SetBrush(disable_color);}
+        dc.DrawRoundedRectangle(GetSize().x / 2, 0, GetSize().x / 2, GetSize().y, 8);
+	}
+
+    auto right_txt_size = dc.GetTextExtent(rightLabel);
+    if (switch_right) {
+        dc.SetTextForeground(*wxWHITE);
+    } else {
+        dc.SetTextForeground(0x333333);
+    }
+    dc.DrawText(rightLabel, wxPoint((GetSize().x / 2 - right_txt_size.x) / 2 + GetSize().x / 2, (GetSize().y - right_txt_size.y) / 2));
+
+}
+
+void SwitchBoard::on_left_down(wxMouseEvent &evt)
+{
+    if (!is_enable) {
+        return;
+    }
+    int index = -1;
+    auto pos = ClientToScreen(evt.GetPosition());
+    auto rect = ClientToScreen(wxPoint(0, 0));
+
+    if (pos.x > 0 && pos.x < rect.x + GetSize().x / 2) {
+        switch_left = true;
+        switch_right = false;
+        index = 1;
+    } else {
+        switch_left  = false;
+        switch_right = true;
+        index = 0;
+    }
+
+    if (auto_disable_when_switch)
     {
-        wxLogError("Invalid bitmap passed to SetBitmapHover");
+        is_enable = false;// make it disable while switching
     }
+    Refresh();
+
+    wxCommandEvent event(wxCUSTOMEVT_SWITCH_POS);
+    event.SetInt(index);
+    wxPostEvent(this, event);
 }
 
-void SwitchButton::SetBitmapHovered_(const std::string& on_hover_bmp_name, const std::string& off_hover_bmp_name)
+void SwitchBoard::Enable()
 {
-    try {
-            m_hover_on = create_scaled_bitmap(on_hover_bmp_name, m_parent, 24);
-            m_hover_off = create_scaled_bitmap(off_hover_bmp_name, m_parent, 24);
-    } catch (...) {
-        m_hover_on = m_hover_off = wxNullBitmap;
+    if (is_enable == true)
+    {
+        return;
     }
+
+    is_enable = true;
+    Refresh();
 }
 
-void SwitchButton::updateBitmapHover()
+void SwitchBoard::Disable()
 {
-    // SetBitmapHover(GetValue() ? m_hover_off : m_hover_on); 
-    // SetBitMapHover(m_hover_on); 
+    if (is_enable == false)
+    {
+        return;
+    }
 
-    // if(GetValue())
-    //     CallAfter([this]() { SetBitmapHover(GetValue() ? m_hover_off : m_hover_on); });
-
+    is_enable = false;
+    Refresh();
 }

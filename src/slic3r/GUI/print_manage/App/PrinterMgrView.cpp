@@ -23,6 +23,7 @@
 #include "slic3r/GUI/print_manage/RemotePrinterManager.hpp"
 #include <boost/beast/core/detail/base64.hpp>
 #include <boost/log/trivial.hpp>
+#include <wx/strconv.h>
 #include <vector>
 
 #include <wx/stdpaths.h>
@@ -44,6 +45,7 @@
 #include <slic3r/GUI/print_manage/AppUtils.hpp>
 #include "video/RTSPDecoder.h"
 #include "buildinfo.h"
+#include <cmath>
 
 namespace pt = boost::property_tree;
 
@@ -220,12 +222,25 @@ void PrinterMgrView::processMqttMessage(std::string topic,std::string playload)
     {
         if (!m_browser->IsBusy())
          {
-            nlohmann::json commandJson;
-            commandJson["command"] = "mqtt_message";
-            commandJson["data"]    = RemotePrint::Utils::url_encode(playload);
+            try {
+                // Convert payload (possibly ANSI/GBK) to UTF-8 for downstream JS using wxWidgets.
+                // Base64-encode to keep transport safe.
+                std::string encoded_payload;
+                if (!playload.empty()) {
+                    const std::size_t encoded_size = boost::beast::detail::base64::encoded_size(playload.size());
+                    encoded_payload.resize(encoded_size);
+                    boost::beast::detail::base64::encode(&encoded_payload[0], playload.data(), playload.size());
+                }
+                nlohmann::json commandJson;
+                commandJson["command"] = "mqtt_message";
+                commandJson["data"]    = encoded_payload;
 
-            wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
-            run_script(strJS.ToStdString());
+                const auto commandStr = commandJson.dump(-1, ' ', true, nlohmann::json::error_handler_t::replace);
+                wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandStr));
+                run_script(strJS.ToStdString());
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to process MQTT payload: " << e.what();
+            }
         }
         std::string requestId = topic.substr(26);
         nlohmann::json reply;
@@ -420,39 +435,48 @@ void PrinterMgrView::OnLoaded(wxWebViewEvent &evt)
     correct_device();
     //setMqttDeviceDN("61643612032A19");
 }
-void PrinterMgrView::sendProgressWithRateLimit(std::string ip,float progress,double speed)
+
+void PrinterMgrView::sendAllProgressWithRateLimit()
 {
     std::lock_guard<std::mutex> lock(sendMutex);
     auto now = std::chrono::steady_clock::now();
-    if (now - lastSendTime >= std::chrono::milliseconds(500)) {
-        lastSendTime = now;
-    }else{
+    if (now - lastSendTime < std::chrono::milliseconds(500)) {
         return;
     }
-    std::cout << "Progress: " << progress << "% for IP: " << ip << std::endl;
-                            nlohmann::json top_level_json;
-                            top_level_json["ip"] = ip;
-                            top_level_json["progress"]  = progress;
-                            top_level_json["speed"]  = round(speed);
+    lastSendTime = now;
 
-                            std::string json_str = top_level_json.dump();
-                            nlohmann::json commandJson;
-                            commandJson["command"] = "upload_progress";
-                            commandJson["data"]    = RemotePrint::Utils::url_encode(json_str);
+    nlohmann::json all_json;
+    nlohmann::json items = nlohmann::json::array();
+    {
+        std::lock_guard<std::mutex> lk(m_uploadProgressMutex);
+        for (const auto& kv : m_uploadProgressMap) {
+            nlohmann::json item;
+            item["ip"] = kv.first;
+            item["progress"] = kv.second.progress;
+            item["speed"] = std::round(kv.second.speed);
+            items.push_back(item);
+        }
+    }
+    all_json["items"] = items;
 
-                            wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
+    std::string json_str = all_json.dump();
+    nlohmann::json commandJson;
+    commandJson["command"] = "upload_progress";
+    commandJson["data"]    = RemotePrint::Utils::url_encode(json_str);
 
-                            wxTheApp->CallAfter([this, strJS]() {
-                                try
-                                {
-                                    if (!m_browser->IsBusy()) {
-                                        run_script(strJS.ToStdString());
-                                    }
-                                }
-                                catch (...)
-                                {
-                                }
-                            });
+    wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
+
+    wxTheApp->CallAfter([this, strJS]() {
+        try
+        {
+            if (!m_browser->IsBusy()) {
+                run_script(strJS.ToStdString());
+            }
+        }
+        catch (...)
+        {
+        }
+    });
 }
 void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
 {
@@ -470,23 +494,27 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
 
         wxString strCmd = j["command"];
         BOOST_LOG_TRIVIAL(trace) << "DeviceDialog::OnScriptMessage;Command:" << strCmd;
-
+        if (strCmd == "get_printer_progress")
+        {
+            //get all uploading progress
+            sendAllProgressWithRateLimit();
+        }
         if (strCmd == "send_gcode")
         {
             int plateIndex = j["plateIndex"];
-            wxString ipAddress = j["ipAddress"];
-            wxString uploadName = j["uploadName"];
+            std::string ipAddress = j["ipAddress"].get<std::string>();
+            std::string uploadName = j["uploadName"].get<std::string>();
             bool oldPrinter = j["oldPrinter"];
             int  moonrakerPort = j["moonrakerPort"];
 
             if (oldPrinter)
             {
-                std::string strIpAddr = ipAddress.ToStdString();
+                std::string strIpAddr = ipAddress;
                 RemotePrint::RemotePrinterManager::getInstance().setOldPrinterMap(strIpAddr);
             }
             if (moonrakerPort > 0)
             {
-                std::string strIpAddr = ipAddress.ToStdString();
+                std::string strIpAddr = ipAddress;
                 if (strIpAddr.find('(') != std::string::npos)
                 {
                     RemotePrint::RemotePrinterManager::getInstance().setKlipperPrinterMap(strIpAddr, moonrakerPort);
@@ -501,22 +529,30 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
                                                                              {AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS,
                                                                               AnalyticsDataEventType::ANALYTICS_OBJECT_PRINT_PARAMS}, plateIndex);
 
-                std::string gcodeFilePath = plate->get_tmp_gcode_path();
+                std::string gcodeFilePath;
                 if (wxGetApp().plater()->only_gcode_mode())
                 {
-                    gcodeFilePath = wxGetApp().plater()->get_last_loaded_gcode().ToUTF8();
+                   GCodeProcessorResult* plate_gcode_result = plate->get_slice_result();
+                    if (plate_gcode_result)
+                    {
+                        gcodeFilePath = plate_gcode_result->filename;
+                    }
 
+                    if (gcodeFilePath.empty())
+                        return;
+
+                }else{
+                    gcodeFilePath = _L(plate->get_tmp_gcode_path()).ToUTF8();
                 }
 
-                RemotePrint::RemotePrinterManager::getInstance().pushUploadMultTasks(ipAddress.ToStdString(), uploadName.ToStdString(), gcodeFilePath,
+                    RemotePrint::RemotePrinterManager::getInstance().pushUploadMultTasks(ipAddress, uploadName, gcodeFilePath,
                     [this](std::string ip, float progress, double speed) {
-                        // BOOST_LOG_TRIVIAL(info) << "Progress: " << progress << "% for IP: " << ip;
-                        //进度发送太快会导致浏览器卡死，所以这里限制一下
-                        
-                        if (progress >= 1.0f)
+                        // 缓存所有设备的上传进度与速度，并批量上报给前端（限频）
                         {
-                            sendProgressWithRateLimit(ip, progress,speed);
+                            std::lock_guard<std::mutex> lk(m_uploadProgressMutex);
+                            m_uploadProgressMap[ip] = ProgressInfo{progress, speed};
                         }
+                        sendAllProgressWithRateLimit();
                     },
                     [this](std::string ip, int statusCode) {
                         nlohmann::json top_level_json;
@@ -584,6 +620,11 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
                             {
                             }
                         });
+                        // 上传完成后，移除对应 IP 的进度缓存
+                        {
+                            std::lock_guard<std::mutex> lk(m_uploadProgressMutex);
+                            m_uploadProgressMap.erase(ip);
+                        }
 
               });
             }
@@ -760,6 +801,10 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
                 wxString strJS = wxString::Format("window.handleStudioCmd('%s');", commandJson.dump());
                 wxGetApp().CallAfter([this, strJS] { run_script(strJS.ToStdString()); });
             });
+        }
+        else if (strCmd == "retry_upload") {
+            wxString ipAddress = j["ipAddress"];
+            RemotePrint::RemotePrinterManager::getInstance().retryUpload(ipAddress.ToStdString());
         }
         else if (strCmd == "diagnosis_close_cmd")
         {
@@ -1039,7 +1084,9 @@ void PrinterMgrView::down_files(std::vector<std::string> download_infos, std::st
                         fs::fstream file(tmp_path, std::ios::out | std::ios::binary | std::ios::trunc);
                         file.write(body.c_str(), body.size());
                         file.close();
-
+                        if(fs::exists(target_path)){
+                            fs::remove(target_path);
+                        }
                         fs::rename(tmp_path, target_path);
                     })
                     .perform_sync();

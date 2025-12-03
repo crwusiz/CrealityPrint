@@ -200,7 +200,7 @@ void GLGizmoFlatten::update_planes()
             }
         if (facet_idx == num_of_facets)
             break; // Everything was visited already
-        std::vector<Vec3d> normals;
+        std::vector<std::pair<Vec3d, double>> normals; // (normal, area)
         Vec3d              avg_normal(0.0, 0.0, 0.0);
         while (facet_queue_cnt > 0) {
             int facet_idx = facet_queue[-- facet_queue_cnt];
@@ -210,7 +210,20 @@ void GLGizmoFlatten::update_planes()
                 for (int j=0; j<3; ++j)
                     m_planes.back().vertices.emplace_back(ch.its.vertices[face[j]].cast<double>());
 
-                avg_normal += face_normals[facet_idx].cast<double>();
+                 const Vec3d v0 = ch.its.vertices[face[0]].cast<double>();
+                 const Vec3d v1 = ch.its.vertices[face[1]].cast<double>();
+                 const Vec3d v2 = ch.its.vertices[face[2]].cast<double>();
+                 const double tri_area = 0.5 * ((v1 - v0).cross(v2 - v0)).norm();
+
+                 Vec3d n_face = this_normal.cast<double>();
+                 const Vec3d seed = normal_ptr->cast<double>();
+                 if (n_face.dot(seed) < 0.0) n_face = -n_face;
+
+                //avg_normal += face_normals[facet_idx].cast<double>();
+                 avg_normal += tri_area * n_face;
+
+                 normals.emplace_back(n_face, tri_area);
+
                 //normals.emplace_back(face_normals[facet_idx].cast<double>());
                 facet_visited[facet_idx] = true;
                 for (int j = 0; j < 3; ++ j)
@@ -218,8 +231,22 @@ void GLGizmoFlatten::update_planes()
                         facet_queue[facet_queue_cnt ++] = neighbor_idx;
             }
         }
-        avg_normal.normalize();
-        m_planes.back().normal = avg_normal;
+
+        //avg_normal.normalize();
+        if (avg_normal.norm() > 1e-12)
+            avg_normal.normalize();
+        else
+            avg_normal = normal_ptr->cast<double>();
+
+        //m_planes.back().normal = avg_normal;
+        double best_score = -1.0;
+        Vec3d   best_n    = avg_normal;
+        for (const auto& [ni, wi] : normals) {
+            double score = wi * std::max(-1.0, std::min(1.0, ni.normalized().dot(avg_normal)));
+            if (score > best_score) { best_score = score; best_n = ni.normalized(); }
+        }
+
+        m_planes.back().normal = best_n;
 
        // m_planes.back().normal = normal_ptr->cast<double>();
 

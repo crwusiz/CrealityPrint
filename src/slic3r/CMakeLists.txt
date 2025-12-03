@@ -697,6 +697,14 @@ set(SLIC3R_GUI_SOURCES
     GUI/CrProject.cpp
 )
 
+option(AUTO_CONVERT_3MF "Enable auto conversion of 3MF files" OFF)
+if(AUTO_CONVERT_3MF)
+    list(APPEND SLIC3R_GUI_SOURCES
+        GUI/AutoConvert3mfMgr.hpp
+        GUI/AutoConvert3mfMgr.cpp
+        )
+endif()
+
 if (WIN32)
     list(APPEND SLIC3R_GUI_SOURCES
             GUI/dark_mode/dark_mode.hpp

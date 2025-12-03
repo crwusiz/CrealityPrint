@@ -853,17 +853,18 @@ AccelerationAndSpeedLimitPanel::AccelerationAndSpeedLimitPanel(const std::string
     m_headPanelSizer->Add(m_resetBtn, 1, wxLEFT | wxALIGN_CENTER_VERTICAL);
     m_headPanelSizer->AddStretchSpacer();
 
-    HoverBorderIcon* addBtn = new HoverBorderIcon(panel, wxEmptyString,
+    m_addBtn = new HoverBorderIcon(panel, wxEmptyString,
         wxGetApp().dark_mode() ? "addMaterial_dark_default" : "addMaterial_light_default", 
         wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
-    addBtn->SetMinSize(wxSize(FromDIP(24), FromDIP(24)));
-    addBtn->SetMaxSize(wxSize(FromDIP(24), FromDIP(24)));
-    addBtn->SetBorderColorNormal(wxColour(bgColor));
-    addBtn->SetBackgroundColor(StateColor(std::pair<wxColour, int>(wxColour(bgColor), StateColor::Pressed),
+    m_addBtn->setDisableIcon(wxGetApp().dark_mode() ? "addMaterial_dark_default_disable" : "addMaterial_light_default_disable", 13);
+    m_addBtn->SetMinSize(wxSize(FromDIP(24), FromDIP(24)));
+    m_addBtn->SetMaxSize(wxSize(FromDIP(24), FromDIP(24)));
+    m_addBtn->SetBorderColorNormal(wxColour(bgColor));
+    m_addBtn->SetBackgroundColor(StateColor(std::pair<wxColour, int>(wxColour(bgColor), StateColor::Pressed),
                                              std::pair<wxColour, int>(wxColour(bgColor), StateColor::Hovered),
                                              std::pair<wxColour, int>(wxColour(bgColor), StateColor::Normal)));
-    addBtn->Bind(wxEVT_LEFT_DOWN, &AccelerationAndSpeedLimitPanel::on_add_btn_clicked, this);
-    m_headPanelSizer->Add(addBtn, 1, wxRight | wxALIGN_CENTER_VERTICAL, FromDIP(8));
+    m_addBtn->Bind(wxEVT_LEFT_DOWN, &AccelerationAndSpeedLimitPanel::on_add_btn_clicked, this);
+    m_headPanelSizer->Add(m_addBtn, 1, wxRight | wxALIGN_CENTER_VERTICAL, FromDIP(8));
 
     m_scrolled_window_sizer->Add(panel, 1, wxEXPAND | wxALIGN_CENTER_HORIZONTAL);
     m_scrolled_window->SetSizer(m_scrolled_window_sizer);
@@ -1062,6 +1063,11 @@ void AccelerationAndSpeedLimitPanel::on_reset_btn_clicked(wxEvent&)
     }
     m_resetBtn->Hide();
 
+    if (m_scrolled_window_sizer->GetItemCount() < 7 && !m_addBtn->IsEnabled()) {
+        m_addBtn->setEnable(true);
+        m_addBtn->Enable(true);
+    }
+
     m_scrolled_window_sizer->Layout();
     this->GetSizer()->Layout();
 }
@@ -1076,6 +1082,10 @@ void AccelerationAndSpeedLimitPanel::on_add_btn_clicked(wxEvent&)
     this->GetSizer()->Layout();
 
     checkIsShowResetBtn();
+    if (m_scrolled_window_sizer->GetItemCount() >= 7) {
+        m_addBtn->setEnable(false);
+        m_addBtn->Enable(false);
+    }
 }
 
 void* AccelerationAndSpeedLimitPanel::getLimitItem(size_t idx)
@@ -1113,6 +1123,10 @@ void AccelerationAndSpeedLimitPanel::delLimitItem(size_t idx) {
             it++;
             i++;
         }
+    }
+    if (m_scrolled_window_sizer->GetItemCount() < 7) {
+        m_addBtn->setEnable(true);
+        m_addBtn->Enable(true);
     }
 }
 

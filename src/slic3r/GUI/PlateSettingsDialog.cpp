@@ -387,8 +387,11 @@ PlateSettingsDialog::PlateSettingsDialog(wxWindow* parent, const wxString& title
 
     m_bed_type_choice = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(240), -1), 0,
                                      NULL, wxCB_READONLY);
-    for (BedType i = btDefault; i < btCount; i = BedType(int(i) + 1)) {
-      m_bed_type_choice->Append(to_bed_type_name(i));
+    SidebarPrinter& bar = wxGetApp().plater()->sidebar_printer();
+    std::vector<std::string> bed_types = bar.texts_of_bed_type_list();
+    m_bed_type_choice->Append(_L("Same as Global Plate Type"));
+    for (auto bedtype : bed_types) {
+        m_bed_type_choice->Append(_L(bedtype));
     }
 
     if (!(/*wxGetApp().preset_bundle->is_bbl_vendor() ||*/ wxGetApp().preset_bundle->is_cx_vendor()))
@@ -529,7 +532,24 @@ PlateSettingsDialog::PlateSettingsDialog(wxWindow* parent, const wxString& title
         Fit();
     }
 }
-
+int PlateSettingsDialog::selection2bedtype(int selection)
+{
+    if (selection == 0)
+        return btDefault;
+    SidebarPrinter& bar = wxGetApp().plater()->sidebar_printer();
+    std::vector<std::string> bed_types = bar.texts_of_bed_type_list();
+    wxString bed_name;
+    if (selection > 0 && selection <= bed_types.size())
+    {
+        bed_name = from_u8(bed_types[selection-1]);
+        for (BedType i = btDefault; i < btCount; i = BedType(int(i) + 1)) {
+            wxString current_bed_name = to_bed_type_name(i);
+            if(current_bed_name == bed_name)
+                return int(i);
+        }
+    }
+    return btDefault;
+}
 PlateSettingsDialog::~PlateSettingsDialog()
 {
 
@@ -537,8 +557,23 @@ PlateSettingsDialog::~PlateSettingsDialog()
 
 void PlateSettingsDialog::sync_bed_type(BedType type)
 {
+    int selection = 0;
+    wxString bed_name = to_bed_type_name(type);
+    SidebarPrinter& bar = wxGetApp().plater()->sidebar_printer();
+    std::vector<std::string> bed_types = bar.texts_of_bed_type_list();
+    bool bed_type_found = false;
+    for (auto bed : bed_types) {
+        selection++;
+        if (from_u8(bed) == bed_name)
+        {
+            bed_type_found = true;
+            break;
+        }    
+    }
+    if(!bed_type_found)
+        selection = 0;
     if (m_bed_type_choice != nullptr) {
-        m_bed_type_choice->SetSelection(int(type));
+        m_bed_type_choice->SetSelection(selection);
     }
 }
 

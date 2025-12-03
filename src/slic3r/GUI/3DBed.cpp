@@ -783,15 +783,26 @@ void Bed3D::render_model(const Transform3d& view_matrix, const Transform3d& proj
         shader->set_uniform("emission_factor", 0.0f);
         auto  bed_ext                  = get_extents(m_bed_shape);
         Vec3d scale                    = Vec3d::Ones();
-        if (!m_is_gcode) {
-            if (wxGetApp().preset_bundle->get_current_vendor_type() == VendorType::Creality) {
-                scale(0) = bed_ext.size()(0) / 220.0;
-                scale(1) = bed_ext.size()(1) / 220.0;
+        // For Creality F022, use dedicated buildplate model without scaling.
+        bool is_f022_model = false;
+        {
+            const std::string &fname = m_model_filename;
+            if (!fname.empty()) {
+                // Detect by filename to avoid heavy preset lookups.
+                is_f022_model = boost::algorithm::iends_with(fname, "Creality F022_buildplate_model.stl");
             }
-        } else {
-            if (m_vendor == Vendor::Creality) {
-                scale(0) = bed_ext.size()(0) / 220.0;
-                scale(1) = bed_ext.size()(1) / 220.0;
+        }
+        if (!is_f022_model) {
+            if (!m_is_gcode) {
+                if (wxGetApp().preset_bundle->get_current_vendor_type() == VendorType::Creality) {
+                    scale(0) = bed_ext.size()(0) / 220.0;
+                    scale(1) = bed_ext.size()(1) / 220.0;
+                }
+            } else {
+                if (m_vendor == Vendor::Creality) {
+                    scale(0) = bed_ext.size()(0) / 220.0;
+                    scale(1) = bed_ext.size()(1) / 220.0;
+                }
             }
         }
         const Transform3d model_matrix = Geometry::assemble_transform(m_model_offset, Vec3d::Zero(), scale);

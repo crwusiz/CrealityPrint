@@ -8280,7 +8280,9 @@ void ObjectList::draw_device_list_content()
     const DM::Device& current_device = DM::DataCenter::Ins().get_current_device_data();
     if (!(current_device.valid && !current_device.address.empty())) {
         auto originCursorY = ImGui::GetCursorPosY();
-        auto label         = _u8L("Device List Not Connect Warning").c_str();
+        // auto label         = _u8L("Device List Not Connect Warning").c_str();
+        auto label_str     = _u8L("Device List Not Connect Warning");
+        const char* label         = label_str.c_str();
 
         // ver center
         ImVec2 lab_size = ImGui::CalcTextSize(label);

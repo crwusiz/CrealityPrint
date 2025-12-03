@@ -24,7 +24,7 @@ ParamsDialog::ParamsDialog(wxWindow * parent)
 
     int un = em_unit();
 	SetSizerAndFit(topsizer);
-	SetSize({110 * em_unit(), 65 * em_unit()});
+	SetSize({130 * em_unit(), 65 * em_unit()});
 
 	Layout();
     

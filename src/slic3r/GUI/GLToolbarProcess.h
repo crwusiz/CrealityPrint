@@ -346,6 +346,7 @@ namespace ProcessBar {
 		float get_height();
 
 		void select_item(const std::string& name);
+        std::string get_selected_item();
 
 		bool is_item_pressed(const std::string& name) const;
 		bool is_item_disabled(const std::string& name) const;

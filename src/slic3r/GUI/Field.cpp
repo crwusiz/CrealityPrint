@@ -219,6 +219,17 @@ void Field::on_edit_value()
         m_fn_edit_value(m_opt_id);
 }
 
+void Field::initField()
+{
+    if (getWindow()) {
+        if (m_opt.readonly) {
+            this->disable();
+        }
+        else {
+            this->enable();
+        }
+    }
+}
 /// Fires the enable or disable function, based on the input.
 
 void Field::toggle(bool en) { en && !m_opt.readonly ? enable() : disable(); }
@@ -241,8 +252,7 @@ wxString Field::get_tooltip_text(const wxString &default_string)
         tooltip_text = tooltip + "\n" + 
         _(L("parameter name")) + "\t: " + opt_id;
  #endif
-    return "";
-	//return tooltip_text;
+	return tooltip_text;
 }
 
 bool Field::is_matched(const std::string& string, const std::string& pattern)
@@ -311,8 +321,14 @@ void Field::get_value_by_opt_type(wxString& str, const bool check_value/* = true
                     break;
                 }
                 show_error(m_parent, _(L("Invalid numeric.")));
+                val = (m_value.empty() ? m_opt.min : boost::any_cast<double>(m_value));
                 set_value(double_to_string(val), true);
+            } else if (m_opt.opt_key == "filament_diameter" && val < 1e-4) {
+                show_error(m_parent, _(L("Invalid numeric.")));
+                val = boost::any_cast<double>(m_value);
+                set_value(double_to_string(val), false);
             }
+
             if (m_opt.min > val || val > m_opt.max)
             {
                 if (!check_value) {

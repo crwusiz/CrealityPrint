@@ -52,6 +52,7 @@ namespace creality
             boost::contains(str, "k2 plus") ||
             boost::contains(str, "k1") ||
             boost::contains(str, "ender") ||
+            boost::contains(str, "sparkx") ||
             boost::starts_with(str, "cr"))
             return true;
 

@@ -17,6 +17,7 @@
 #include "I18N.hpp"
 #include "format.hpp"
 #include "slic3r/GUI/ParamsPanel.hpp"
+//#include "wx/msw/window.h"
 #include <slic3r/GUI/Widgets/Label.hpp>
 
 namespace Slic3r { namespace GUI {
@@ -77,6 +78,12 @@ OG_CustomCtrl::OG_CustomCtrl(   wxWindow*            parent,
 
 void OG_CustomCtrl::init_ctrl_lines()
 {
+    // BBS: Add null pointer check to prevent crash when opt_group is destroyed
+    if (!opt_group) {
+        BOOST_LOG_TRIVIAL(error) << "OG_CustomCtrl::init_ctrl_lines: opt_group is null, cannot initialize control lines";
+        return;
+    }
+    
     const std::vector<Line>& og_lines = opt_group->get_lines();
     for (const Line& line : og_lines)
     {
@@ -689,6 +696,11 @@ void OG_CustomCtrl::OnPaint(wxPaintEvent&)
 
 void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
 {
+    // BBS: Add null pointer check to prevent crash when opt_group is destroyed
+    if (!opt_group) {
+        BOOST_LOG_TRIVIAL(warning) << "OG_CustomCtrl::OnMotion: opt_group is null, ignoring mouse motion event";
+        return;
+    }
     
     const wxPoint pos = event.GetLogicalPosition(wxClientDC(this));
     wxString tooltip;
@@ -697,6 +709,7 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
     wxString	tooltip_title;
     wxString      tooltip_url;
     wxString      tooltip_content;
+    wxString      tooltip_key;
 
     // BBS: markdown tip
     CtrlLine* focusedLine = nullptr;
@@ -712,7 +725,9 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
             }
             tooltip += line.og_line.label_tooltip;
             tooltip_content = line.og_line.label_tooltip;
-
+            const std::vector<Option>& option_set = line.og_line.get_options();
+            const std::string& opt_key = option_set[0].opt_id;
+            tooltip_key = opt_key;
             tooltip_title = line.og_line.label;
             //tooltip_title = line.og_line.get_options()[0].opt_id;
 
@@ -758,11 +773,58 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
             markdowntip.erase(0, markdowntip.find_last_of('#') + 1);
             // BBS
             break;
+        }else{
+            // BBS: Add null pointer check to prevent crash when opt_group is destroyed
+            if (!opt_group) {
+                BOOST_LOG_TRIVIAL(warning) << "OG_CustomCtrl::OnMotion: opt_group is null, skipping tooltip handling";
+                break;
+            }
+            
+            try {
+                ConfigOptionsGroup* config_group = dynamic_cast<ConfigOptionsGroup*>(opt_group);
+                if (!config_group) {
+                    BOOST_LOG_TRIVIAL(warning) << "OG_CustomCtrl::OnMotion: Failed to cast opt_group to ConfigOptionsGroup";
+                    break;
+                }
+                
+                int type = config_group->config_type();
+                if(type == Preset::TYPE_PRINT || type == Preset::TYPE_PLATE || type == Preset::TYPE_MODEL)
+                {
+                    if(line.og_line.get_options().size() > 0)
+                    {
+                        Field* field = opt_group->get_field(line.og_line.get_options().front().opt_id);
+                        if(field)
+                        {
+                            wxWindow *w = field->getWindow();
+                            if(w)
+                            {
+                                w->UnsetToolTip();
+                                for (wxWindow* c : w->GetChildren())
+                                    c->UnsetToolTip();
+                            }
+                        }
+                    }
+                }
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "OG_CustomCtrl::OnMotion: Exception in tooltip handling: " << e.what();
+                break;
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(error) << "OG_CustomCtrl::OnMotion: Unknown exception in tooltip handling";
+                break;
+            }
+            
         }
 
         size_t undo_icons_cnt = line.rects_undo_icon.size();
         assert(line.rects_undo_icon.size() == line.rects_undo_to_sys_icon.size());
         const std::vector<Option>& option_set = line.og_line.get_options();
+        
+        // BBS: Add null pointer check to prevent crash when opt_group is destroyed
+        if (!opt_group) {
+            BOOST_LOG_TRIVIAL(warning) << "OG_CustomCtrl::OnMotion: opt_group is null, skipping undo icon handling";
+            break;
+        }
+        
         for (size_t opt_idx = 0; opt_idx < undo_icons_cnt; opt_idx++) {
             const std::string& opt_key = option_set[opt_idx].opt_id;
             if (is_point_in_rect(pos, line.rects_undo_icon[opt_idx])) {
@@ -810,7 +872,7 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
         bool isShow = false;
         if(type == Preset::TYPE_PRINT || type == Preset::TYPE_PLATE || type == Preset::TYPE_MODEL)
         {
-            isShow = ProcessTip::ShowTip(markdowntip, (tooltip_title), (tooltip_content), (tooltip_img), (tooltip_url), pos2);
+            isShow = ProcessTip::ShowTip(markdowntip, (tooltip_title), (tooltip_content), tooltip_key, (tooltip_img), (tooltip_url), pos2);
         }else{
             isShow = MarkdownTip::ShowTip(markdowntip, into_u8(tooltip), pos2);
         }
@@ -834,7 +896,7 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
         bool isShow = false;
         if(type == Preset::TYPE_PRINT || type == Preset::TYPE_PLATE || type == Preset::TYPE_MODEL)
         {
-            isShow = ProcessTip::ShowTip(markdowntip, (tooltip_title), (tooltip_content), (tooltip_img), (tooltip_url), {tooltip.empty() ? 0 : 1, 0});
+            isShow = ProcessTip::ShowTip(markdowntip, (tooltip_title), (tooltip_content), tooltip_key, (tooltip_img), (tooltip_url), {tooltip.empty() ? 0 : 1, 0});
         }else{
             isShow = MarkdownTip::ShowTip(markdowntip, "", {tooltip.empty() ? 0 : 1, 0});
         }
@@ -1163,11 +1225,6 @@ void OG_CustomCtrl::CtrlLine::update_visibility(ConfigOptionMode mode)
             if (itemType == "1")
             {
                 is_visible = og_line.toggle_visible && line_mode <= mode;
-
-                Field* field = ctrl->opt_group->get_field(itemKey);
-                if (!field)
-                    return;
-                field->toggle(false);
             }
             else if ((itemType == "2"))
             {

@@ -10,6 +10,7 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/MainFrame.hpp"
 
 using boost::asio::ip::tcp;
 using namespace Slic3r;
@@ -19,16 +20,17 @@ static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = {300, 30
 
 using ASync_Callback_Type = function<void(nlohmann::json)>;
 static std::unordered_map<std::string, ASync_Callback_Type> async_callback_list;
+static std::unordered_map<std::string, std::vector<std::pair<nlohmann::json, ASync_Callback_Type>>> event_async_callback_list;
 
 namespace Test {
 
 bool enable_test;
 /////////////////////////////////////BASE////////////////////////////////////////
 
-//static inline void test_helper_app_respone(std::string cmd, nlohmann::json ret)
+// static inline void test_helper_app_respone(std::string cmd, nlohmann::json ret)
 //{
-//    ADD_TEST_RESPONE("TestHelper", cmd, 0, ret.dump(-1, ' ', true));
-//}
+//     ADD_TEST_RESPONE("TestHelper", cmd, 0, ret.dump(-1, ' ', true));
+// }
 
 class ClientSession
 {
@@ -39,9 +41,12 @@ public:
 
     void do_write(std::string datas)
     {
-        boost::asio::async_write(socket_, boost::asio::buffer(datas.c_str(), datas.size()),
-                                 [this](boost::system::error_code ec, std::size_t /*length*/) {                  
-            });
+        auto p = std::make_shared<std::string>(std::move(datas)); // ����壬��ֹdatas.c_str()�첽ʧЧ
+        boost::asio::async_write(socket_, boost::asio::buffer(*p), [this, p](boost::system::error_code /*ec*/, std::size_t /*length*/) {});
+
+        // boost::asio::async_write(socket_, boost::asio::buffer(datas.c_str(), datas.size()),
+        //                          [this](boost::system::error_code ec, std::size_t /*length*/) {
+        //     });
     }
 
     std::function<void(std::string&)> read_callback = [](std::string&) {};
@@ -53,8 +58,7 @@ private:
             if (!ec) {
                 std::string output(readbuff, length);
                 read_callback(output);
-            } 
-            else {
+            } else {
                 if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset) {
                     socket_.close();
                     return;
@@ -66,7 +70,7 @@ private:
 
     tcp::socket socket_;
     int         buff_len;
-    char readbuff[2048];
+    char        readbuff[2048];
 };
 
 class TCPServer
@@ -85,7 +89,7 @@ public:
     }
 
     std::function<void(ClientSession*)> accept_callback = [](ClientSession*) {};
-    std::unique_ptr<ClientSession> client_;
+    std::unique_ptr<ClientSession>      client_;
 
 private:
     void do_accept()
@@ -94,7 +98,7 @@ private:
             if (!ec) {
                 client_.reset();
                 client_ = std::make_unique<ClientSession>(std::move(socket));
-                accept_callback(client_.get()); 
+                accept_callback(client_.get());
             }
             do_accept();
         });
@@ -127,16 +131,14 @@ public:
         if (thd.joinable())
             thd.join();
     }
-    void cmd_respone(std::string respone) { 
-        server->client_->do_write(respone);
-    }
+    void cmd_respone(std::string respone) { server->client_->do_write(respone); }
 
 private:
     void parse_string_to_cmd(std::string& info)
     {
         auto cmd_index = info.find(";");
         auto cmd       = info.substr(0, cmd_index);
-        auto arg       = info.substr(cmd_index+1, info.length() - cmd_index);
+        auto arg       = info.substr(cmd_index + 1, info.length() - cmd_index);
         Visitor().call_cmd(cmd, arg);
     }
 
@@ -144,7 +146,6 @@ private:
     TCPServer*              server;
     std::thread             thd;
 };
-
 
 TestHelper::TestHelper(bool enable)
 {
@@ -162,10 +163,7 @@ TestHelper::~TestHelper()
     }
 }
 
-void TestHelper::cmd_respone(std::string cmd, nlohmann::json ret) 
-{ 
-    m_cmd_channel->cmd_respone(cmd + ";" + ret.dump(-1, ' ', true)); 
-}
+void TestHelper::cmd_respone(std::string cmd, nlohmann::json ret) { m_cmd_channel->cmd_respone(cmd + ";" + ret.dump(-1, ' ', true)); }
 
 void TestHelper::init_cmd_channel(short port)
 {
@@ -173,7 +171,7 @@ void TestHelper::init_cmd_channel(short port)
     m_cmd_channel->start();
 }
 
-void TestHelper::call_cmd_inner(std::string cmd, std::string json_str)
+std::string TestHelper::call_cmd_inner(std::string cmd, std::string json_str)
 {
     constexpr int  FAILED = 1;
     constexpr int  OK     = 0;
@@ -185,23 +183,44 @@ void TestHelper::call_cmd_inner(std::string cmd, std::string json_str)
         return ret;
     };
     auto gen_ok_json = [&ret, OK](std::string payload) -> nlohmann::json& {
-        ret["code"]    = OK;
-        ret["error"]   = "OK";
-        ret["payload"] = payload;
+        ret["code"]  = OK;
+        ret["error"] = "OK";
+        // ret["payload"] = payload;
+        try {
+            ret["payload"] = nlohmann::json::parse(payload); // ��Ҫ�Ƿ�ֹ·������dump����Ȼ�ͻ��˻���ʾ C:\\\\ ....
+        } catch (...) {
+            ret["payload"] = payload; // ���� JSON���Ͱ��ַ�������ȥ
+        }
         return ret;
     };
-
+    // cp �ڲ�cmd
+    auto inner_it = m_inner_cmd2func.find(cmd);
+    if (inner_it != m_inner_cmd2func.end())
+    {
+        nlohmann::json arg;
+        try
+        {
+            arg = json::parse(json_str);
+            std::string err;
+            std::string payload;
+            inner_it->second(arg, payload, err);
+            return payload;
+        } catch (const std::exception& e) {
+            return "";
+        }
+    }
+    // socket��¶cmd
     auto it = m_cmd2func.find(cmd);
     if (it == m_cmd2func.end()) {
         cmd_respone(cmd, gen_failed_json("COMMAND NOT FAOUND"));
-        return;
+        return "_";
     }
     try {
         nlohmann::json arg;
         arg = json::parse(json_str);
-        std::string err;
-        std::string payload;
-        int res = it->second(arg, payload, err);
+        std::string err;                                 // ��������
+        std::string payload;                             // ��������
+        int         res = it->second(arg, payload, err); // ʵ�������������ע��ĺ��������ú� payload�Ѿ����л���(dump)
         if (res == 0)
             cmd_respone(cmd, gen_ok_json(payload));
         else if (res > 0)
@@ -213,6 +232,7 @@ void TestHelper::call_cmd_inner(std::string cmd, std::string json_str)
     } catch (const std::exception& e) {
         cmd_respone(cmd, gen_failed_json(std::string("EXEC CMD ERROR, ") + e.what()));
     }
+    return "_";
 }
 
 void call_when_target_eventloop_exec(std::string cmd, nlohmann::json& arg, ASync_Callback_Type callback)
@@ -224,24 +244,127 @@ void call_when_target_eventloop_exec(std::string cmd, nlohmann::json& arg, ASync
     arg["cmd"] = cmd;
     e.SetString(arg.dump(-1, ' ', true));
     async_callback_list.insert({arg["cmd"], callback});
-    wxPostEvent(&wxGetApp(), e);
+    wxPostEvent(&wxGetApp(), e); // Ͷ�ݵ��¼�����ֻ��Ϊ�˴���async_callback_list[cmd]�Ļص���������������
 }
 
+void call_when_event_spread(std::string event, nlohmann::json& arg, ASync_Callback_Type callback)
+{
+    if (event_async_callback_list.find(event) == event_async_callback_list.end())
+        event_async_callback_list[event] = {};
+    event_async_callback_list[event].emplace_back(std::pair{arg, callback});
+}
+
+static int event_spread(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    auto event = arg["event"].get<std::string>();
+    auto param = arg["param"].get<std::string>();
+
+    auto it = event_async_callback_list.find(event);
+    if (it != event_async_callback_list.end())
+    {
+        //
+        //    support event:
+        //    "canvas_render_finished"
+        //    "slice_compete"
+        //
+        for (auto& pair : it->second)
+        {
+            auto para = pair.first;
+            para["param"] = param;
+            pair.second(para);
+        }
+
+        event_async_callback_list.erase(event);
+    }
+    return 0;
+}
+
+
+class Status
+{
+public:
+    enum AsyncCmdStatus{
+        Unfinished = 0,
+        Finished = 1,
+        None = 2
+    };
+    enum StatusType {
+        AppReady = 0,
+        AsyncCmd = 1
+    };
+    bool                               app_ready = false;
+    std::string                        app_id;
+    std::map<std::string, AsyncCmdStatus> cmd_status;
+    bool                                  capture_mode = false;
+
+    Status()
+    {
+        auto now = std::chrono::system_clock::now();
+        auto duration = now.time_since_epoch();
+        auto millis   = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+        app_id        = std::to_string(millis);
+    }
+
+    AsyncCmdStatus query_cmd_status(std::string cmd)
+    { 
+        if (cmd_status.find(cmd) == cmd_status.end())
+            return None;
+        auto cmd_state = cmd_status[cmd];
+        if (cmd_state == Finished) // Burn after Finished and Reading
+            cmd_status.erase(cmd);
+        return cmd_state;
+    }
+    void set_cmd_status(std::string cmd, AsyncCmdStatus state) { 
+        cmd_status[cmd] = state;
+    }
+} status;
+
 /////////////////////////////////////CMD////////////////////////////////////////
+
+static int app_ready(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    status.app_ready = true;
+    return 0;
+}
+
+static int query_status(nlohmann::json arg, std::string& payload, std::string& error) 
+{
+    int status_type = arg["type"].get<int>();
+    if (status_type == Status::AppReady)
+    {
+        if (!status.app_ready)
+        {
+            error = "app not ready";
+            return 3;
+        }
+        payload = status.app_id; 
+        return 0;
+    }
+    else if (status_type == Status::AsyncCmd)
+    {
+        auto cmd = arg["cmd"].get<std::string>();
+        nlohmann::json ret;
+        ret["cmd"]    = cmd;
+        ret["status"] = (int) status.query_cmd_status(cmd);
+        payload = ret.dump(-1, ' ', true);
+        return 0;
+    }    
+    error = "unsupport status type";
+    return 1;
+}
 
 static int capture(nlohmann::json arg, std::string& payload, std::string& error)
 {
     nlohmann::json output;
-    auto plater = wxGetApp().plater(); 
-    if (!plater) 
-    {
+    auto           plater = wxGetApp().plater();
+    if (!plater) {
         error = "plater object is nullptr";
         return 1;
     }
 
     auto callback = [](nlohmann::json arg) {
-        std::string save_as_fmt, type;
-        int         capture_w, capture_h;
+        std::string    save_as_fmt, type;
+        int            capture_w, capture_h;
         nlohmann::json output;
         try {
             save_as_fmt = arg["save_as"].get<std::string>();
@@ -255,14 +378,14 @@ static int capture(nlohmann::json arg, std::string& payload, std::string& error)
             return;
         }
 
-        auto                                    plater = wxGetApp().plater();
-        decltype(plater->get_view3D_canvas3D()) canvas_ins  = nullptr;
+        auto                                    plater     = wxGetApp().plater();
+        decltype(plater->get_view3D_canvas3D()) canvas_ins = nullptr;
         if (arg["type"].get<std::string>() == "preview")
             canvas_ins = plater->get_preview_canvas3D();
         else if (arg["type"].get<std::string>() == "ready")
             canvas_ins = plater->get_view3D_canvas3D();
         else {
-            output["ret"] = 1;
+            output["ret"]   = 1;
             output["error"] = "not support capture type";
             Test::Visitor().call_cmd("cmd_respone", output.dump(-1, ' ', true));
             return;
@@ -294,10 +417,11 @@ static int capture(nlohmann::json arg, std::string& payload, std::string& error)
     return -1;
 }
 
+// �ú�����EVT_TEST_HELPER_CMD�¼�����
 static int handle_app_cmd(nlohmann::json arg, std::string& payload, std::string& error)
 {
     std::string cmd = arg["cmd"].get<std::string>();
-    async_callback_list[cmd](arg);
+    async_callback_list[cmd](arg); // GUI �̼߳�⵽Ͷ�ݵ�cmd�¼��󣬴�async_callback_list��ȡ���ص�������ִ��
     async_callback_list.erase(cmd);
     return -1;
 }
@@ -305,13 +429,11 @@ static int handle_app_cmd(nlohmann::json arg, std::string& payload, std::string&
 static int cmd_respone_wrapper(nlohmann::json arg, std::string& payload, std::string& error)
 {
     int ret = 0;
-    if (arg.contains("ret"))
-    {
+    if (arg.contains("ret")) {
         ret = arg["ret"].get<int>();
         arg.erase("ret");
     }
-    if (arg.contains("error"))
-    {
+    if (arg.contains("error")) {
         error = arg["error"].get<std::string>();
         arg.erase("error");
     }
@@ -320,29 +442,332 @@ static int cmd_respone_wrapper(nlohmann::json arg, std::string& payload, std::st
     return ret;
 }
 
-static int empty_respone(nlohmann::json arg, std::string& payload, std::string& error)
-{
-    return 0;
-}
+static int empty_respone(nlohmann::json arg, std::string& payload, std::string& error) { return 0; }
 
-static int trigger_load_project(nlohmann::json arg, std::string& payload, std::string& error) 
+static int trigger_load_project(nlohmann::json arg, std::string& payload, std::string& error)
 {
+    status.set_cmd_status("trigger_load_project", Status::Unfinished);
     call_when_target_eventloop_exec(
         "trigger_load_project", 
         arg, 
         [](nlohmann::json arg) {
             wxGetApp().plater()->load_project(arg["file"].get<std::string>());
+            status.set_cmd_status("trigger_load_project", Status::Finished);
         });
     return 0; 
 }
 
+static int trigger_load_project2(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    call_when_target_eventloop_exec("trigger_load_project2", arg, [](nlohmann::json j) {
+        nlohmann::json out;
+        try {
+            auto file                   = j.at("file").get<std::string>();
+            bool discard_preset_changes = j.value("discard_preset_changes", false);
+
+            if (discard_preset_changes) {
+                wxGetApp().discard_all_current_preset_changes(); // ������
+            }
+
+            wxGetApp().plater()->load_project(file); // ͬ�������ؼ����
+
+            out["ret"]    = 0;
+            out["error"]  = "OK";
+            out["file"]   = file;
+            out["status"] = "loaded";
+        } catch (const std::exception& e) {
+            out["ret"]   = 1;
+            out["error"] = std::string("load_project exception: ") + e.what();
+        } catch (...) {
+            out["ret"]   = 1;
+            out["error"] = "load_project unknown error";
+        }
+        Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+    });
+    return -1; // �� ����첽����ֹ call_cmd_inner �Զ� OK �ذ�
+}
+
+static wxWindow* FindButton(wxWindow* root, int id, const wxString& name, const wxString& label)
+{
+    if (!root)
+        return nullptr;
+
+    // 1) ���Ȱ� id
+    if (id != wxID_ANY) {
+        if (auto* w = wxWindow::FindWindowById(id, root))
+            return w;
+    }
+    // 2) �� name
+    if (!name.empty()) {
+        if (auto* w = wxWindow::FindWindowByName(name, root))
+            return w;
+    }
+    // 3) �ݹ鰴 label
+    if (!label.empty()) {
+        if (auto* btn = wxDynamicCast(root, wxButton)) {
+            if (btn->GetLabel() == label)
+                return btn;
+        }
+        for (auto* child : root->GetChildren()) {
+            if (auto* found = FindButton(child, wxID_ANY, "", label))
+                return found;
+        }
+    }
+    return nullptr;
+}
+
+static void PostButtonClick(wxWindow* btn)
+{
+    // ����һ������ť����������¼���Ͷ�ݵ��ÿؼ�
+    wxCommandEvent evt(wxEVT_BUTTON, btn->GetId());
+    evt.SetEventObject(btn);
+    wxPostEvent(btn, evt);
+}
+
+static int click_button_cmd(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    // �ɷ��� GUI �߳����������
+    call_when_target_eventloop_exec("click_button", arg, [](nlohmann::json j) {
+        nlohmann::json out;
+
+        // ��������
+        int      id    = j.contains("id") ? j["id"].get<int>() : wxID_ANY;
+        wxString name  = j.contains("name") ? wxString::FromUTF8(j["name"].get<std::string>()) : "";
+        wxString label = j.contains("label") ? wxString::FromUTF8(j["label"].get<std::string>()) : "";
+
+        wxWindow* top = wxTheApp->GetTopWindow();
+        wxWindow* btn = FindButton(top, id, name, label);
+
+        if (!btn) {
+            out["ret"]   = 1;
+            out["error"] = "button not found (id/name/label unmatched)";
+            Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+            return;
+        }
+        if (!btn->IsEnabled() || !btn->IsShown()) {
+            out["ret"]   = 1;
+            out["error"] = "button disabled or hidden";
+            Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+            return;
+        }
+
+        try {
+            PostButtonClick(btn);
+            out["ret"]   = 0;
+            out["info"]  = "wxEVT_BUTTON posted";
+            out["id"]    = btn->GetId();
+            out["name"]  = std::string(btn->GetName().ToUTF8());
+            out["label"] = std::string(wxDynamicCast(btn, wxButton) ? wxDynamicCast(btn, wxButton)->GetLabel().ToUTF8() : "");
+        } catch (const std::exception& ex) {
+            out["ret"]   = 1;
+            out["error"] = std::string("exception: ") + ex.what();
+        }
+
+        Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+    });
+
+    return -1;
+}
+
+static int export_gcode_cmd(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    // �� GUI �߳�
+    call_when_target_eventloop_exec("export_gcode_3mf", arg, [](nlohmann::json j) {
+        nlohmann::json out;
+
+        try {
+            auto plater = wxGetApp().plater();
+            if (!plater) {
+                out["ret"]   = 1;
+                out["error"] = "plater is null";
+                Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+                return;
+            }
+
+            // ��������
+            bool     export_all = false;
+            fs::path output;
+            try {
+                if (j.contains("export_all"))
+                    export_all = j["export_all"].get<bool>();
+                if (j.contains("output"))
+                    output = j["output"].get<std::string>();
+                else {
+                    out["ret"]   = 1;
+                    out["error"] = "missing 'output'";
+                    Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+                    return;
+                }
+            } catch (const std::exception& e) {
+                out["ret"]   = 1;
+                out["error"] = std::string("bad args: ") + e.what();
+                Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+                return;
+            }
+
+            // ������ UI ����
+            std::string err;
+            int         ret = plater->export_gcode_3mf_headless(output, export_all, err);
+
+            if (ret == 0) {
+                out["ret"]        = 0;
+                out["export_all"] = export_all;
+                out["output"]     = output.string();
+            } else {
+                out["ret"]        = ret;
+                out["error"]      = err;
+                out["export_all"] = export_all;
+                out["output"]     = output.string();
+            }
+        } catch (const std::exception& e) {
+            out["ret"]   = 1;
+            out["error"] = e.what();
+        }
+
+        // ͨ��ͳһ�ذ�ͨ�����أ��ᱻ cmd_respone_wrapper ת�� code/error/payload��
+        Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+    });
+
+    return -1; // �첽
+}
+
+static int reset_project_cmd(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    call_when_target_eventloop_exec("reset_project", arg, [](nlohmann::json j) {
+        nlohmann::json out;
+        try {
+            bool        skip_confirm = j.value("skip_confirm", true); // Ĭ������ȷ��
+            bool        silent       = j.value("silent", true);       // Ĭ�ϰ���ִ��,���л� UI �� 3D �༭ҳ
+            std::string project_name = j.value("project_name", "");
+            int         rc           = -1;
+            if (project_name.empty()) {
+                rc = wxGetApp().plater()->new_project(skip_confirm, silent);
+            } else {
+                rc = wxGetApp().plater()->new_project(skip_confirm, silent, project_name);
+            }
+
+            out["ret"]          = (rc == wxID_CANCEL) ? 1 : 0;
+            out["result_code"]  = rc; // wxID_YES / wxID_CANCEL
+            out["skip_confirm"] = skip_confirm;
+            out["silent"]       = silent;
+            if (rc == wxID_CANCEL)
+                out["error"] = "cancelled by confirm dialog";
+            else
+                out["code_explanation"] = "5103 means wxID_YES.";
+        } catch (const std::exception& e) {
+            out["ret"]   = 1;
+            out["error"] = e.what();
+        }
+        Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+    });
+    return -1; // �첽��ִ����ص�֮��Żذ�
+}
+
+static int is_capture_mode(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    nlohmann::json output;
+    output["enable"] = status.capture_mode? 1:0;
+    payload = output.dump(-1, ' ', true);
+    return 0;
+}
+
+static int set_capture_mode(nlohmann::json arg, std::string& payload, std::string& error)
+{ 
+    int enable  = arg["enable"].get<int>();
+    status.capture_mode = enable == 0? false:true;
+    wxGetApp().plater()->set_current_canvas_as_dirty();
+    wxGetApp().plater()->get_current_canvas3D()->render();
+
+    call_when_event_spread("canvas_render_finished", arg, [](nlohmann::json arg) {
+        nlohmann::json output;
+        output["ret"] = 0;
+        Test::Visitor().call_cmd("cmd_respone", output.dump(-1, ' ', true));
+    });
+    return -1;
+}
+
+static int get_widget_geometry(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    int x = -1, y = -1, w = -1, h = -1;
+    int widget_id       = arg["widget_id"].get<int>();
+    if  (widget_id == 0x01) { // BBL
+        auto size = wxGetApp().mainframe->topbar()->GetSize();
+        auto pos = wxGetApp().mainframe->topbar()->GetPosition();
+        x         = pos.x;
+        y         = pos.y;
+        w         = size.x;
+        h         = size.y;
+        
+    } 
+    else if (widget_id == 0x02)
+    {
+        auto size = wxGetApp().plater()->get_current_canvas3D()->get_canvas_size();
+        w         = size.get_width();
+        h         = size.get_height();
+    }
+    nlohmann::json ret;
+    ret["x"] = x;
+    ret["y"] = y;
+    ret["w"] = w;
+    ret["h"] = h;
+    payload = ret.dump(0, ' ', -1);
+    return 0;
+}
+
+static int new_project(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    call_when_target_eventloop_exec("new_project", arg, [](nlohmann::json arg) {
+        wxGetApp().plater()->new_project();
+        nlohmann::json output;
+        output["ret"] = 0;
+        Test::Visitor().call_cmd("cmd_respone", output.dump(-1, ' ', true));
+    });
+    return -1;
+}
+
+static int trigger_slice(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    call_when_target_eventloop_exec("trigger_slice", arg, [](nlohmann::json arg) {
+        // ��ʼ��Ƭ
+        call_when_event_spread("slice_started", arg, [](nlohmann::json arg) {
+            status.set_cmd_status("trigger_slice", Status::Unfinished);
+            nlohmann::json output;
+            output["ret"] = 0;
+            Test::Visitor().call_cmd("cmd_respone", output.dump(-1, ' ', true));
+        });
+        // ��Ƭ���
+        call_when_event_spread("slice_compete", arg, [](nlohmann::json arg) {
+            // if (!arg["param"].get<std::string>().empty())
+            status.set_cmd_status("trigger_slice", Status::Finished);
+        });
+        wxGetApp().mainframe->slice_plate(MainFrame::eSliceAll); // Ĭ����ȫ��
+    });
+    return -1;
+}
+
 void TestHelper::register_cmd() 
 { 
+    // cp �ڲ�ģ��ʹ�õ�cmd�������Ǵ�std::string����ֵ���������̷���
+    m_inner_cmd2func["is_capture_mode"] = is_capture_mode;
+    m_inner_cmd2func["event_spread"]    = event_spread;
+    // socket��¶��cmd�������ǲ���������ֵ
     m_cmd2func["cmd_respone"]          = cmd_respone_wrapper;
     m_cmd2func["handle_app_cmd"]       = handle_app_cmd;
-    m_cmd2func["capture"] = capture; 
-    m_cmd2func["ping"] = empty_respone;
+    m_cmd2func["capture"]              = capture;
+    m_cmd2func["set_capture_mode"]     = set_capture_mode;
+    m_cmd2func["ping"]                 = empty_respone;
     m_cmd2func["trigger_load_project"] = trigger_load_project;
+    m_cmd2func["query_status"]         = query_status; // status
+    m_cmd2func["app_ready"]            = app_ready;
+    m_cmd2func["get_widget_geometry"]  = get_widget_geometry;
+    m_cmd2func["new_project"]          = new_project;
+    m_cmd2func["trigger_slice"]        = trigger_slice;
+
+    // LHX TODO������������ע��ĺ���
+    m_cmd2func["trigger_load_project2"] = trigger_load_project2;
+    m_cmd2func["click_button"]          = click_button_cmd;
+    m_cmd2func["export_gcode"]          = export_gcode_cmd;
+    m_cmd2func["reset_project"]         = reset_project_cmd;
 }
 
 } // namespace Test

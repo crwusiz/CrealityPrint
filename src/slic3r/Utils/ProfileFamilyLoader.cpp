@@ -373,10 +373,10 @@ static bool customComparator(const PrinterInfo& a, const PrinterInfo& b)
     auto getPriority = [](const std::string& name) {
         for (size_t i = 0; i < order.size(); ++i) {
             if (toLowerAndContains(name, order[i])) {
-                return i; // ·µ»ØÓÅÏÈ¼¶Ë÷Òý
+                return i; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¼ï¿½ï¿½ï¿½ï¿½ï¿½
             }
         }
-        return order.size(); // Èç¹û¶¼²»°üº¬£¬·µ»Ø×îµÍÓÅÏÈ¼¶
+        return order.size(); // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¼ï¿½
     };
 
     return getPriority(a.name) < getPriority(b.name);
@@ -592,13 +592,20 @@ int ProfileFamilyLoader::LoadMachineJson(
         json pmodels = jLocal["printerList"];
         json series  = jLocal["series"];
 
-        std::vector<PrinterInfo> printers;
+        std::map<std::string,std::vector<PrinterInfo>> mapPrinters;  //key = Æ·ï¿½ï¿½  Creality SparkX
 
+         //wxString strJS = wxString::Format("handleStudioCmd(%s)", series.dump(-1, ' ', true));
         for (const auto& item : series) {
             int         id   = item["id"];
             std::string name = item["name"];
+            std::string brandName = "";
+            if (item.contains("brandName") && item["brandName"].is_string()) {
+                brandName = item["brandName"];
+            }else{
+                brandName = "Creality";
+            }
 
-            if (name.empty())
+            if (name.empty() || brandName.empty())
                 continue;
 
             PrinterInfo printerInfo;
@@ -609,33 +616,58 @@ int ProfileFamilyLoader::LoadMachineJson(
                 if (seriesId == id) {
                     std::string str1 = printer["name"];
                     if (str1.find("Creality") == std::string::npos) {
-                        str1 = "Creality " + str1;
+                        if ((str1.find("SPARKX") == std::string::npos))
+                        {
+                            str1 = "Creality " + str1;
+                        }
                     }
                     std::string str2 = printer["printerIntName"];
                     printerInfo.seriesNameList += (str1 + ";" + str2 + ";");
                     std::string printerName = printer["name"];
                     if (printerName.find("Creality") == std::string::npos) {
-                        printerName = "Creality " + printerName;
+                        if ((printerName.find("SPARKX") == std::string::npos))
+                        {
+                            printerName = "Creality " + printerName;
+                        }
+                        
                     }
                     mapMachineThumbnail[printerName] = printer["thumbnail"];
                 }
             }
 
-            printers.push_back(printerInfo);
+            if (printerInfo.name.empty() || printerInfo.seriesNameList.empty()) 
+            {
+                continue;
+            }
+
+            mapPrinters[brandName].push_back(printerInfo);
         }
 
-        std::sort(printers.begin(), printers.end(), customComparator);
-
-        for (const auto& info : printers) {
-            json childList = json::object();
-
-            std::string name  = info.name;
-            wxString    sName = _L(name);
-            childList["name"] = sName.utf8_str();
-
-            childList["printers"] = info.seriesNameList;
-            output_machine["machine"].push_back(childList);
+        //std::sort(printers.begin(), printers.end(), customComparator);
+        auto it = mapPrinters.find("Creality");
+        if (it != mapPrinters.end()) {
+            std::sort(it->second.begin(), it->second.end(), customComparator);
         }
+
+        for (const auto& [brandName, printerList] : mapPrinters) 
+        {
+            for (const auto& info : printerList) 
+            {
+                json childList = json::object();
+                std::string fullName  = "";
+                if (brandName.find("Creality") == std::string::npos) {
+                    fullName = brandName + "|" + info.name;  // ï¿½ï¿½ï¿½ï¿½Æ·ï¿½ï¿½ ï¿½ï¿½:sparkX 
+                } else {
+                    fullName = info.name;
+                }
+                fullName = trim(fullName);
+                wxString sName = _L(fullName);
+                childList["name"] = sName.utf8_str();
+                childList["printers"] = info.seriesNameList;
+                output_machine["machine"].push_back(childList);
+            }
+        }
+
     } catch (nlohmann::detail::parse_error& err) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << strFilePath
                                  << " got a nlohmann::detail::parse_error, reason = " << err.what();
@@ -766,7 +798,7 @@ int ProfileFamilyLoader::LoadProfileFamily(
                 OneModel["nozzle_selected"] = "";
 
                 for (const auto& pair : mapInfo) {
-                    // k1 max ÌØÊâ´¦Àí£¬ÏÔÊ¾0.4Åç×ìµÄ´òÓ¡ÇøÓò
+                    // k1 max ï¿½ï¿½ï¿½â´¦ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¾0.4ï¿½ï¿½ï¿½ï¿½Ä´ï¿½Ó¡ï¿½ï¿½ï¿½ï¿½
                     if ("K1 Max" == s1) {
                         if ((pair.second.strModelName == s1) && (pair.first.find("0.4") != string::npos)) {
                             OneModel["area"] = pair.second.strAreaInfo + "*" + pair.second.strHeightInfo;

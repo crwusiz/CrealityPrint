@@ -43,6 +43,9 @@ public:
     void OnLogo(wxAuiToolBarEvent& evt);
     void OnDownMgr(wxAuiToolBarEvent& evt);
     void OnLogin(wxAuiToolBarEvent& evt);
+    void EnableSaveItem(bool enable);
+    void EnableUndoItem(bool enable);
+    void EnableRedoItem(bool enable);
     wxAuiToolBarItem* FindToolByCurrentPosition();
 	
     void SetFileMenu(wxMenu* file_menu);
@@ -59,6 +62,13 @@ public:
 
     void DisableGuideModeItems();
     void EnableGuideModeItems();
+#ifdef __APPLE__
+    // mac-only: safely disable/enable just the row buttons + tabs for guide
+    void DisableGuideModeItemsMac();
+    void EnableGuideModeItemsMac();
+#endif
+    void DisableTabs();
+    void EnableTabs();
 
     void SaveNormalRect();
 

@@ -46,6 +46,11 @@ class ArrangeJob : public Job
     // if consider_lock is false, will ignore the plate lock state, (the "Arrange Selected" situation will set the "consider_lock" to false)
     void prepare_selected(bool consider_lock = true);
 
+#if AUTO_CONVERT_3MF
+    void prepare_auto_convert_3mf_selected(bool consider_lock = true);
+    void prepare_wipe_tower_ex(int plate_index);
+#endif
+
     void prepare_all();
 
     //BBS:prepare the items from current selected partplate

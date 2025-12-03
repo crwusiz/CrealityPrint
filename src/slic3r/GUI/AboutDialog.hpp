@@ -59,8 +59,8 @@ class AboutDialog : public DPIDialog
 {
     ScalableBitmap  m_logo_bitmap;
     wxStaticBitmap* m_logo;
-    wxHtmlWindow*   m_website_html;
-    wxHtmlWindow*   m_email_html;
+    wxStaticText*   m_website_html;
+    wxStaticText*   m_email_html;
     int             m_copy_rights_btn_id { wxID_ANY };
     int             m_copy_version_btn_id { wxID_ANY };
 public:

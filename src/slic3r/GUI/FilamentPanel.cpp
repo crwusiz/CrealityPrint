@@ -1,4 +1,4 @@
-#include "FilamentPanel.h"
+﻿#include "FilamentPanel.h"
 #include <cassert>
 #include <fstream>
 #include <mutex>
@@ -257,20 +257,98 @@ void FilamentButton::OnChildButtonPaint(wxPaintEvent& event)
     wxPaintDC dc(m_child_button);
     wxSize size = m_child_button->GetSize();
 
-	    // Draw black border
-    dc.SetPen(wxPen(GetTextColorBasedOnBackground(m_back_color), 1));
-    dc.SetBrush(*wxTRANSPARENT_BRUSH); // No fill
-    dc.DrawRectangle(0, 0, size.GetWidth(), size.GetHeight());
+    // Draw border: if background alpha is 0 (transparent), draw a checkerboard border,
+    // otherwise draw a 1px rectangle border with contrast color.
+    auto has_transparent_bg = [this]() -> bool {
+        const wxColour& bg = m_bReseted ? m_resetedColour : m_back_color;
+        return bg.IsOk() && bg.Alpha() == 0;
+    };
+
+    if (has_transparent_bg()) {
+        // Create a small checkerboard stipple brush.
+        auto make_checker_brush = []() -> wxBrush {
+            const int S = 8;
+            wxBitmap bmp(S, S);
+            wxMemoryDC mem(bmp);
+            mem.SetBackground(*wxWHITE_BRUSH);
+            mem.Clear();
+            const wxColour c1(220, 220, 220);
+            const wxColour c2(180, 180, 180);
+            const int block = 2; // 2x2 px blocks
+            for (int y = 0; y < S; y += block) {
+                for (int x = 0; x < S; x += block) {
+                    bool pick1 = (((x / block) + (y / block)) % 2) == 0;
+                    mem.SetPen(wxPen(pick1 ? c1 : c2));
+                    mem.SetBrush(wxBrush(pick1 ? c1 : c2));
+                    mem.DrawRectangle(x, y, block, block);
+                }
+            }
+            mem.SelectObject(wxNullBitmap);
+            wxBrush brush(bmp);
+            brush.SetStyle(wxBRUSHSTYLE_STIPPLE);
+            return brush;
+        };
+
+        wxBrush checker = make_checker_brush();
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.SetBrush(checker);
+        // Draw 1px border as four filled rectangles.
+        const int w = size.GetWidth();
+        const int h = size.GetHeight();
+        if (w > 0 && h > 0) {
+            // top
+            dc.DrawRectangle(0, 0, w, 1);
+            // bottom
+            dc.DrawRectangle(0, h - 1, w, 1);
+            // left
+            dc.DrawRectangle(0, 0, 1, h);
+            // right
+            dc.DrawRectangle(w - 1, 0, 1, h);
+        }
+    } else {
+        // Draw normal 1px border with a contrasting color.
+        dc.SetPen(wxPen(GetTextColorBasedOnBackground(m_back_color), 1));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH); // No fill
+        dc.DrawRectangle(0, 0, size.GetWidth(), size.GetHeight());
+    }
 
 	// Get the background color of m_child_button
     wxColour bgColour = m_child_button->GetBackgroundColour();
 
+    // Helper to create checkerboard brush (~10 DIP square size)
+    auto make_checker_brush = [this]() -> wxBrush {
+        int tile = FromDIP(10);
+        if (tile < 2) tile = 2;
+        const int S = tile * 2;
+        wxBitmap bmp(S, S);
+        wxMemoryDC mem(bmp);
+        mem.SetBackground(*wxWHITE_BRUSH);
+        mem.Clear();
+        const wxColour c1(220, 220, 220);
+        const wxColour c2(180, 180, 180);
+        for (int y = 0; y < S; y += tile) {
+            for (int x = 0; x < S; x += tile) {
+                bool pick1 = (((x / tile) + (y / tile)) % 2) == 0;
+                mem.SetPen(wxPen(pick1 ? c1 : c2));
+                mem.SetBrush(wxBrush(pick1 ? c1 : c2));
+                mem.DrawRectangle(x, y, tile, tile);
+            }
+        }
+        mem.SelectObject(wxNullBitmap);
+        wxBrush brush(bmp);
+        brush.SetStyle(wxBRUSHSTYLE_STIPPLE);
+        return brush;
+    };
+
     // Left half background color
     wxRect leftRect(1, 1, size.GetWidth() / 2, size.GetHeight() - 2);
-    if (m_bReseted)
-        dc.SetBrush(wxBrush(m_resetedColour));
-    else
-        dc.SetBrush(wxBrush(m_back_color));
+    {
+        const wxColour& bg = m_bReseted ? m_resetedColour : m_back_color;
+        if (bg.IsOk() && bg.Alpha() == 0)
+            dc.SetBrush(make_checker_brush());
+        else
+            dc.SetBrush(wxBrush(bg));
+    }
     dc.SetPen(*wxTRANSPARENT_PEN);
     dc.DrawRectangle(leftRect);
 
@@ -283,20 +361,26 @@ void FilamentButton::OnChildButtonPaint(wxPaintEvent& event)
         int textX = leftRect.GetX() + (leftRect.GetWidth() - textWidth) / 2;
         int textY = leftRect.GetY() + (leftRect.GetHeight() - textHeight) / 2;
 
-        if (m_bReseted)
-            dc.SetTextForeground(GetTextColorBasedOnBackground(m_resetedColour));
-        else
-            dc.SetTextForeground(GetTextColorBasedOnBackground(m_back_color)); // Black text color
+        {
+            const wxColour& bg = m_bReseted ? m_resetedColour : m_back_color;
+            if (bg.IsOk() && bg.Alpha() == 0)
+                dc.SetTextForeground(*wxBLACK);
+            else
+                dc.SetTextForeground(GetTextColorBasedOnBackground(bg));
+        }
         dc.DrawText(m_sync_filament_label, wxPoint(textX, textY));
     }
 
     // Right half with bitmap
     wxRect rightRect(size.GetWidth() / 2, 0, size.GetWidth() / 2, size.GetHeight());
     wxRect rightRect2(size.GetWidth() / 2, 1, size.GetWidth() / 2, size.GetHeight() - 2);
-    if (m_bReseted)
-        dc.SetBrush(wxBrush(m_resetedColour));
-    else
-        dc.SetBrush(wxBrush(m_back_color));
+    {
+        const wxColour& bg = m_bReseted ? m_resetedColour : m_back_color;
+        if (bg.IsOk() && bg.Alpha() == 0)
+            dc.SetBrush(make_checker_brush());
+        else
+            dc.SetBrush(wxBrush(bg));
+    }
     dc.SetPen(*wxTRANSPARENT_PEN);
 
     // draw the rightRect2 because when add a new filament, the right haft background color would be grey
@@ -395,16 +479,50 @@ void FilamentButton::doRender(wxDC& dc)
 
 	if ((FilamentButtonStateHandler::State) states == FilamentButtonStateHandler::State::Hover)
 	{
-        dc.SetPen(wxPen(GetTextColorBasedOnBackground(m_back_color), m_border_width));
+        if(m_back_color .IsOk() && m_back_color.Alpha() == 0)
+            dc.SetPen(wxPen(wxColour("#000000"), m_border_width));
+        else
+            dc.SetPen(wxPen(GetTextColorBasedOnBackground(m_back_color), m_border_width));
 	}
 	else
 	{
-		dc.SetPen(wxPen(m_back_color, m_border_width));
+        if(m_back_color .IsOk() && m_back_color.Alpha() == 0)
+            dc.SetPen(wxPen(wxColour("#FFFFFF"), m_border_width));
+        else
+		    dc.SetPen(wxPen(m_back_color, m_border_width));
 	}
 
-	dc.SetBrush(wxBrush(m_back_color));
+	// Background brush: if m_back_color is fully transparent, fill with checkerboard (~10 DIP squares).
+	auto make_checker_brush = [this]() -> wxBrush {
+		int tile = FromDIP(10);
+		if (tile < 2) tile = 2;
+		const int S = tile * 2;
+		wxBitmap bmp(S, S);
+		wxMemoryDC mem(bmp);
+		mem.SetBackground(*wxWHITE_BRUSH);
+		mem.Clear();
+		const wxColour c1(220, 220, 220);
+		const wxColour c2(180, 180, 180);
+		for (int y = 0; y < S; y += tile) {
+			for (int x = 0; x < S; x += tile) {
+				bool pick1 = (((x / tile) + (y / tile)) % 2) == 0;
+				mem.SetPen(wxPen(pick1 ? c1 : c2));
+				mem.SetBrush(wxBrush(pick1 ? c1 : c2));
+				mem.DrawRectangle(x, y, tile, tile);
+			}
+		}
+		mem.SelectObject(wxNullBitmap);
+		wxBrush brush(bmp);
+		brush.SetStyle(wxBRUSHSTYLE_STIPPLE);
+		return brush;
+	};
 
-	if (m_radius == 0) {
+	if (m_back_color.IsOk() && m_back_color.Alpha() == 0)
+		dc.SetBrush(make_checker_brush());
+	else
+		dc.SetBrush(wxBrush(m_back_color));
+
+	if (m_radius == 0 || (m_back_color .IsOk() && m_back_color.Alpha() == 0)) {
 		dc.DrawRectangle(rc);
 	}
 	else {
@@ -435,7 +553,10 @@ void FilamentButton::doRender(wxDC& dc)
             x = (panelWidth - 6 - width) / 2;
 		}
 
-        dc.SetTextForeground(GetTextColorBasedOnBackground(m_back_color));
+        if (m_back_color.IsOk() && m_back_color.Alpha() == 0)
+            dc.SetTextForeground(*wxBLACK);
+        else
+            dc.SetTextForeground(GetTextColorBasedOnBackground(m_back_color));
         dc.DrawText(m_label, wxPoint(x, y));
     }
 
@@ -454,8 +575,10 @@ void FilamentButton::doRender(wxDC& dc)
 			x = (panelWidth + width) / 2;
 		}
 
-        dc.DrawBitmap(ShouldDark(m_back_color) ? m_dark_img.bmp() : m_light_img.bmp(),
-                      wxPoint(x, y));
+        const bool is_transparent_bg = (m_back_color.IsOk() && m_back_color.Alpha() == 0);
+        const wxBitmap& icon_bmp = is_transparent_bg ? m_dark_img.bmp()
+                                  : (ShouldDark(m_back_color) ? m_dark_img.bmp() : m_light_img.bmp());
+        dc.DrawBitmap(icon_bmp, wxPoint(x, y));
     }
 
 	m_child_button->Show(m_sync_box_filament);
@@ -511,6 +634,7 @@ void FilamentButton::doRender(wxDC& dc)
         });
 		// filament combox
         wxSizerItem* item = m_sizer_main->Add(m_filamentCombox, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 1);
+        m_sizer_main->SetItemMinSize(m_filamentCombox, (wxSize(FromDIP(40), 35)));
 
         item->SetProportion(wxEXPAND);
         bool is_dark = Slic3r::GUI::wxGetApp().dark_mode();
@@ -628,17 +752,23 @@ void FilamentButton::doRender(wxDC& dc)
             m_edit_btn->SetMinSize(sz);
             m_edit_btn->SetBackgroundColour(wxColour(255, 255, 255));
             m_edit_btn->SetToolTip(_L("Click to edit preset"));
+#if __APPLE__
+            m_edit_btn->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& e) {
+#else
             m_edit_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
+#endif
                 Slic3r::GUI::wxGetApp().sidebar().set_edit_filament(-1);
                 if (m_filamentCombox->switch_to_tab()) {
                     Slic3r::GUI::wxGetApp().sidebar().set_edit_filament(m_index);
                 }
             });
-            m_sizer_main->Add(m_edit_btn, wxSizerFlags().Border(wxALIGN_CENTER_VERTICAL | wxRIGHT | wxLEFT, 1));
+            m_sizer_main->Add(m_edit_btn, wxSizerFlags().Align(wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT).Border(wxRIGHT | wxLEFT, 1));
+            m_sizer_main->SetItemMinSize(m_edit_btn, (wxSize(FromDIP(35), 35)));
 		}
 	}
 #if __APPLE__
     Bind(wxEVT_LEFT_DOWN, &FilamentPopPanel::on_left_down, this); 
+    Bind(wxEVT_PAINT, &FilamentPopPanel::OnPaint, this);
 #endif
     Slic3r::GUI::wxGetApp().UpdateDarkUIWin(this);
 	SetSizer(m_sizer_main);
@@ -677,6 +807,20 @@ void FilamentPopPanel::Popup(wxPoint position /*= wxDefaultPosition*/)
 
 	PopupWindow::Popup();
 
+}
+
+void FilamentPopPanel::OnPaint(wxPaintEvent& event)
+{
+#if __APPLE__
+    wxPaintDC dc(this);
+    wxSize    sz = GetSize();
+
+    dc.SetPen(*wxGREEN_PEN);
+    dc.SetBrush(*wxTRANSPARENT_BRUSH);
+
+    const int radius = 6;
+    dc.DrawRoundedRectangle(0, 0, sz.GetWidth(), sz.GetHeight(), radius);
+#endif
 }
 
 void FilamentPopPanel::Dismiss()
@@ -838,14 +982,20 @@ FilamentItem::FilamentItem(wxWindow* parent, const Data& data, const wxSize& siz
 			wxSize psz = this->GetParent()->GetSize();
 			sz.SetWidth(psz.GetWidth() - 2);
 
+
             // 添加DPI感知的高度调整
-            int       default_height = 35;
-            wxDisplay display(wxDisplay::GetFromWindow(this));
-            double    scale     = display.GetScaleFactor();
-            int       minHeight = static_cast<int>(default_height  * scale);
-            if (sz.GetHeight() < minHeight) {
-                sz.SetHeight(minHeight);
+            const int MIN_HEIGHT = 35;
+            const int MIN_WIDTH  = 350;
+            wxSize    minSize    = wxWindow::FromDIP(wxSize(MIN_WIDTH, MIN_HEIGHT), this); 
+
+            if (sz.GetHeight() < minSize.GetHeight()) {
+                sz.SetHeight(minSize.GetHeight());
             }
+
+            int parent_width = psz.GetWidth();
+            int panel_width  = std::max(parent_width - 2, minSize.GetWidth());
+            sz.SetWidth(panel_width);
+            pos.x = ppos.x + parent_width - panel_width;
 
 			m_popPanel->SetSize(sz);
  			m_popPanel->Layout();
@@ -1124,7 +1274,13 @@ void FilamentItem::paintEvent(wxPaintEvent& evt)
         
         if (!Slic3r::GUI::wxGetApp().dark_mode() && m_bk_color == wxColour("#FFFFFF"))
             dc.SetPen(wxPen(wxColour("#D0D4DE"), 1, wxPENSTYLE_SOLID));
-
+        if (m_bk_color == wxColour("#00000000"))
+        {
+            dc.SetPen(wxPen(wxColour("#FFFFFF"), 1, wxPENSTYLE_SOLID));
+            dc.SetBrush(wxBrush(wxColour("#FFFFFF")));
+        }
+            
+   
 		if (m_radius == 0) {
 			dc.DrawRectangle(rc);
 		}

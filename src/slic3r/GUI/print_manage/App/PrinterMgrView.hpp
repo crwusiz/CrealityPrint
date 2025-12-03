@@ -109,7 +109,11 @@ namespace Slic3r {
             std::chrono::steady_clock::time_point lastSendTime;
             std::mutex sendMutex;
             MQTTClient *client=nullptr;
-            void sendProgressWithRateLimit(std::string ip,float progress,double speed);
+            void sendAllProgressWithRateLimit();
+            // Upload progress cache: ip -> {progress, speed}
+            struct ProgressInfo { float progress = 0.f; double speed = 0.0; };
+            std::unordered_map<std::string, ProgressInfo> m_uploadProgressMap;
+            std::mutex m_uploadProgressMutex;
             // DECLARE_EVENT_TABLE()
         };
 

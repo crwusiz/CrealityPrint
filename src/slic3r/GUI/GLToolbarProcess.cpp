@@ -382,6 +382,16 @@ namespace ProcessBar {
 			}
 		}
 	}
+    std::string GLToolbar::get_selected_item() {
+        std::string name;
+		for (GLToolbarItem* item : m_items) {
+			if (item->is_hovered()) {
+                name = item->get_name();
+                break;
+			}
+		}
+        return name;
+	}
 
 	bool GLToolbar::is_item_pressed(const std::string& name) const
 	{

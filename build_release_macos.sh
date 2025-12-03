@@ -3,7 +3,7 @@
 set -e
 set -o pipefail
 
-while getopts ":dpa:snt:xbc:h" opt; do
+while getopts ":dpa:snt:xbc:yh" opt; do
   case "${opt}" in
     d )
         export BUILD_TARGET="deps"
@@ -34,6 +34,9 @@ while getopts ":dpa:snt:xbc:h" opt; do
     c )
         export BUILD_CONFIG="$OPTARG"
         ;;
+    y )
+        export PROCESS_SYMBOLS="1"
+        ;;
     h ) echo "Usage: ./build_release_macos.sh [-d]"
         echo "   -d: Build deps only"
         echo "   -a: Set ARCHITECTURE (arm64 or x86_64)"
@@ -43,6 +46,7 @@ while getopts ":dpa:snt:xbc:h" opt; do
         echo "   -x: Use Ninja CMake generator, default is Xcode"
         echo "   -b: Build without reconfiguring CMake"
         echo "   -c: Set CMake build configuration, default is Release"
+        echo "   -y: Process debug symbols (generate dSYM, Breakpad symbols, and strip binary)"
         exit 0
         ;;
     * )
@@ -143,6 +147,106 @@ function build_deps() {
     )
 }
 
+# 生成和处理 dSYM 调试符号 (适配 build_release_macos.sh)
+function process_debug_symbols() {
+    echo "Processing debug symbols..."
+    
+    # 对于 build_release_macos.sh，应用名称固定为 CrealityPrint
+    local app_name="CrealityPrint"
+    local app_path="$PROJECT_BUILD_DIR/src$BUILD_DIR_CONFIG_SUBDIR/$app_name.app"
+    local binary_path="$app_path/Contents/MacOS/$app_name"
+    local symbols_dir="$PROJECT_BUILD_DIR/symbols"
+    
+    # 检查二进制文件是否存在
+    if [ ! -f "$binary_path" ]; then
+        echo "Error: Binary file not found at $binary_path"
+        echo "Available files in src directory:"
+        find "$PROJECT_BUILD_DIR/src$BUILD_DIR_CONFIG_SUBDIR" -name "*.app" -type d 2>/dev/null || echo "No .app bundles found"
+        return 1
+    fi
+    
+    echo "Found binary: $binary_path"
+    
+    # 进入二进制文件所在目录
+    cd "$(dirname "$binary_path")"
+    
+    # 步骤1: 生成 dSYM 文件
+    echo "Step 1: Generating dSYM file..."
+    if dsymutil "$app_name" -o "$app_name.dSYM"; then
+        echo "✓ dSYM file generated successfully: $app_name.dSYM"
+    else
+        echo "✗ Failed to generate dSYM file"
+        return 1
+    fi
+    
+    # 步骤2: 生成 Breakpad 符号文件
+    echo "Step 2: Generating Breakpad symbol file..."
+    if dump_syms "$app_name.dSYM" > "$app_name.sym"; then
+        echo "✓ Breakpad symbol file generated: $app_name.sym"
+    else
+        echo "✗ Failed to generate Breakpad symbol file"
+        return 1
+    fi
+    
+    # 步骤3: 创建符号目录结构
+    echo "Step 3: Creating symbol directory structure..."
+    local symbol_id=$(head -n 1 "$app_name.sym" | awk '{print $4}')
+    if [ -z "$symbol_id" ]; then
+        echo "✗ Failed to extract symbol ID from .sym file"
+        return 1
+    fi
+    
+    echo "Symbol ID: $symbol_id"
+    
+    # 创建符号目录并复制文件
+    local target_dir="symbols/$app_name/$symbol_id"
+    mkdir -p "$target_dir"
+    cp "$app_name.sym" "$target_dir/$app_name.sym"
+    echo "✓ Symbol file copied to: $target_dir/$app_name.sym"
+    
+    # 步骤4: 剥离二进制文件中的调试信息
+    echo "Step 4: Stripping debug symbols from binary..."
+    local original_size=$(stat -f%z "$app_name" 2>/dev/null || echo "0")
+    
+    if strip -S "$app_name"; then
+        local stripped_size=$(stat -f%z "$app_name" 2>/dev/null || echo "0")
+        echo "✓ Debug symbols stripped from binary"
+        echo "  Original size: $(numfmt --to=iec $original_size 2>/dev/null || echo "${original_size} bytes")"
+        echo "  Stripped size: $(numfmt --to=iec $stripped_size 2>/dev/null || echo "${stripped_size} bytes")"
+        
+        if [ "$original_size" -gt "$stripped_size" ]; then
+            local saved_bytes=$((original_size - stripped_size))
+            echo "  Space saved: $(numfmt --to=iec $saved_bytes 2>/dev/null || echo "${saved_bytes} bytes")"
+        fi
+    else
+        echo "✗ Failed to strip debug symbols"
+        return 1
+    fi
+    
+    # 移动符号文件到项目构建目录
+    if [ -d "symbols" ]; then
+        mv "symbols" "$symbols_dir"
+        echo "✓ Symbols moved to: $symbols_dir"
+    fi
+    
+    # 移动 dSYM 文件到项目构建目录
+    if [ -d "$app_name.dSYM" ]; then
+        mv "$app_name.dSYM" "$PROJECT_BUILD_DIR/$app_name.dSYM"
+        echo "✓ dSYM moved to: $PROJECT_BUILD_DIR/$app_name.dSYM"
+    fi
+    
+    echo "✓ Debug symbol processing completed successfully!"
+    echo ""
+    echo "Generated files:"
+    echo "  - dSYM: $PROJECT_BUILD_DIR/$app_name.dSYM"
+    echo "  - Symbols: $symbols_dir"
+    echo "  - Stripped binary: $binary_path"
+    echo ""
+    echo "Build directory: $PROJECT_BUILD_DIR (build_check_$ARCH)"
+    
+    return 0
+}
+
 function pack_deps() {
     echo "Packing deps..."
     (
@@ -217,12 +321,22 @@ case "${BUILD_TARGET}" in
     all)
         build_deps
         build_slicer
+        # Process debug symbols if requested
+        if [ "$PROCESS_SYMBOLS" = "1" ]; then
+            echo "Processing debug symbols..."
+            process_debug_symbols
+        fi
         ;;
     deps)
         build_deps
         ;;
     slicer)
         build_slicer
+        # Process debug symbols if requested
+        if [ "$PROCESS_SYMBOLS" = "1" ]; then
+            echo "Processing debug symbols..."
+            process_debug_symbols
+        fi
         ;;
     *)
         echo "Unknown target: $BUILD_TARGET. Available targets: deps, slicer, all."

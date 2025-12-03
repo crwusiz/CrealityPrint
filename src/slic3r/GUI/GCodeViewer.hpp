@@ -35,8 +35,7 @@ static bool role_been_filtered_in_lite_mode(ExtrusionRole role)
 {
     return (role == ExtrusionRole::erInternalInfill ||
             role == ExtrusionRole::erSolidInfill ||
-            role == ExtrusionRole::erInternalBridgeInfill ||
-			role == ExtrusionRole::erIroning);
+            role == ExtrusionRole::erInternalBridgeInfill);
 }
 
 class GCodeViewer

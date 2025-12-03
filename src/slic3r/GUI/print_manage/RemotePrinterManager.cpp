@@ -137,6 +137,9 @@ void RemotePrinterManager::cancelUpload(const std::string& ipAddress) {
             ++it;
         }
     }
+
+    m_cancelUploadMap[ipAddress] = true;
+
     RemotePrinerType printerType = determinePrinterType(ipAddress); 
     switch (printerType) {
     case RemotePrinerType::REMOTE_PRINTER_TYPE_KLIPPER4408:
@@ -179,11 +182,15 @@ void RemotePrinterManager::pushFile(const std::string& ipAddress, const std::str
     std::function<void(std::string, int)> uploadStatusCallback,
     std::function<void(std::string, std::string)> onCompleteCallback)
 {
+    m_lastUploadMap[ipAddress]   = {fileName, filePath, progressCallback, uploadStatusCallback, onCompleteCallback};
     RemotePrinerType printerType = determinePrinterType(ipAddress);
 
+    bool uploadCompleted  = false;
+    auto lastProgressTime = std::chrono::steady_clock::now();
     auto sendFile = [&](auto* printerInterface, auto&&... args) {
         std::future<void> future = printerInterface->sendFileToDevice(std::forward<decltype(args)>(args)...,
-            [=](float progress, double speed) {
+            [=, &lastProgressTime](float progress, double speed) {
+                lastProgressTime = std::chrono::steady_clock::now();
                 if (progressCallback) {
                     progressCallback(ipAddress, progress,speed);
                 }
@@ -193,16 +200,56 @@ void RemotePrinterManager::pushFile(const std::string& ipAddress, const std::str
                     uploadStatusCallback(ipAddress, statusCode);
                 }
             },
-            [=](std::string body){
+            [=, &uploadCompleted](std::string body) {
+                uploadCompleted = true;
+                m_retryCountMap.erase(ipAddress);
                 if(onCompleteCallback)onCompleteCallback(ipAddress, body);
             }
         );
-        while (true) {
+#if 0    
+        int& retryCount = m_retryCountMap[ipAddress];
+        while (retryCount <= MAX_RETRY) {
             auto status = future.wait_for(std::chrono::milliseconds(100));
-            if (status == std::future_status::ready) {
+            if (uploadCompleted) {
                 break;
             }
+
+            auto now          = std::chrono::steady_clock::now();
+            auto heartbeatGap = std::chrono::duration_cast<std::chrono::seconds>(now - lastProgressTime).count();
+            if (status != std::future_status::ready || heartbeatGap <= m_uploadTimeoutSeconds) {
+                continue;
+            }
+
+            retryCount++;
+            if (retryCount > MAX_RETRY) {
+                BOOST_LOG_TRIVIAL(error) << "Upload failed for " << ipAddress << " after " << MAX_RETRY << " retries.";
+                if (uploadStatusCallback) {
+                    m_retryCountMap.erase(ipAddress);
+                    uploadStatusCallback(ipAddress, 3);
+                }
+                break;
+            }
+
+            if (m_cancelUploadMap[ipAddress]) {
+                BOOST_LOG_TRIVIAL(info) << "Upload canceled for " << ipAddress;
+                m_retryCountMap.erase(ipAddress);
+                m_cancelUploadMap.erase(ipAddress);
+                break;
+            }
+
+            BOOST_LOG_TRIVIAL(warning) << "Upload retry for " << ipAddress << " (" << retryCount << "/" << MAX_RETRY << ")";
+            retryUpload(ipAddress);
+            lastProgressTime = std::chrono::steady_clock::now();
+            break;
         }
+#else
+        while (true) {
+            auto status = future.wait_for(std::chrono::milliseconds(100));
+            if (status == std::future_status::ready)
+                break;
+        }
+#endif
+
     };
 
    switch (printerType)
@@ -246,4 +293,19 @@ RemotePrinerType RemotePrinterManager::determinePrinterType(const std::string& i
 
     return RemotePrinerType::REMOTE_PRINTER_TYPE_CX;
 }
+void RemotePrinterManager::retryUpload(const std::string& ipAddress)
+{
+
+    auto it = m_lastUploadMap.find(ipAddress);
+    if (it != m_lastUploadMap.end()) {
+        const UploadTask& task = it->second;
+
+        pushUploadTasks(ipAddress, task.fileName, task.filePath, task.progressCallback, task.uploadStatusCallback, task.onCompleteCallback);
+
+        m_cvUpload.notify_one();
+    } else {
+        std::cerr << "[RetryUpload] No previous upload task found for IP: " << ipAddress << std::endl;
+    }
+}
+
 }

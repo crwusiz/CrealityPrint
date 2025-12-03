@@ -157,6 +157,7 @@ private:
     ConfigOptionString m_defaultData = {};
     std::vector<WeightLimitItem::LimitData> m_vtDefaultLimitData;
     HoverBorderIcon* m_resetBtn = nullptr;
+    HoverBorderIcon* m_addBtn = nullptr;
 
     friend class AccelerationAndSpeedLimitDialog;
 };

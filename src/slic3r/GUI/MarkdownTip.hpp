@@ -17,14 +17,17 @@ namespace Slic3r { namespace GUI {
         {
             wxString CS_Title;
             wxString CS_Content;
+            wxString CS_Key;
             wxString CS_Image;
             wxString CS_URL;
+            wxString CS_UrlText;
         };
 
         
         static bool ShowTip(wxString const& tip,
                      wxString const& tooltip_title,
                      wxString const& tooltip_content,
+                     wxString const& tooltip_key,
                      wxString const& tooltip_img,
                      wxString const& tooltip_url,
                      wxPoint            pos);
@@ -44,6 +47,7 @@ namespace Slic3r { namespace GUI {
         ProcessTip();
         void updateUI();
         void themeChanged();
+        void OnPaint(wxPaintEvent& evt);
         wxRect m_lineRect;
         wxString m_LastTip;
         ContentS m_Content;
@@ -52,6 +56,7 @@ namespace Slic3r { namespace GUI {
         wxStaticText* m_Title_text = nullptr;
         wxStaticText* m_Content_text = nullptr;
         wxStaticText* m_Url_text = nullptr;
+        wxStaticText* m_KeyText = nullptr;
         wxStaticBitmap* m_ProcessImg = nullptr;
         StaticBox* m_ImgBox = nullptr;
         BitmapCache* m_bitmap_cache = nullptr;

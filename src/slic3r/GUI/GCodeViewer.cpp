@@ -14,6 +14,7 @@
 //BBS: add convex hull logic for toolpath check
 #include "libslic3r/Geometry/ConvexHull.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/Utils/TestHelper.hpp"
 #include "../Config/DispConfig.h"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
@@ -4445,6 +4446,10 @@ void GCodeViewer::render_shells(int canvas_width, int canvas_height)
 }
 
 void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessorResult*>& gcode_result_list, bool show /*= true*/) const {
+#if AUTO_CONVERT_3MF
+    return;
+#endif
+
     if (!show)
         return;
     if(gcode_result_list.size() == 0)
@@ -5675,6 +5680,14 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
     m_statistics.total_instances_gpu_size = 0;
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
 
+    // test helper
+    bool is_capture_mode = false;
+    if (Test::enable_test) {
+        std::string mode = Test::Visitor().call_cmd("is_capture_mode", "{}");
+        if (!mode.empty())
+            is_capture_mode = nlohmann::json::parse(mode)["enable"].get<int>() != 0;
+    }
+
     glsafe(::glEnable(GL_DEPTH_TEST));
 
     if (!m_roles.empty() && m_layers_slider && m_layers_slider->is_higher_at_max() && m_layers_slider->is_lower_at_min()) {
@@ -5690,13 +5703,14 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
         marker.set_world_offset(m_sequential_view.current_offset);
         float sc = wxGetApp().plater()->get_current_canvas3D()->get_scale();
         int bottom_margin = 120 * GCODE_VIEWER_SLIDER_SCALE*sc;
-        marker.render(canvas_width, canvas_height - bottom_margin, m_view_type, m_showMark);
+        if (!is_capture_mode)
+            marker.render(canvas_width, canvas_height - bottom_margin, m_view_type, m_showMark);
     }
     
     if (m_bLoaded)
         render_toolpaths();
-
-    if (m_legend_enabled) {
+    
+    if (!is_capture_mode && m_legend_enabled) {
 
         ImVec4 tmp_color = ImVec4(158.0f / 255.0, 158.0f / 255.0, 158.0f / 255.0, 1.0f);
         ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImGui::ColorConvertU32ToFloat4(IM_COL32_BLACK_TRANS));
@@ -5802,7 +5816,14 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
                         ImGui::RenderFrame(p_min, p_max, sw_bg, true, h * 0.5f);
                         
                         if (ImGui::IsMouseHoveringRect(p_start, p_max)) {
-                            ImGui::SetTooltip(_u8L("In lite mode, only the essential toolpath data is displayed.\nIf you need to view internal parameters such as infill, please disable this mode and re-slice the model.").c_str());
+                            ImGui::PushStyleColor(ImGuiCol_PopupBg, ImGuiWrapper::COL_WINDOW_BACKGROUND);
+                            ImGui::PushStyleColor(ImGuiCol_Border, {0, 0, 0, 0});
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 1.00f, 1.00f, 1.00f));
+                            ImGui::SetTooltip(_u8L("In lite mode, only the essential toolpath data is displayed.\n"
+                                                   "If you need to view internal parameters such as infill, please disable this mode and "
+                                                   "re-slice the model.")
+                                                  .c_str());
+                            ImGui::PopStyleColor(3);
                         }
 
                         if (is_lite_mode) {
@@ -5904,9 +5925,12 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
 
     //BBS render slider
-    if (m_moves_slider->render(canvas_width, canvas_height))
-        m_layers_slider->switch_one_layer_mode();
-    m_layers_slider->render(canvas_width, canvas_height);
+    if (!is_capture_mode)
+    {
+        if (m_moves_slider->render(canvas_width, canvas_height))
+            m_layers_slider->switch_one_layer_mode();
+        m_layers_slider->render(canvas_width, canvas_height);
+    }
 }
 
 #if ENABLE_GCODE_VIEWER_STATISTICS
@@ -6057,7 +6081,7 @@ void GCodeViewer::_on_set_fold(bool fold_value)
 bool GCodeViewer::show_gcode_surface() const { 
 	
 	if (m_gcode_result) {
-        if (m_gcode_result->top_shell_layers == 0 || m_gcode_result->bottom_shell_layers == 0 || m_gcode_result->wall_loops == 0) 
+        if (m_gcode_result->all_surface_with_shell == false) 
 			return false;
 	}	
 

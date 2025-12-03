@@ -477,14 +477,14 @@ ParamsPanel::ParamsPanel( wxWindow* parent, wxWindowID id, const wxPoint& pos, c
         //m_mode_region->GetSize(&width, &height);
         m_tips_arrow = new ScalableButton(m_top_panel, wxID_ANY, "tips_arrow");
         m_tips_arrow->Hide();
-
-        m_mode_view  = new SwitchButton(m_top_panel, wxID_ABOUT, is_dark ? "advanced_process_dark_checked" : "advanced_process_light_checked",
-                                       is_dark ? "advanced_process_dark" : "advanced_process_light", true, wxSize(FromDIP(10), FromDIP(10)));
-        
+        m_title_view = new Label(m_top_panel, _L("Advance"));
+        m_mode_view  = new SwitchButton(m_top_panel, wxID_ABOUT);
+        m_mode_view->SetMaxSize({em_unit(this) * 12, -1});
+        //m_mode_view->SetLabels(_L("    "), _L("    "));
         StateColor stateColor = StateColor(std::make_pair(is_dark ? 0x4B4B4D : 0xFFFFFF, (int) StateColor::Disabled),
                                      std::make_pair(0x15BF59, (int) StateColor::Hovered),
                                      std::make_pair(is_dark ? 0x4B4B4D : 0xFFFFFF, (int) StateColor::Normal));
-        m_mode_view_box = new HoverBorderBox(m_top_panel, m_mode_view, wxDefaultPosition, wxSize(FromDIP(24),FromDIP(24)), wxTE_PROCESS_ENTER);
+        //m_mode_view_box = new HoverBorderBox(m_top_panel, m_mode_view, wxDefaultPosition, wxSize(FromDIP(24),FromDIP(24)), wxTE_PROCESS_ENTER);
         m_mode_view->SetToolTip(_L("Advance parameters"));
 
         //reset
@@ -696,11 +696,11 @@ void ParamsPanel::create_layout_printerAndFilament()
         m_mode_sizer->AddStretchSpacer(1);
         m_mode_sizer->Add(m_tips_arrow, 0, wxALIGN_CENTER);
         m_mode_sizer->AddStretchSpacer(10);
-        //         m_mode_sizer->Add( m_title_view, 0, wxALIGN_CENTER );
-        //         m_mode_sizer->AddSpacer(FromDIP(2));
+        m_mode_sizer->Add( m_title_view, 0, wxALIGN_CENTER );
+        m_mode_sizer->AddSpacer(FromDIP(2));
 
         m_mode_sizer->AddStretchSpacer(10);
-        m_mode_sizer->Add(m_mode_view_box, 0, wxALIGN_CENTER);
+        m_mode_sizer->Add(m_mode_view, 0, wxALIGN_CENTER);
         m_mode_sizer->AddSpacer(FromDIP(14));
         // m_mode_sizer->Add(m_btn_reset, 0, wxALIGN_CENTER);  // the m_btn_reset is not used
         // m_mode_sizer->AddSpacer(FromDIP(14));
@@ -739,6 +739,7 @@ void ParamsPanel::create_layout_printerAndFilament()
             }
         });
 
+        
         m_preset_listBox->Bind(wxEVT_TREE_SEL_CHANGED, [this](wxTreeEvent& event) {
             if (!m_IsNeed) {
                 m_IsNeed = false;
@@ -1145,11 +1146,9 @@ void ParamsPanel::create_layout_process()
         m_mode_sizer->AddStretchSpacer(FromDIP(1));
         m_mode_sizer->Add(m_tips_arrow, 0, wxALIGN_CENTER);
         m_mode_sizer->AddStretchSpacer(FromDIP(10));
-        //         m_mode_sizer->Add( m_title_view, 0, wxALIGN_CENTER );
-        //         m_mode_sizer->AddSpacer(FromDIP(2));
-
-        m_mode_sizer->AddStretchSpacer(FromDIP(10));
-        m_mode_sizer->Add(m_mode_view_box, 0, wxALIGN_CENTER);
+        m_mode_sizer->Add( m_title_view, 0, wxALIGN_CENTER );
+        m_mode_sizer->AddSpacer(FromDIP(2));
+        m_mode_sizer->Add(m_mode_view, 0, wxALIGN_CENTER);
         m_mode_sizer->AddSpacer(FromDIP(14));
         // m_mode_sizer->Add(m_btn_reset, 0, wxALIGN_CENTER);  // the m_btn_reset is not used
         // m_mode_sizer->AddSpacer(FromDIP(14));
@@ -1367,9 +1366,6 @@ void ParamsPanel::OnToggled(wxCommandEvent& event)
 
     Slic3r::GUI::wxGetApp().save_mode(mode_id);
 
-    if (m_mode_view && m_mode_view->GetId() == event.GetId()) {
-        m_mode_view->updateBitmapHover();
-    }
     m_page_view->Update();
     m_page_view->Refresh();
 }
@@ -1778,8 +1774,8 @@ void ParamsPanel::sys_color_changed()
   //  m_btn_reset->SetBitmap_(is_dark ? "dot" : "undo");    
     //m_setting_btn->SetBitmap_(is_dark ? "table" : "table"); 
 
-    m_mode_view->GetOnImg() = ScalableBitmap(m_mode_view, is_dark ? "advanced_process_dark_checked" : "advanced_process_light_checked", FromDIP(14));
-    m_mode_view->GetOffImg() = ScalableBitmap(m_mode_view, is_dark ? "advanced_process_dark" : "advanced_process_light", FromDIP(14));
+    //m_mode_view->GetOnImg() = ScalableBitmap(m_mode_view, is_dark ? "advanced_process_dark_checked" : "advanced_process_light_checked", FromDIP(14));
+    //m_mode_view->GetOffImg() = ScalableBitmap(m_mode_view, is_dark ? "advanced_process_dark" : "advanced_process_light", FromDIP(14));
 
     m_compare_btn->SetBitmap_(is_dark ? "compare_dark_default" : "compare_light_default");  
     m_setting_btn->SetBitmap_(is_dark ? "table_new" : "table_new_dark");  

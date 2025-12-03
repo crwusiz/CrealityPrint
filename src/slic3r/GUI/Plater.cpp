@@ -193,7 +193,7 @@
 #include "PrinterPresetConfig.hpp"
 #include "CommunicateWithCXCloud.hpp"
 #include "Check3mfVendor.hpp"
-
+#include "slic3r/Utils/TestHelper.hpp"
 #include "libslic3r/common_header/common_header.h"
 using boost::optional;
 namespace fs = boost::filesystem;
@@ -293,6 +293,22 @@ enum class LoadFilesType {
 };
 
 enum class LoadType : unsigned char { Unknown, OpenProject, LoadGeometry, LoadConfig };
+
+// Creality: for test of automation
+enum class RestorePolicy : int { Ask = 0, Restore = 1, Discard = 2 };
+static RestorePolicy get_forced_policy_from_env()
+{
+    // SLICER_TEST_RESTORE=restore|discard|ask
+    if (const char* p = std::getenv("SLICER_TEST_RESTORE")) {
+        std::string s = p;
+        if (s == "restore")
+            return RestorePolicy::Restore;
+        if (s == "discard")
+            return RestorePolicy::Discard;
+    }
+    // 其它值视为 ask，也就说保持原来的逻辑
+    return RestorePolicy::Ask;
+}
 
 class SlicedInfo : public wxStaticBoxSizer
 {
@@ -973,6 +989,8 @@ Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, 
         p->m_auto_mapping_btn = new HoverBorderIcon(p->m_panel_filament_title, wxEmptyString,
                                                     is_dark ? "auto_mapping_dark" : "auto_mapping_light", wxDefaultPosition,
                                                     COMMON_HOVER_BORDER_ICON_SIZE, wxTE_PROCESS_ENTER);
+        // Make auto-mapping icon a bit larger inside the same box
+        p->m_auto_mapping_btn->SetIconScaleFactor(0.95);
         p->m_auto_mapping_btn->SetToolTip_(_L("Auto Mapping"));
         p->m_auto_mapping_btn->setDisableIcon("auto_mapping_disable");
         p->m_auto_mapping_btn->Bind(wxEVT_LEFT_DOWN, [this](auto& e) {
@@ -990,6 +1008,8 @@ Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, 
         p->m_flushing_volume_btn = new HoverBorderIcon(p->m_panel_filament_title, wxEmptyString,
                                                        is_dark ? "flush_dark_default" : "flush_light_default", wxDefaultPosition,
                                                        COMMON_HOVER_BORDER_ICON_SIZE, wxTE_PROCESS_ENTER);
+        // Slightly smaller icon
+        p->m_flushing_volume_btn->SetIconScaleFactor(0.6);
         p->m_flushing_volume_btn->SetToolTip(_L("Flushing volumes"));
 
         p->m_flushing_volume_btn->SetFocus();
@@ -1042,6 +1062,8 @@ Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, 
         HoverBorderIcon* add_btn = new HoverBorderIcon(p->m_panel_filament_title, wxEmptyString,
                                                        is_dark ? "addMaterial_dark_default" : "addMaterial_light_default",
                                                        wxDefaultPosition, COMMON_HOVER_BORDER_ICON_SIZE, wxTE_PROCESS_ENTER);
+        // Slightly smaller icon
+        add_btn->SetIconScaleFactor(0.6);
         add_btn->SetToolTip_(_L("Add one filament"));
         // add_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent& e){
         add_btn->Bind(wxEVT_LEFT_DOWN, [this](auto& e) {
@@ -1065,6 +1087,8 @@ Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, 
         HoverBorderIcon* del_btn = new HoverBorderIcon(p->m_panel_filament_title, wxEmptyString,
                                                        is_dark ? "delMaterial_dark_default" : "delMaterial_light_default",
                                                        wxDefaultPosition, COMMON_HOVER_BORDER_ICON_SIZE, wxTE_PROCESS_ENTER);
+        // Slightly smaller icon
+        del_btn->SetIconScaleFactor(0.6);
         del_btn->SetToolTip(_L("Remove last filament"));
         del_btn->Bind(wxEVT_LEFT_DOWN, [this](auto& e) {
             if (!p->m_cx_panel_filament_content->can_delete())
@@ -1092,6 +1116,8 @@ Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, 
         HoverBorderIcon* set_btn = new HoverBorderIcon(p->m_panel_filament_title, wxEmptyString,
                                                        is_dark ? "setting_dark_default" : "setting_light_default", wxDefaultPosition,
                                                        COMMON_HOVER_BORDER_ICON_SIZE, wxTE_PROCESS_ENTER);
+        // Slightly smaller icon
+        set_btn->SetIconScaleFactor(0.6);
         set_btn->SetToolTip(_L("Set filaments to use"));
         set_btn->Bind(wxEVT_LEFT_DOWN, [this](auto& e) {
             p->editing_filament = -1;
@@ -3281,18 +3307,7 @@ Plater::priv::priv(Plater* q, MainFrame* main_frame)
 
     assemble_view = new AssembleView(panel_3d, bed, &model, config, &background_process);
 
-#ifdef __linux__
-    main_frame->Bind(wxEVT_IDLE, [=](wxIdleEvent& event) {
-        if (sidebar) {
-            sidebar->Refresh();
-            sidebar->Update();
-        }
-        if (main_frame->m_param_panel) {
-            main_frame->m_param_panel->Refresh();
-            main_frame->m_param_panel->Update();
-        }
-    });
-#endif
+
 
 #ifdef __APPLE__
     // BBS
@@ -3351,7 +3366,7 @@ Plater::priv::priv(Plater* q, MainFrame* main_frame)
     panel_sizer->Add(assemble_view, 1, wxEXPAND | wxALL, 0);
     panel_3d->SetSizer(panel_sizer);
     m_aui_mgr.AddPane(panel_3d, wxAuiPaneInfo().Name("main").CenterPane().PaneBorder(false));
-
+    
     m_default_window_layout = m_aui_mgr.SavePerspective();
 
     {
@@ -3706,64 +3721,79 @@ Plater::priv::priv(Plater* q, MainFrame* main_frame)
     model.set_need_backup();
 
     // BBS: restore project
+        // Creality:modifed for test of automation
     if (wxGetApp().is_editor()) {
         auto last_backup = wxGetApp().app_config->get_last_backup_dir();
         this->q->Bind(EVT_RESTORE_PROJECT, [this, last = last_backup](wxCommandEvent& e) {
             std::string last_backup = last;
             std::string originfile;
+
+            // [NEW] 读取强制策略
+            RestorePolicy policy = get_forced_policy_from_env();
+
             if (Slic3r::has_restore_data(last_backup, originfile)) {
-                wxFont        defaultFont = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
-                wxFont        customFont(8, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL);
-                MessageDialog dialog = MessageDialog(this->q, _L("Previous unsaved project detected, do you want to restore it?"),
-                                                     wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Restore"),
-                                                     wxYES_NO | wxYES_DEFAULT | wxCENTRE);
-                dialog.SetFont(customFont);
-                auto result = dialog.ShowModal();
-                if (result == wxID_YES) {
+                bool restore = false;
+
+                if (policy == RestorePolicy::Restore) {
+                    // [NEW] 策略：强制恢复 → 不弹框
+                    restore = true;
+                } else if (policy == RestorePolicy::Discard) {
+                    // [NEW] 策略：强制丢弃 → 不弹框
+                    restore = false;
+                } else {
+                    // 原路径：弹框询问
+                    wxFont        defaultFont = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+                    wxFont        customFont(8, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL);
+                    MessageDialog dialog = MessageDialog(this->q, _L("Previous unsaved project detected, do you want to restore it?"),
+                                                         wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Restore"),
+                                                         wxYES_NO | wxYES_DEFAULT | wxCENTRE);
+                    dialog.SetFont(customFont);
+                    auto result = dialog.ShowModal();
+                    restore     = (result == wxID_YES);
+                }
+
+                if (restore) {
                     this->q->load_project(from_path(last_backup), from_path(originfile));
                     Slic3r::backup_soon();
                     Slic3r::GUI::UpdateParams::getInstance().checkParamsNeedUpdate();
                     return;
                 }
             }
+
             try {
                 if (originfile != "<lock>") // see bbs_3mf.cpp for lock detail
                     boost::filesystem::remove_all(last);
             } catch (...) {}
-            int skip_confirm = e.GetInt();
+
+            // [NEW] 若策略是“丢弃”，则强制跳过保存确认（=1），否则沿用原事件参数
+            int skip_confirm = (policy == RestorePolicy::Discard) ? 1 : e.GetInt();
+
+            // 保持原 silent=true
             this->q->new_project(skip_confirm, true);
-            std::string res = wxGetApp().app_config->get("is_first_install");
-            bool onlyDefault = wxGetApp().preset_bundle->printers.only_default_printers();
-            if(res!="1"&&!onlyDefault)
-            {
+
+            std::string res         = wxGetApp().app_config->get("is_first_install");
+            bool        onlyDefault = wxGetApp().preset_bundle->printers.only_default_printers();
+            if (res != "1" && !onlyDefault) {
                 wxGetApp().mainframe->select_tab(size_t(1));
                 wxGetApp().mainframe->m_topbar->SetSelection(size_t(MainFrame::tp3DEditor));
-                wxTheApp->CallAfter([]{
+                wxTheApp->CallAfter([] {
 #ifdef __APPLE__
                     wxPlatformInfo platformInfo;
                     int            major = platformInfo.GetOSMajorVersion();
-                    if (major >= 15) 
-                    {
+                    if (major >= 15) {
                         wxGetApp().startTour();
-                    }
-                    else 
-                    {
+                    } else {
                         wxGetApp().startTour_Apple();
                     }
-                    
 #elif defined(__linux__) || defined(__LINUX__)
-                    wxGetApp().startTour_Apple();
+                wxGetApp().startTour_Apple();
 #else
-                    wxGetApp().startTour();
+                wxGetApp().startTour();
 #endif // __APPLE__
-
-                    
                 });
-            }else if(res!="1"&&onlyDefault)
-            {
+            } else if (res != "1" && onlyDefault) {
                 wxGetApp().reload_homepage();
             }
-            
         });
         // wxPostEvent(this->q, wxCommandEvent{EVT_RESTORE_PROJECT});
     }
@@ -4009,7 +4039,7 @@ void Plater::priv::update_sidebar(bool from_collapse, bool force_update)
     if (!sidebar.IsOk() || this->current_panel == nullptr) {
         return;
     }
-
+    
     bool needs_update = force_update;
 
     if (!sidebar_layout.is_enabled) {
@@ -4026,7 +4056,7 @@ void Plater::priv::update_sidebar(bool from_collapse, bool force_update)
             needs_update = true;
         }
     }
-
+    
     if (needs_update) {
         notification_manager->set_sidebar_collapsed(sidebar.IsShown());
         m_aui_mgr.Update();
@@ -4361,7 +4391,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     if (en_3mf_file_type == En3mfType::From_Prusa) {
                         // do not reset the model config
                         load_config = false;
-#if !AUTOMATION_TOOL
+#if !AUTOMATION_TOOL || !AUTO_CONVERT_3MF
                         if (load_type != LoadType::LoadGeometry)
                             show_info(q, _L("The 3mf is not supported by CrealityPrint, load geometry data only."), _L("Load 3mf"));
 #endif
@@ -4751,7 +4781,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 #if AUTOMATION_TOOL
                                 wxGetApp().app_config->set("no_warn_when_modified_gcodes", "true");
 #endif                            
-#if !AUTOMATION_TOOL                                
+#if !AUTOMATION_TOOL || !AUTO_CONVERT_3MF                              
                                 std::string warning_message;
                                 warning_message += "\n";
                                 for (std::set<std::string>::iterator it = modified_gcodes.begin(); it != modified_gcodes.end(); ++it)
@@ -4766,10 +4796,12 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                                       _L("Please confirm that the G-codes within these presets are safe to prevent any "
                                                          "damage to the machine!"),
                                                   _L("Customized Preset"));
+#if !AUTO_CONVERT_3MF
                                 dlg.show_dsa_button();
                                 auto res = dlg.ShowModal();
                                 if (dlg.get_checkbox_state())
                                     wxGetApp().app_config->set("no_warn_when_modified_gcodes", "true");
+#endif
 #endif
                             }
 
@@ -4908,7 +4940,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         check_printer_standard_status();
                         // 判断是否为创想的软件生成的3mf文件
                         if (model.objects.size() != 0) {
-#if !AUTOMATION_TOOL
+#if !AUTOMATION_TOOL || !AUTO_CONVERT_3MF
                             Check3mfVendor::getInstance()->check(path.string(), printerSettingId, &busy);
 #endif
                         }
@@ -5090,9 +5122,14 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
             GUI::show_error(q, message);
             continue;
         } catch (const std::exception& e) {
+#if AUTO_CONVERT_3MF
+            wxGetApp().ExitMainLoop();
+            return empty_result;
+#else
             if (!is_user_cancel)
                 GUI::show_error(q, e.what());
             continue;
+#endif
         }
 
         progress_percent = 100.0f * (float) i / (float) total_files + INIT_MODEL_RATIO * 100.0f / (float) total_files;
@@ -5128,6 +5165,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     convert_from_imperial_units(model, false);
                 else if (model.looks_like_saved_in_meters()) {
                     // BBS do not handle look like in meters
+#if AUTO_CONVERT_3MF
+                    model.convert_from_meters(true);
+#else
                     MessageDialog dlg(q,
                                       format_wxstr(_L("The object from file %s is too small, and maybe in meters or inches.\n Do you want "
                                                       "to scale to millimeters?"),
@@ -5136,7 +5176,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     int           answer = dlg.ShowModal();
                     if (answer == wxID_YES)
                         model.convert_from_meters(true);
+#endif
                 } else if (model.looks_like_imperial_units()) {
+#if AUTO_CONVERT_3MF
+                    convert_from_imperial_units(model, true);
+#else
                     // BBS do not handle look like in meters
                     MessageDialog dlg(q,
                                       format_wxstr(_L("The object from file %s is too small, and maybe in meters or inches.\n Do you want "
@@ -5146,6 +5190,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     int           answer = dlg.ShowModal();
                     if (answer == wxID_YES)
                         convert_from_imperial_units(model, true);
+#endif
                 }
                 // else if (model.looks_like_imperial_units()) {
                 // BBS do not handle look like in imperial
@@ -5279,7 +5324,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
     if (new_model != nullptr && new_model->objects.size() > 1) {
         // BBS do not popup this dialog
-
+#if !AUTO_CONVERT_3MF
         if (ask_multi) {
             MessageDialog msg_dlg(q, _L("Load these files as a single object with multiple parts?\n"),
                                   _L("Object with multiple parts was detected"), wxICON_WARNING | wxYES | wxNO);
@@ -5287,7 +5332,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 new_model->convert_multipart_object(filaments_cnt);
             }
         }
-
+#endif
         auto loaded_idxs = load_model_objects(new_model->objects);
         obj_idxs.insert(obj_idxs.end(), loaded_idxs.begin(), loaded_idxs.end());
     }
@@ -5407,9 +5452,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
     if (tolal_model_count <= 0 && !q->m_exported_file) {
         dlg.Hide();
         if (!is_user_cancel) {
+#if !AUTO_CONVERT_3MF
             MessageDialog msg(wxGetApp().mainframe, _L("The file does not contain any geometry data."), _L("Warning"),
                               wxYES | wxICON_WARNING);
             if (msg.ShowModal() == wxID_YES) {}
+#endif
         }
     }
     Check3mfVendor::getInstance()->doSelectPrinterPreset();
@@ -5518,10 +5565,12 @@ std::vector<size_t> Plater::priv::load_model_objects(const ModelObjectPtrs& mode
             const double   max_ratio = std::max(ratio(0), ratio(1));
             const double   ratio2    = ratio(2);
             if (max_ratio > 10000) {
+#if !AUTO_CONVERT_3MF
                 MessageDialog
                     dlg(q, _L("Your object appears to be too large, Do you want to scale it down to fit the heat bed automatically?"),
                         _L("Object too large"), wxICON_QUESTION | wxYES);
                 int answer = dlg.ShowModal();
+#endif // !AUTO_CONVERT_3MF
                 // the size of the object is too big -> this could lead to overflow when moving to clipper coordinates,
                 // so scale down the mesh
                 object->scale_mesh_after_creation(1.0 / max(max_ratio, ratio2));
@@ -5530,6 +5579,13 @@ std::vector<size_t> Plater::priv::load_model_objects(const ModelObjectPtrs& mode
                 scaled_down = true;
                 break;
             } else if (max_ratio > 10) {
+#if AUTO_CONVERT_3MF
+                instance->set_scaling_factor(instance->get_scaling_factor() / max(max_ratio, ratio2));
+                object->scale_mesh_after_creation(0.98);
+                object->origin_translation = Vec3d::Zero();
+                object->center_around_origin();
+                scaled_down = true;
+#else
                 MessageDialog
                     dlg(q, _L("Your object appears to be too large, Do you want to scale it down to fit the heat bed automatically?"),
                         _L("Object too large"), wxICON_QUESTION | wxYES_NO);
@@ -5541,7 +5597,17 @@ std::vector<size_t> Plater::priv::load_model_objects(const ModelObjectPtrs& mode
                     object->center_around_origin();
                     scaled_down = true;
                 }
+#endif // AUTO_CONVERT_3MF
+
             } else if (size.z() > bed_size.z() && !m_is_calib_model) {
+#if AUTO_CONVERT_3MF
+                const double current_ratio = std::max(max_ratio, ratio2);
+                instance->set_scaling_factor(instance->get_scaling_factor() / current_ratio);
+                object->scale_mesh_after_creation(0.98);
+                object->origin_translation = Vec3d::Zero();
+                object->center_around_origin();
+                scaled_down = true;
+#else
                 MessageDialog
                     dlg(q, _L("Your object appears to be too large, Do you want to scale it down to fit the heat bed automatically?"),
                         _L("Object too large"), wxICON_QUESTION | wxYES_NO);
@@ -5554,6 +5620,7 @@ std::vector<size_t> Plater::priv::load_model_objects(const ModelObjectPtrs& mode
                     object->center_around_origin();
                     scaled_down = true;
                 }
+#endif // AUTO_CONVERT_3MF
             }
         }
 
@@ -8009,6 +8076,7 @@ void Plater::priv::on_slicing_began()
     bool need_change_dailytips = !(slice_all && !is_first_plate);
     notification_manager->set_slicing_progress_began();
     notification_manager->update_slicing_notif_dailytips(need_change_dailytips);
+    Test::EVENT_SPREAD("slice_started");
 }
 
 void Plater::priv::add_warning(const Slic3r::PrintStateBase::Warning& warning, size_t oid, int plate_index)
@@ -8325,6 +8393,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent& evt)
         }
         q->SetDropTarget(new PlaterDropTarget(*main_frame, *q));
         // wxGetApp().mainframe->m_topbar->SetSelection(size_t(MainFrame::tpPreview)-1);
+
+#if AUTO_CONVERT_3MF
+        wxCommandEvent fe(EVT_SLICE_ALL_PLATE_FINISHED);
+        fe.SetInt(has_error ? 1 : 0);
+        wxPostEvent(&wxGetApp(), fe);
+#endif
+
     } else {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__
                                 << boost::format(":slicing all, plate %1% finished, start next slice...") % m_cur_slice_plate;
@@ -8351,6 +8426,8 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent& evt)
             }
         }
     }
+
+    Test::EVENT_SPREAD("slice_compete");
 
 #if AUTOMATION_TOOL
 
@@ -9586,7 +9663,7 @@ bool Plater::priv::init_process_toolbar()
     Slic3r::GUI::ProcessBar::GLToolbarItem* qItem = process_toolbar.get_item(L("Quality"), false);
     if(qItem)
         qItem->set_state(Slic3r::GUI::ProcessBar::GLToolbarItem::Pressed);
-
+    
     return true;
 }
 
@@ -10037,6 +10114,10 @@ int Plater::priv::get_active_snapshot_index()
 
 void Plater::priv::take_snapshot(const std::string& snapshot_name, const UndoRedo::SnapshotType snapshot_type)
 {
+#if AUTO_CONVERT_3MF
+    return;
+#endif
+
     if (m_prevent_snapshots > 0)
         return;
     assert(m_prevent_snapshots >= 0);
@@ -10979,7 +11060,7 @@ void Plater::load_project(wxString const& filename2, wxString const& originfile)
 }
 
 // BBS: save logic
-int Plater::save_project(bool saveAs, FileType ft, En3mfType type_3mf)
+int Plater::save_project(bool saveAs, FileType ft, En3mfType type_3mf,bool with_gcode)
 {
     // if (up_to_date(false, false)) // should we always save
     //     return;
@@ -11009,10 +11090,13 @@ int Plater::save_project(bool saveAs, FileType ft, En3mfType type_3mf)
         return wxID_NO;
     if (filename == "<cancel>")
         return wxID_CANCEL;
-
+    SaveStrategy strategy = SaveStrategy::WithGcode | SaveStrategy::SplitModel | SaveStrategy::ShareMesh | SaveStrategy::FullPathSources;
+    if (!with_gcode) {
+        strategy = SaveStrategy::SplitModel | SaveStrategy::ShareMesh | SaveStrategy::FullPathSources;
+    }
     // BBS export 3mf without gcode
     if (export_3mf(into_path(filename),
-                   SaveStrategy::WithGcode | SaveStrategy::SplitModel | SaveStrategy::ShareMesh | SaveStrategy::FullPathSources, -1,
+                   strategy, -1,
                    nullptr, type_3mf) < 0) {
         MessageDialog(
             this,
@@ -12138,6 +12222,9 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
     new_params.start = params.start / mm3_per_mm;
     new_params.step  = params.step / mm3_per_mm;
 
+    //skirt speed
+    print_config->set_key_value("initial_layer_speed", new ConfigOptionFloat(new_params.start + layer_height * new_params.step));
+
     set_calib_model(false);
     p->background_process.fff_print()->set_calib_params(new_params);
 }
@@ -12268,8 +12355,7 @@ void Plater::calib_retraction_speed(const Calib_Params& params)
 
     //  cut upper
     auto obj_bb = obj->bounding_box_exact();
-    auto height = 1 + (params.end - params.start) / params.step;
-
+    auto height = 1.0 + 0.4 + ((params.end - params.start)) / params.step;
     if (height < obj_bb.size().z()) {
         cut_horizontal(0, 0, height, ModelObjectCutAttribute::KeepLower);
     }
@@ -14888,6 +14974,97 @@ void Plater::export_gcode_3mf(bool export_all)
     }
 }
 
+// Creality: for automation
+int Plater::export_gcode_3mf_headless(const fs::path& output_path_in, bool export_all, std::string& err)
+{
+    // 1) 预检
+    if (p->model.objects.empty()) {
+        err = "model empty";
+        return 1;
+    }
+    if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index()) {
+        err = "last slice had error";
+        return 2;
+    }
+
+    fs::path output_path = output_path_in;
+
+    // 2) 规范扩展名（与原函数一致）
+    std::string ext = output_path.extension().string();
+    if (!export_all) {
+        // 单盘 -> .gcode
+        if (ext != ".gcode")
+            output_path = output_path.string() + ".gcode";
+    } else {
+        // 全部 -> .gcode.3mf
+        delete_file_name_redundant_suffix(output_path, L".gcode.3mf");
+        if (boost::iends_with(output_path.string(), ".gcode")) {
+            std::wstring temp = output_path.wstring();
+            temp              = temp.substr(0, temp.size() - 6);
+            output_path       = temp + L".gcode.3mf";
+        } else if (boost::iends_with(output_path.string(), ".gcode.gcode.3mf")) {
+            std::wstring temp = output_path.wstring();
+            temp              = temp.substr(0, temp.size() - 16);
+            output_path       = temp + L".gcode.3mf";
+        } else if (!boost::iends_with(output_path.string(), ".gcode.3mf")) {
+            output_path = output_path.replace_extension(".gcode.3mf");
+        }
+    }
+
+    // 3) 通知 & 目录记录（原代码一致）
+    bool path_on_removable_media = false;
+    p->notification_manager->new_export_began(path_on_removable_media);
+    p->exporting_status     = path_on_removable_media ? ExportingStatus::EXPORTING_TO_REMOVABLE : ExportingStatus::EXPORTING_TO_LOCAL;
+    p->last_output_path     = output_path.string();
+    p->last_output_dir_path = output_path.parent_path().string();
+
+    int plate_idx = get_partplate_list().get_curr_plate_index();
+    if (export_all)
+        plate_idx = PLATE_ALL_IDX;
+
+    // 4) 真正导出
+    int ret = 0;
+    if (!export_all && output_path.extension().string() == ".gcode") {
+        if (p->warnings_dialog(plate_idx)) {
+            p->show_warning_dialog_popup_window = false;
+            p->export_gcode(output_path, /*save_tmp*/ false);
+            p->show_warning_dialog_popup_window = false;
+            ret                                 = 0;
+        } else {
+            err = "warnings_dialog rejected";
+            return 3;
+        }
+    } else {
+        ret = export_3mf(output_path, SaveStrategy::Silence | SaveStrategy::SplitModel | SaveStrategy::WithGcode | SaveStrategy::SkipModel,
+                         plate_idx);
+        if (ret != 0) {
+            err = "export_3mf failed";
+            return 4;
+        }
+    }
+
+    // 5) 完成后的通知/埋点（与原代码一致）
+    AppConfig&             appconfig    = *wxGetApp().app_config;
+    RemovableDriveManager& rdm          = *wxGetApp().removable_drive_manager();
+    bool                   on_removable = rdm.is_path_on_removable_drive(p->last_output_dir_path);
+    appconfig.update_last_output_dir(output_path.parent_path().string(), false);
+    p->notification_manager->push_exporting_finished_notification(output_path.string(), p->last_output_dir_path, on_removable);
+
+    try {
+        if (wxGetApp().is_privacy_checked()) {
+            json js;
+            js["type_code"]      = "slice810";
+            js["client_id"]      = wxGetApp().get_client_id();
+            js["function_item"]  = export_all ? 5 : 4; // 4:单盘; 5:全部
+            js["file_format"]    = (!export_all ? "gcode" : "3mf");
+            js["operation_date"] = Slic3r::Utils::utc_timestamp(Slic3r::Utils::get_current_time_utc());
+            js["app_version"]    = GUI_App::format_display_version().c_str();
+            wxGetApp().track_event("export_file", js.dump());
+        }
+    } catch (...) {}
+    return 0;
+}
+
 void Plater::send_gcode_finish(wxString name)
 {
     auto out_str = GUI::format(_L("The file %s has been sent to the printer's storage space and can be viewed on the printer."), name);
@@ -16684,6 +16861,8 @@ const GLCanvas3D* Plater::canvas3D() const
 
 GLCanvas3D* Plater::get_view3D_canvas3D() { return p->view3D->get_canvas3d(); }
 
+View3D*     Plater::get_vew3D() { return p->view3D; }
+
 GLCanvas3D* Plater::get_preview_canvas3D() { return p->preview->get_canvas3d(); }
 
 GLCanvas3D* Plater::get_assmeble_canvas3D()
@@ -17996,20 +18175,65 @@ bool Plater::PopupObjectTableBySelection()
 
 bool Plater::selection_has_support_painted()
 {
-    auto* canvas   = this->get_current_canvas3D();
-    if (!canvas)
-        return false;
+    try {
+        auto* canvas = this->get_current_canvas3D();
+        if (!canvas)
+            return false;
 
-    const Selection& sel     = canvas->get_selection();
-    const int             obj_idx = sel.get_object_idx();
+        const Selection& sel = canvas->get_selection();
+        const int obj_idx = sel.get_object_idx();
 
-    if (obj_idx >= 0) {
-        const Model& model = wxGetApp().model();
-        const ModelObject* mo = model.objects[obj_idx];
-        return mo && mo->is_fdm_support_painted();
+        if (obj_idx >= 0) {
+            const Model& model = wxGetApp().model();
+            
+            // 安全检查：确保对象索引在有效范围内
+            if (obj_idx >= static_cast<int>(model.objects.size())) {
+                BOOST_LOG_TRIVIAL(error) << "selection_has_support_painted: Invalid object index " << obj_idx 
+                                        << ", model has " << model.objects.size() << " objects";
+                return false;
+            }
+            
+            const ModelObject* mo = model.objects[obj_idx];
+            
+            // 安全检查：确保ModelObject指针有效
+            if (!mo) {
+                BOOST_LOG_TRIVIAL(error) << "selection_has_support_painted: ModelObject at index " << obj_idx << " is null";
+                return false;
+            }
+            
+            // 关键安全检查：验证ObjectID是否仍然有效
+            // 这可以检测到对象是否已被释放或无效化
+            if (!mo->id().valid()) {
+                BOOST_LOG_TRIVIAL(error) << "selection_has_support_painted: ModelObject at index " << obj_idx 
+                                        << " has invalid ObjectID, object may have been deleted";
+                return false;
+            }
+            
+            // 安全检查：确保volumes容器有效
+            if (mo->volumes.empty()) {
+                return false;
+            }
+            
+            // 再次验证对象在调用方法前仍然有效
+            // 这是双重保护，防止在检查和使用之间对象被释放
+            if (!mo->id().valid()) {
+                BOOST_LOG_TRIVIAL(error) << "selection_has_support_painted: ModelObject ObjectID became invalid during access";
+                return false;
+            }
+            
+            return mo->is_fdm_support_painted();
+        }
+
+        return true;
     }
-
-    return true;
+    catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "selection_has_support_painted: Exception caught: " << e.what();
+        return false;
+    }
+    catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "selection_has_support_painted: Unknown exception caught";
+        return false;
+    }
 }
 
 void Plater::update_support_manual_hint_by_type(SupportType st_new)

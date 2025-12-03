@@ -59,6 +59,17 @@ namespace DM{
             return true;
             });
 
+
+        this->Handler({ "get_region" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            std::string country_code = wxGetApp().app_config->get("region");
+            nlohmann::json commandJson;
+            commandJson["command"] = "get_region";
+            commandJson["data"] = country_code;
+
+            AppUtils::PostMsg(browse, commandJson);
+            return true;
+            });
+
     }
 
 }

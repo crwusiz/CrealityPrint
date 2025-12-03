@@ -1,4 +1,5 @@
 #include "Upload3mfToCloud.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
 #include "slic3r/GUI/I18N.hpp"
 
 #include "libslic3r/Utils.hpp"
@@ -1096,7 +1097,7 @@ void Upload3mfToCloudDialog::on_upload_3mf(wxCommandEvent& event)
 {
     auto    modelDownload = wxGetApp().get_cloud_model_download();
     Plater* plater        = wxGetApp().mainframe->plater();
-    int returnStatus =   plater->save_project(true);
+    int returnStatus =   plater->save_project(true,FT_3MF,En3mfType::From_Creality,true);
     if (returnStatus == wxID_CANCEL)
         return;
     std::string version  = std::string(PROJECT_VERSION_EXTRA);

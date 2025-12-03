@@ -129,6 +129,7 @@ public:
     void sys_color_changed();
     void setFilamentItem(FilamentItem* pFilamentItem) { m_pFilamentItem = pFilamentItem; }
 	void on_left_down(wxMouseEvent &evt);
+    void OnPaint(wxPaintEvent& event);
 
 public:
 

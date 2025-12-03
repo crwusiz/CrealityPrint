@@ -189,6 +189,8 @@ public:
     /// Call the attached m_fn_edit_value method.
 	void			on_edit_value();
 
+    void            initField();
+
 public:
     /// parent wx item, opportunity to refactor (probably not necessary - data duplication)
     wxWindow*		m_parent {nullptr};

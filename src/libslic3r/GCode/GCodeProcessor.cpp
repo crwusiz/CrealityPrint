@@ -2136,7 +2136,7 @@ void GCodeProcessor::process_file(const std::string& filename, std::function<voi
         m_result.creality_complete_extruder_colors.push_back("#FFFFFF");
     }
      // Don't post-process the G-code to update time stamps.
-    this->finalize(false);
+    this->finalize(false, 0.0f, 0.0f, m_result.multicolor_method);
 }
 
 void GCodeProcessor::initialize(const std::string& filename)
@@ -2222,7 +2222,7 @@ void GCodeProcessor::calculateVolume()
     }
 };
 
-void GCodeProcessor::finalize(bool post_process,float filament_used, float flush_time)
+void GCodeProcessor::finalize(bool post_process, float filament_used, float flush_time, bool is_multicolor_method)
 {
     // update width/height of wipe moves
     for (GCodeProcessorResult::MoveVertex& move : m_result.moves) {
@@ -2246,7 +2246,9 @@ void GCodeProcessor::finalize(bool post_process,float filament_used, float flush
     update_estimated_times_stats();
     auto time_mode = m_result.print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)];
 
-    //calculateVolume();
+    if (!is_multicolor_method) {
+        calculateVolume();
+    }
 
     auto it = std::find_if(time_mode.roles_times.begin(), time_mode.roles_times.end(), [](const std::pair<ExtrusionRole, float>& item) { return erCustom == item.first; });
     auto prepare_time = (it != time_mode.roles_times.end()) ? it->second : 0.0f;
@@ -3510,23 +3512,30 @@ bool GCodeProcessor::process_creality_tags(const std::string_view comment)
     }
     //; default_acceleration = 12000
 
-	if (boost::starts_with(comment, " top_shell_layers = ")) {
-        auto data                 = comment.substr(strlen(" top_shell_layers = "));
-        this->m_result.top_shell_layers = std::stoi(data.data());
+	if (boost::starts_with(comment, " all_surface_with_shell = ")) {
+        auto data                 = comment.substr(strlen(" all_surface_with_shell = "));
+        this->m_result.all_surface_with_shell = (std::stoi(data.data()) > 0);
         return false;
     }
 
-    if (boost::starts_with(comment, " bottom_shell_layers = ")) {
-        auto data                       = comment.substr(strlen(" bottom_shell_layers = "));
-        this->m_result.bottom_shell_layers = std::stoi(data.data());
+    if (boost::starts_with(comment, " max_print_temp = ")) {
+        auto data = comment.substr(strlen(" max_print_temp = "));
+        auto comma = data.find(',');
+        if (comma != std::string::npos) {
+            int bed_temp = std::stoi(std::string(data.substr(0, comma)));
+            int nozzle_temp = std::stoi(std::string(data.substr(comma + 1)));
+            this->m_result.max_printer_bed_temp = bed_temp;
+            this->m_result.max_printer_nozzle_temp = nozzle_temp;
+        }
         return false;
     }
 
-	if (boost::starts_with(comment, " wall_loops = ")) {
-        auto data                          = comment.substr(strlen(" wall_loops = "));
-		this->m_result.wall_loops = std::stoi(data.data());
+    if (boost::starts_with(comment, " multicolor_method = ")) {
+        auto data                 = comment.substr(strlen(" multicolor_method = "));
+        this->m_result.multicolor_method = std::stoi(data.data());
         return false;
     }
+    
 
     return false;
 }
@@ -8367,8 +8376,8 @@ void GCodeProcessor::update_slice_warnings()
 
     auto get_used_extruders = [this]() {
         std::vector<size_t> used_extruders;
-        used_extruders.reserve(m_used_filaments.total_volumes_per_extruder.size());
-        for (auto item : m_used_filaments.total_volumes_per_extruder) {
+        used_extruders.reserve(m_used_filaments.model_volumes_per_extruder.size());
+        for (auto item : m_used_filaments.model_volumes_per_extruder) {
             used_extruders.push_back(item.first);
         }
         return used_extruders;

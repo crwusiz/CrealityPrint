@@ -1,4 +1,4 @@
-#include "MarkdownTip.hpp"
+﻿#include "MarkdownTip.hpp"
 #include "GUI_App.hpp"
 #include "GUI.hpp"
 #include "MainFrame.hpp"
@@ -157,17 +157,33 @@ wxString ChineseWrap(const wxString& text, int maxWidth, wxWindow* window)
     wxString currentLine;
     
     wxClientDC dc(window);
-    dc.SetFont(Label::Body_12);
+    dc.SetFont(Label::Body_13);
     
     wxString currentWord;
     
     for (size_t i = 0; i < text.length(); i++) {
         wxChar ch = text[i];
-        
-        // 判断字符类型
+        // 统一处理 CRLF：跳过 '\r'
+        if (ch == '\r')
+            continue;
+
+        // 遇到 '\n' 立即刷出当前行，插入换行，再清空行缓冲
+        if (ch == '\n') {
+            if (!currentWord.IsEmpty()) {
+                ProcessWord(currentWord, currentLine, result, maxWidth, dc);
+                currentWord.clear();
+            }
+            if (!result.IsEmpty())
+                result += "\n";
+            result += currentLine;
+            currentLine.clear();
+            continue;
+        }
+
+        // 正常字符分类
         bool isChinese = (ch >= 0x4E00 && ch <= 0x9FFF);
-        bool isSpace = (ch == ' ' || ch == '\t' || ch == '\n');
-        
+        bool isSpace   = (ch == ' ' || ch == '\t'); // 不包含 '\n'
+
         if (isSpace) {
             // 遇到空格，处理当前单词
             if (!currentWord.IsEmpty()) {
@@ -225,13 +241,16 @@ wxString HyperLinkWrap(const wxString& text, int maxWidth, wxWindow* window)
 bool ProcessTip::ShowTip(wxString const& tip,
                           wxString const& tooltip_title,
                           wxString const& tooltip_content,
+                          wxString const& tooltip_key,
                           wxString const& tooltip_img,
                           wxString const& tooltip_url,
                           wxPoint            pos)
 { 
         processTip()->m_Content.CS_Title    = tooltip_title;
-        processTip()->m_Content.CS_Content  = ChineseWrap(tooltip_content,processTip()->FromDIP(260),processTip());
-        processTip()->m_Content.CS_URL      = HyperLinkWrap(tooltip_url,processTip()->FromDIP(260),processTip());
+        processTip()->m_Content.CS_Content  = ChineseWrap(tooltip_content,processTip()->FromDIP(275),processTip());
+        processTip()->m_Content.CS_URL      = HyperLinkWrap(tooltip_url,processTip()->FromDIP(275),processTip());
+        processTip()->m_Content.CS_UrlText  = tooltip_url;
+        processTip()->m_Content.CS_Key   = tooltip_key;
         processTip()->m_Content.CS_Image    = tooltip_img;
         return processTip()->ShowTip(pos);
 }
@@ -351,18 +370,21 @@ ProcessTip::ProcessTip()
 : wxPopupTransientWindow(wxGetApp().mainframe, wxBORDER_NONE)
 {
     m_bitmap_cache = new Slic3r::GUI::BitmapCache;
-    this->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    this->SetBackgroundStyle(wxBG_STYLE_PAINT);
+    this->SetDoubleBuffered(true);
     m_Timer = new wxTimer;
     m_Timer->Bind(wxEVT_TIMER, &ProcessTip::OnTimer, this);
+    Bind(wxEVT_PAINT, &ProcessTip::OnPaint, this);
 
     wxSizer * mainSizer = new wxBoxSizer(wxVERTICAL);
-    //SetSizer(mainSizer);
-    SetSizerAndFit(mainSizer);
+    wxBoxSizer* frameSizer = new wxBoxSizer(wxVERTICAL);
+    frameSizer->Add(mainSizer, 1, wxALL | wxEXPAND, FromDIP(1));
+    SetSizerAndFit(frameSizer);
 
     bool is_dark = wxGetApp().dark_mode();
     SetBackgroundColour(is_dark ? wxColor("#222222") : wxColor("#F7F8FA"));
 
-    const wxColour fontColor = is_dark ? wxColour("#DBDBDB") : wxColour("#4E5969");
+    const wxColour fontColor = is_dark ? wxColour("#DBDBDB") : wxColour("#222222");
 
     m_Title_text = new wxStaticText(this, wxID_ANY, m_Content.CS_Title, wxDefaultPosition, wxDefaultSize);
     m_Title_text->SetFont(Label::Head_14);
@@ -376,22 +398,27 @@ ProcessTip::ProcessTip()
     m_Content_text->SetMinSize({226, -1});
     m_Content_text->SetMaxSize({226, -1});
     m_Content_text->Wrap(FromDIP(226));
-    m_Content_text->SetFont(Label::Body_12);
+    m_Content_text->SetFont(Label::Body_13);
     m_Content_text->SetForegroundColour(fontColor);
-
-    wxFont font = m_Content_text->GetFont();
-    font.SetPointSize(font.GetPointSize() + 1);
-    m_Content_text->SetFont(font);
 
     int hg = m_Content_text->GetBestHeight(226);
     mainSizer->Add(m_Content_text, 1, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(8));
     mainSizer->AddSpacer(FromDIP(8));
 
+    m_KeyText = new wxStaticText(this, wxID_ANY, m_Content.CS_Key, wxDefaultPosition, wxDefaultSize);
+    m_KeyText->SetFont(Label::Body_12);
+    m_KeyText->SetForegroundColour(fontColor);
+    m_KeyText->SetSize({FromDIP(275), -1});
+    m_KeyText->SetMinSize({FromDIP(275), -1});
+    m_KeyText->SetMaxSize({FromDIP(275), -1});
+    mainSizer->Add(m_KeyText, 0, wxLEFT | wxRIGHT, FromDIP(8));
+    mainSizer->AddSpacer(FromDIP(4));
+
     m_ImgBox = new StaticBox(this, wxID_ANY, wxDefaultPosition);
     m_ImgBox->SetSize(FromDIP(contentWidth), FromDIP(contentWidth * 0.6));
     m_ImgBox->SetMaxSize(wxSize(FromDIP(contentWidth), FromDIP(contentWidth * 0.6)));
     m_ImgBox->SetMinSize(wxSize(FromDIP(contentWidth), FromDIP(contentWidth * 0.6)));
-    m_ImgBox->SetBackgroundColour(is_dark ? wxColour("#414143"):wxColour("#414143"));
+    m_ImgBox->SetBackgroundColour(is_dark ? wxColour("#414143"):wxColour("#e1e4e9"));
     m_ImgBox->SetBorderWidth(0);
     m_ImgBox->SetBorderColor(0x7A7A7F);
     m_ImgBox->SetCornerFlags(0xF);
@@ -420,15 +447,15 @@ ProcessTip::ProcessTip()
     m_Url_text->Wrap(FromDIP(226));
     m_Url_text->SetFont(Label::Body_10);
     // 设置超链接样式
-    wxColour linkColor(19, 91, 204);
-    m_Url_text->SetForegroundColour(linkColor);
+    //wxColour linkColor(19, 91, 204);
+    m_Url_text->SetForegroundColour(fontColor);
     wxFont tfont = m_Url_text->GetFont();
     tfont.SetUnderlined(true);
     m_Url_text->SetFont(tfont);
     m_Url_text->SetCursor(wxCursor(wxCURSOR_HAND)); // 设置手型光标
     m_Url_text->Wrap(FromDIP(226));
     m_Url_text->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event) {
-        wxLaunchDefaultBrowser(m_Content.CS_URL);
+        wxLaunchDefaultBrowser(m_Content.CS_UrlText);
         event.Skip(); 
     });
 
@@ -448,6 +475,9 @@ void ProcessTip::updateUI()
     m_Title_text->SetLabelText(m_Content.CS_Title);
     m_Content_text->SetLabelText(m_Content.CS_Content);
     m_Url_text->SetLabelText(m_Content.CS_URL);
+    wxString keyTest = wxString::Format(_L("Parameter name: %s"), m_Content.CS_Key+"\n");
+    //m_KeyText->SetLabelText(HyperLinkWrap(keyTest,FromDIP(275),this));
+    m_KeyText->SetLabelText(keyTest);
     //m_Url_text->SetURL(m_Content.CS_URL);
 
     if(m_Content.CS_Image.empty())
@@ -552,9 +582,11 @@ void ProcessTip::themeChanged()
     bool is_dark = wxGetApp().dark_mode();
     SetBackgroundColour(is_dark ? wxColor("#222222") : wxColor("#F7F8FA"));
 
-    const wxColour fontColor = is_dark ? wxColour("#DBDBDB") : wxColour("#4E5969");
+    const wxColour fontColor = is_dark ? wxColour("#DBDBDB") : wxColour("#222222");
     m_Title_text->SetForegroundColour(fontColor);
     m_Content_text->SetForegroundColour(fontColor);
+    m_Url_text->SetForegroundColour(fontColor);
+    m_KeyText->SetForegroundColour(fontColor);
     m_ImgBox->SetBackgroundColour(is_dark ? wxColour("#414143"):wxColour("#e1e4e9"));
     m_Url_text->Refresh(); 
 }
@@ -923,4 +955,48 @@ wxWindow* MarkdownTip::DetachFrom(wxWindow* parent)
 MarkdownTip* MarkdownTip::instance() 
 { return markdownTip(); }
 }
+}
+
+void ProcessTip::OnPaint(wxPaintEvent& event)
+{
+    wxAutoBufferedPaintDC dc(this);
+
+    const bool     is_dark = wxGetApp().dark_mode();
+    const wxColour bg      = is_dark ? wxColour("#222222") : wxColour("#F7F8FA");
+
+    dc.SetBackground(wxBrush(bg));
+    dc.Clear();
+
+    wxRect    rect      = GetClientRect();
+    const int shadow_px = FromDIP(2);
+    wxRect    card      = rect.Deflate(shadow_px);
+
+    if (wxGraphicsContext* gc = wxGraphicsContext::Create(dc)) {
+        gc->SetAntialiasMode(wxANTIALIAS_DEFAULT);
+        gc->SetPen(*wxTRANSPARENT_PEN);
+
+        const int max_alpha = is_dark ? 45 : 30;
+        for (int i = 1; i <= shadow_px; ++i) {
+            const double        t = 1.0 - double(i - 1) / double(shadow_px);
+            const unsigned char a = (unsigned char) (max_alpha * t);
+            const wxColour      c(34, 34, 34, a);
+            wxGraphicsPath      path = gc->CreatePath();
+            path.AddRoundedRectangle(card.x - i, card.y - i, card.width + 2 * i, card.height + 2 * i, 0);
+            gc->SetBrush(wxBrush(c));
+            gc->FillPath(path);
+        }
+
+        wxRect inner = card.Deflate(FromDIP(1));
+        if (inner.width > 0 && inner.height > 0) {
+            wxGraphicsPath bg_path = gc->CreatePath();
+            bg_path.AddRoundedRectangle(inner.x, inner.y, inner.width, inner.height, 0);
+            gc->SetBrush(wxBrush(bg));
+            gc->FillPath(bg_path);;
+        }
+
+        delete gc;
+    }
+
+    wxRect    shape_rect   = card.Inflate(shadow_px);
+    SetShape(shape_rect);
 }
