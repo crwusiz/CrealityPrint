@@ -1,6 +1,10 @@
 #ifndef slic3r_FillPlanePath_hpp_
 #define slic3r_FillPlanePath_hpp_
 
+#include <map>
+
+#include "../libslic3r.h"
+
 #include "FillBase.hpp"
 
 namespace Slic3r {
@@ -33,6 +37,7 @@ class FillPlanePath : public Fill
 {
 public:
     ~FillPlanePath() override = default;
+    bool is_self_crossing() override { return false; }
 
 protected:
     void _fill_surface_single(

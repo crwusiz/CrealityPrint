@@ -156,6 +156,8 @@ class Print;
 
         float x_offset{0};
         float y_offset{0};
+        float belt_z_offset{0};
+        bool machine_is_belt{false};
         struct MoveVertex
         {
             unsigned int gcode_id{ 0 };
@@ -243,7 +245,9 @@ class Print;
         std::string                     gcode_uuid;
         float                           nozzle_diameter;
         bool                            all_surface_with_shell{false};   //false as default value, preview old version gcode file cannot enable auto lite mode
-        int                             max_printer_bed_temp{0};
+        std::vector<int>                wipe_tower_tool_changes_layers;
+		bool							should_enable_preview_lod;
+		int                             max_printer_bed_temp{0};
         int                             max_printer_nozzle_temp{0};
         bool                            multicolor_method{0};
         std::vector<std::pair<std::array<int, 2>, std::vector<unsigned char>>> image_data;
@@ -301,6 +305,8 @@ class Print;
             gcode_uuid = other.gcode_uuid;
             nozzle_diameter = other.nozzle_diameter;
             all_surface_with_shell = other.all_surface_with_shell;
+            wipe_tower_tool_changes_layers = other.wipe_tower_tool_changes_layers;
+            should_enable_preview_lod = other.should_enable_preview_lod;
             max_printer_bed_temp = other.max_printer_bed_temp;
             max_printer_nozzle_temp = other.max_printer_nozzle_temp;
             image_data = other.image_data;
@@ -355,12 +361,16 @@ class Print;
             gcode_uuid                        = other.gcode_uuid;
             nozzle_diameter                   = other.nozzle_diameter;
             all_surface_with_shell            = other.all_surface_with_shell;
+            wipe_tower_tool_changes_layers    = other.wipe_tower_tool_changes_layers;
+            should_enable_preview_lod         = other.should_enable_preview_lod;
             max_printer_bed_temp              = other.max_printer_bed_temp;
             max_printer_nozzle_temp           = other.max_printer_nozzle_temp;
             image_data                        = other.image_data;
             x_offset                          = other.x_offset;
             y_offset                          = other.y_offset;
             multicolor_method                 = other.multicolor_method;
+            belt_z_offset                     = other.belt_z_offset;
+            machine_is_belt                   = other.machine_is_belt;
 #if ENABLE_GCODE_VIEWER_STATISTICS
             time = other.time;
 #endif
@@ -413,6 +423,7 @@ class Print;
 
         static int get_gcode_last_filament(const std::string &gcode_str);
         static bool get_last_z_from_gcode(const std::string& gcode_str, double& z);
+        static bool get_last_position_from_gcode(const std::string& gcode_str, Vec3f& pos);
 
         static const float Wipe_Width;
         static const float Wipe_Height;

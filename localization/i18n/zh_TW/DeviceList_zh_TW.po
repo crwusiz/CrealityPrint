@@ -1605,3 +1605,19 @@ msgstr ""
 
 #~ msgid "There is no consumables in the current rack"
 #~ msgstr "當前料架沒有材料"
+
+msgid ""
+"Creality Print requires the Microsoft WebView2 Runtime,But it has been found that the abnormal operation of Microsoft WebView2 may be related to the installation of Microsoft Edge. \n"
+"Click the Yes to reinstall Microsoft Edge"
+msgstr ""
+"Creality Print 需要 Microsoft WebView2 Runtime，但已發現其異常運行可能與安裝 Microsoft Edge 有關。\n"
+"按「是」重新安裝 Microsoft Edge。"
+
+msgid "Failed to reinstall the Microsoft WebView2 Runtime. Please reinstall it manually."
+msgstr "Microsoft WebView2 Runtime 重新安裝失敗。請手動重新安裝。"
+
+msgid "tutorial: %s"
+msgstr "教學：%s"
+
+msgid "The Microsoft WebView2 Runtime has been reinstalled successfully. The application will restart now."
+msgstr "Microsoft WebView2 Runtime 已成功重新安裝，應用程式將立即重啟。"

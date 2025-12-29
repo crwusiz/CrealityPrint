@@ -46,6 +46,7 @@ private:
     // Distance between camera position and camera target measured along the camera Z axis
     double m_distance{ DefaultDistance };
     double m_gui_scale{ 1.0 };
+    double m_cr30_rotate_y_offset = 0.0f; // only be used in cr30
 
     std::array<int, 4> m_viewport;
     Transform3d m_view_matrix{ Transform3d::Identity() };
@@ -73,6 +74,7 @@ public:
         update_target();
         return m_target; }
     void set_target(const Vec3d& target);
+    void update_target_y_offset(const Vec3d& delta) { m_cr30_rotate_y_offset += delta.y(); }
 
     double get_distance()  { return (get_position() - get_target()).norm(); }
     double get_gui_scale() const { return m_gui_scale; }

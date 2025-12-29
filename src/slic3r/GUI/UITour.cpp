@@ -69,21 +69,20 @@ GuidePanel::GuidePanel(wxWindow* parent) : wxPanel(parent)
     m_TipContent_back_extension = new wxStaticText(m_MainPanel, wxID_ANY, backText.c_str(), wxDefaultPosition, wxDefaultSize);
     m_TipContent_back_extension->SetFont(Label::Body_16);
     m_TipContent_back_extension->SetForegroundColour(font_fg);
+    m_TipContent_back_extension->Wrap(FromDIP(450)); // 设置自动换行宽度
 
     tipSizerH->Add(m_TipContent, 0, wxALIGN_CENTRE_VERTICAL | wxLEFT, FromDIP(12));
     tipSizerH->Add(m_TipBitMap, 0, wxALIGN_CENTRE_VERTICAL, FromDIP(10));
     tipSizerH->Add(m_TipContent_back, 0, wxALIGN_CENTRE_VERTICAL, FromDIP(10));
 
-    m_TipContent_back_extension->SetMinSize(wxSize(-1, FromDIP(24)));
-    m_TipContent_back_extension->SetSize(wxSize(-1, FromDIP(24)));
-
     tipSizerV->Add(tipSizerH, 0, wxALIGN_LEFT, 0);
-    tipSizerV->Add(m_TipContent_back_extension, 0, wxEXPAND | wxLEFT, FromDIP(12));
+    tipSizerV->Add(m_TipContent_back_extension, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
 
     verSizer->Add(tipSizerV, 1, wxALL | wxEXPAND | wxALIGN_CENTER_HORIZONTAL, FromDIP(5));
 
     wxSizer* btns = new wxBoxSizer(wxHORIZONTAL);
-    verSizer->AddStretchSpacer();
+    //verSizer->AddStretchSpacer();
+    verSizer->AddSpacer(FromDIP(20));
     verSizer->Add(btns, 0, wxALL | wxEXPAND | wxALIGN_CENTER_HORIZONTAL, FromDIP(10));
 
     wxString curStep = wxString::Format("%d/%d", m_CurStep, m_TotalStep);
@@ -107,7 +106,7 @@ GuidePanel::GuidePanel(wxWindow* parent) : wxPanel(parent)
     StateColor report_text(std::pair<wxColour, int>(wxColour(144, 144, 144), StateColor::Disabled),
                            std::pair<wxColour, int>(wxColour(38, 46, 48), StateColor::Enabled));
 
-    m_SkipBtn = new Button(m_MainPanel, _L("Skip"));
+    m_SkipBtn = new Button(m_MainPanel, _L_ZH("Skip"));
     m_SkipBtn->SetBackgroundColor(report_bg);
     m_SkipBtn->SetBorderColor(report_bd);
     m_SkipBtn->SetTextColor(report_text);
@@ -120,7 +119,7 @@ GuidePanel::GuidePanel(wxWindow* parent) : wxPanel(parent)
                             tour->End();
                         }
                     }));
-    m_PreBtn = new Button(m_MainPanel, _L("Previous"));
+    m_PreBtn = new Button(m_MainPanel, _L_ZH("Previous"));
     m_PreBtn->SetBackgroundColor(report_bg);
     m_PreBtn->SetBorderColor(report_bd);
     m_PreBtn->SetTextColor(report_text);
@@ -134,7 +133,7 @@ GuidePanel::GuidePanel(wxWindow* parent) : wxPanel(parent)
                        }
                    }));
 
-    m_NextBtn = new Button(m_MainPanel, _L("Next"));
+    m_NextBtn = new Button(m_MainPanel, _L_ZH("Next"));
     m_NextBtn->SetBackgroundColor(report_bg);
     m_NextBtn->SetBorderColor(report_bd);
     m_NextBtn->SetTextColor(report_text);
@@ -152,7 +151,23 @@ GuidePanel::GuidePanel(wxWindow* parent) : wxPanel(parent)
     btns->Add(m_PreBtn, 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, FromDIP(16));
     btns->Add(m_NextBtn, 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, FromDIP(16));
     
-
+    // 固定宽度和默认高度
+    const int fixedWidth = FromDIP(480);
+    const int defaultHeight = FromDIP(378);
+    
+    // 所有控件添加完成后，计算高度
+    m_MainPanel->Layout();
+    m_MainPanel->Fit();
+    
+    // 获取内容所需高度，取默认高度和内容高度的较大值
+    int contentHeight = m_MainPanel->GetSize().GetHeight();
+    int finalHeight = std::max(defaultHeight, contentHeight);
+    
+    m_MainPanel->SetSize(fixedWidth, finalHeight);
+    m_MainPanel->SetMinSize(wxSize(fixedWidth, defaultHeight));
+    
+    this->SetSize(fixedWidth, finalHeight);
+    this->SetMinSize(wxSize(fixedWidth, defaultHeight));
 }
 
 GuidePanel::~GuidePanel() {}
@@ -179,13 +194,13 @@ void GuidePanel::UpdateUI(wxRect          pos,
     // if (m_CurStep == 0)
     m_PreBtn->Enable(m_CurStep == 0 ? false : true);
     // m_NextBtn->Enable(m_CurStep == m_TotalStep-1 ? false : true);
-    m_CurStep == m_TotalStep - 1 ? m_NextBtn->SetLabel(_L("Finish")) : m_NextBtn->SetLabel(_L("Next"));
+    m_CurStep == m_TotalStep - 1 ? m_NextBtn->SetLabel(_L_ZH("Finish")) : m_NextBtn->SetLabel(_L_ZH("Next"));
 
     wxSize imgSize;
     if (m_CurStep == 2) {
         imgSize = wxSize(FromDIP(328), FromDIP(234));
     } else if (m_CurStep == 3) {
-        imgSize = wxSize(FromDIP(390), FromDIP(180));
+        imgSize = wxSize(FromDIP(390), FromDIP(152));
     } else {
         imgSize = wxSize(FromDIP(448), FromDIP(234));
     }
@@ -237,6 +252,26 @@ void GuidePanel::UpdateUI(wxRect          pos,
         m_TipContent_back->SetLabelText(m_TipsBack);
         m_TipContent_back_extension->SetLabelText("");
     }
+
+    // 重新设置换行并适应内容高度
+    // 注意：Wrap() 必须在 SetLabel 之后调用才能生效
+    m_TipContent_back_extension->Wrap(FromDIP(450));
+    
+    // 固定宽度和默认高度
+    const int fixedWidth = FromDIP(480);
+    const int defaultHeight = FromDIP(378);
+    
+    // 重新布局
+    m_MainPanel->Layout();
+    
+    // 计算内容所需的高度，取默认高度和内容高度的较大值
+    wxSize bestSize = m_MainPanel->GetSizer()->GetMinSize();
+    int contentHeight = bestSize.GetHeight();
+    int finalHeight = std::max(defaultHeight, contentHeight);
+    
+    // 设置固定宽度和高度
+    m_MainPanel->SetSize(fixedWidth, finalHeight);
+    this->SetSize(fixedWidth, finalHeight);
 
     int xPos = m_Pos.x + m_Pos.width;
     int yPos = m_Pos.y + m_Pos.height;

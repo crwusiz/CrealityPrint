@@ -36,6 +36,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         set(TARGET_ARCH "x86_64")
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64")
         set(TARGET_ARCH "arm64")
+    elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "loongarch|loongarch64")
+        set(TARGET_ARCH "loongarch")
     endif()
     list(APPEND _ffmpeg_flags
         "--prefix=${DESTDIR}"
@@ -54,6 +56,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         list(APPEND _ffmpeg_flags "--enable-x86asm")  # 启用x86汇编
     elseif(TARGET_ARCH STREQUAL "arm64")
         list(APPEND _ffmpeg_flags "--enable-neon")    # 启用ARM NEON优化
+    elseif(TARGET_ARCH STREQUAL "loongarch")
+        list(APPEND _ffmpeg_flags "--disable-doc") 
     endif()
     ExternalProject_Add(dep_FFmpeg
         URL "https://ffmpeg.org/releases/ffmpeg-4.2.tar.bz2"

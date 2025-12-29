@@ -153,6 +153,8 @@ set(lisbslic3r_sources
     Fill/FillTpmsD.hpp
 	Fill/FillTpmsGradual.cpp
     Fill/FillTpmsGradual.hpp
+	Fill/FillTpmsFK.cpp
+	Fill/FillTpmsFK.hpp
     Flow.cpp
     Flow.hpp
     FlushVolCalc.cpp
@@ -216,6 +218,8 @@ set(lisbslic3r_sources
     GCode/ConflictChecker.hpp
 	GCode/SmoothSpeedAndAcc.cpp
     GCode/SmoothSpeedAndAcc.hpp
+    GCode/Smoothing.cpp
+    GCode/Smoothing.hpp
     GCode.cpp
     GCode.hpp
     GCodeReader.cpp
@@ -226,6 +230,8 @@ set(lisbslic3r_sources
     GCodeWriter.hpp
     Geometry.cpp
     Geometry.hpp
+	Geometry/ArcWelder.cpp
+    Geometry/ArcWelder.hpp
     Geometry/Bicubic.hpp
     Geometry/Circle.cpp
     Geometry/Circle.hpp

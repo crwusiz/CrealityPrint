@@ -17,7 +17,7 @@
     "color_bed_exclude_area": "0x215,220x215,220x220,0x220",
     "cooling_tube_length": "0",
     "cooling_tube_retraction": "0",
-    "creality_flush_time": "86.0",
+    "creality_flush_time": "119",
     "default_print_profile": "0.30mm Standard @Creality K1 SE 0.6 nozzle",
     "disable_m73": "0",
     "emit_machine_limits_to_gcode": "1",
@@ -35,7 +35,7 @@
     "layer_change_gcode": ";AFTER_LAYER_CHANGE\n;[layer_z]",
     "machine_LED_light_exist": "1",
     "machine_end_gcode": "END_PRINT",
-    "machine_load_filament_time": "0",
+    "machine_load_filament_time": "119",
     "machine_max_acceleration_e": "5000",
     "machine_max_acceleration_extruding": "20000",
     "machine_max_acceleration_retracting": "5000",
@@ -110,5 +110,5 @@
     "z_hop": "0.4",
     "z_hop_types": "Slope Lift",
     "name": "Creality K1 SE 0.6 nozzle",
-    "setting_id": "69279"
+    "setting_id": "15897"
 }

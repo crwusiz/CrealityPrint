@@ -147,6 +147,13 @@ if [%INSTALL_TYPE%]==[nsis] (
         scp -P 9122 -r %JOB_NAME% cxsw@172.20.180.14:/vagrant_data/www/shared/build
         scp -P 9122 %EXE_NAME% cxsw@172.20.180.14:/vagrant_data/www/shared/build/%JOB_NAME%/%EXE_NAME%
     )
+    cmake --build . --target install --config %build_type%   
+    echo zipname=%zipName%
+    %ROOT_C3D%\tools\7z.exe a -tzip %zipName% %C3D_BUILD_DIR%\CrealityPrint -xr!MicrosoftEdgeWebView2RuntimeInstallerX64.exe
+    echo zipfinished : %zipName%
+    if [%LOCAL_BUILD%]==[OFF] (
+        scp -P 9122 %zipName% cxsw@172.20.180.14:/vagrant_data/www/shared/build/%JOB_NAME%/%zipName%
+    )
 ) else if [%INSTALL_TYPE%]==[zip] (
     cmake --build . --target install --config %build_type%   
     echo zipname=%zipName%

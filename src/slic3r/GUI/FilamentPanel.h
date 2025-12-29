@@ -108,7 +108,8 @@ protected:
 	wxString m_sync_filament_label = "cfs";
 	bool m_sync_box_filament = false;
 
-	wxButton* m_child_button {nullptr};
+	// Linux/GTK 下在 wxButton 上做自绘不可靠，改为 wxPanel 做 owner-draw
+	wxPanel* m_child_button {nullptr};
 	wxBitmap m_bitmap;
 
 	DECLARE_EVENT_TABLE()
@@ -192,6 +193,7 @@ public:
     wxString    name();
     wxString    boxname();
     wxColour    color();
+    wxString    preset_name();
 
 private:
     wxBoxSizer* m_sizer;
@@ -213,6 +215,7 @@ private:
 
 	Slic3r::PresetBundle* m_preset_bundle{nullptr};
     Slic3r::PresetCollection* m_collection{nullptr};
+    wxString m_preset_name;
 
     DECLARE_EVENT_TABLE()
 };
@@ -545,14 +548,19 @@ class MaterialContextMenu : public ManagedPopupWindow
 {
 public:
     MaterialContextMenu(wxWindow* parent,int index);
+    ~MaterialContextMenu();
 
 private:
+    void onCheckTimer(wxTimerEvent& event);
+    bool isMouseInWindow();
+    wxTimer* m_checkTimer = nullptr;
     HoverButton* m_mergeBtn;
     int       m_index = 0;
 	bool        m_is_clicked = false;
     void            OnShowSubmenu(wxCommandEvent&);
     void            OnDelete(wxCommandEvent&);
     bool    m_isExpended = false;
+    MaterialSubMenu* m_submenu = nullptr;
 };
 
-#endif // 
+#endif //

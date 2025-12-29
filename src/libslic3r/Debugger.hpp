@@ -73,6 +73,7 @@ namespace Slic3r {
     //------------------------------------------------------------------------------
     void to_svg(const char* path, const Polygon& polygon, bool fill = true);
     void to_svg(const char* path, const Polygon& poly0, const Polygon& poly1, bool fill = true);
+    void to_svg(const char* path, const Polygon& poly0, const ExPolygon& expoly1, bool fill = true);
     void to_svg(const char* path, const Polygon& poly, const Polylines& polylines, bool fill = true);
     void to_svg(const char* path, const Polygon& poly, const BoundingBox& bbox, bool fill = true);
     void to_svg(const char* path, const Polygons& polygons, bool fill = true);

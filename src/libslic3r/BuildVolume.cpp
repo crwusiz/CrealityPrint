@@ -23,7 +23,13 @@ BuildVolume::BuildVolume(const std::vector<Vec2d> &printable_area, const double 
     BoundingBoxf bboxf = get_extents(printable_area);
     m_bboxf = BoundingBoxf3{ to_3d(bboxf.min, 0.), to_3d(bboxf.max, printable_height) };
 
-    if (printable_area.size() >= 4 && std::abs((m_area - double(m_bbox.size().x()) * double(m_bbox.size().y()))) < sqr(SCALED_EPSILON)) {
+    if (printable_area.size() >= 4 && printable_area[2].y() > 9000) {
+        m_type = BuildVolume_Type::Belt;
+        m_circle.center = 0.5 * (m_bbox.min.cast<double>() + m_bbox.max.cast<double>());
+        m_circle.radius = 0.5 * m_bbox.size().cast<double>().norm();
+    }
+    else if(printable_area.size() >= 4 && std::abs((m_area - double(m_bbox.size().x()) * double(m_bbox.size().y()))) < sqr(SCALED_EPSILON))
+    {
         // Square print bed, use the bounding box for collision detection.
         m_type = BuildVolume_Type::Rectangle;
         m_circle.center = 0.5 * (m_bbox.min.cast<double>() + m_bbox.max.cast<double>());
@@ -273,6 +279,7 @@ BuildVolume::ObjectState object_state_templ(const indexed_triangle_set &its, con
 BuildVolume::ObjectState BuildVolume::object_state(const indexed_triangle_set& its, const Transform3f& trafo, bool may_be_below_bed, bool ignore_bottom) const
 {
     switch (m_type) {
+    case BuildVolume_Type::Belt:
     case BuildVolume_Type::Rectangle:
     {
         BoundingBox3Base<Vec3d> build_volume = this->bounding_volume().inflated(SceneEpsilon);
@@ -307,7 +314,7 @@ BuildVolume::ObjectState BuildVolume::object_state(const indexed_triangle_set& i
 
 BuildVolume::ObjectState BuildVolume::volume_state_bbox(const BoundingBoxf3& volume_bbox, bool ignore_bottom) const
 {
-    assert(m_type == BuildVolume_Type::Rectangle);
+    assert(m_type == BuildVolume_Type::Rectangle || m_type == BuildVolume_Type::Belt);
     BoundingBox3Base<Vec3d> build_volume = this->bounding_volume().inflated(SceneEpsilon);
     if (m_max_print_height == 0.0)
         build_volume.max.z() = std::numeric_limits<double>::max();
@@ -346,6 +353,20 @@ bool BuildVolume::all_paths_inside(const GCodeProcessorResult& paths, const Boun
     static constexpr const double epsilon = BedEpsilon;
 
     switch (m_type) {
+    case BuildVolume_Type::Belt:
+    {
+        BoundingBox3Base<Vec3d> build_volume = this->bounding_volume().inflated(epsilon);
+        // Belt machines: swap Y/Z on build volume for containment against raw machine-coordinates bbox.
+        BoundingBox3Base<Vec3d> build_volume_swapped = build_volume;
+        std::swap(build_volume_swapped.min.y(), build_volume_swapped.min.z());
+        std::swap(build_volume_swapped.max.y(), build_volume_swapped.max.z());
+        build_volume_swapped.max.y() *= 1.42;
+        if (m_max_print_height == 0.0)
+            build_volume.max.z() = std::numeric_limits<double>::max();
+        if (ignore_bottom)
+            build_volume.min.z() = -std::numeric_limits<double>::max();
+        return build_volume_swapped.contains(paths_bbox);
+    }
     case BuildVolume_Type::Rectangle:
     {
         BoundingBox3Base<Vec3d> build_volume = this->bounding_volume().inflated(epsilon);
@@ -433,6 +454,7 @@ std::string_view BuildVolume::type_name(BuildVolume_Type type)
     case BuildVolume_Type::Rectangle: return "Rectangle"sv;
     case BuildVolume_Type::Circle:    return "Circle"sv;
     case BuildVolume_Type::Convex:    return "Convex"sv;
+    case BuildVolume_Type::Belt:      return "Belt"sv;
     case BuildVolume_Type::Custom:    return "Custom"sv;
     }
     // make visual studio happy

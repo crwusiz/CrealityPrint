@@ -142,7 +142,7 @@ struct SupportParameters {
 		this->raft_interface_fill_pattern = this->raft_interface_density > 0.95 ? ipRectilinear : ipSupportBase;
         if (object_config.support_interface_pattern == smipGrid)
             this->contact_fill_pattern = ipGrid;
-        else if (object_config.support_interface_pattern == smipRectilinearInterlaced)
+        else if (object_config.support_interface_pattern == smipRectilinearInterlaced || object_config.support_interface_pattern == smipAuto)
             this->contact_fill_pattern = ipRectilinear;
         else if (object_config.support_interface_pattern == smipMonotonicLine)
             this->contact_fill_pattern = ipMonotonic;
@@ -200,17 +200,24 @@ struct SupportParameters {
                                                                                                           std::numeric_limits<double>::max();
 
         support_style = object_config.support_style;
-        if (support_style == smsDefault) {
-            if (is_tree(object_config.support_type)) {
+        if (support_style == smsDefault)
+        {
+            if (is_tree(object_config.support_type))
+            {
                 // organic support doesn't work with variable layer heights (including adaptive layer height and height range modifier, see #4313)
-                if (!object.has_variable_layer_heights && !object_config.overhang_optimization.getBool()) {
+                if (!object.has_variable_layer_heights && !object_config.overhang_optimization.getBool() && !slicing_params.soluble_interface)
+                {
                     BOOST_LOG_TRIVIAL(warning) << "tree support default to organic support";
                     support_style = smsTreeOrganic;
-                } else {
+                }
+                else
+                {
                     BOOST_LOG_TRIVIAL(warning) << "tree support default to hybrid tree due to adaptive layer height";
                     support_style = smsTreeHybrid;
                 }
-            } else {
+            }
+            else
+            {
                 support_style = smsGrid;
             }
         }

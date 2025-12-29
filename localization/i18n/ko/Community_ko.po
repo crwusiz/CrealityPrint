@@ -1149,3 +1149,19 @@ msgstr "원하는 필라멘트를 찾을 수 없습니다."
 
 #~ msgid "Update All"
 #~ msgstr "모두 업데이트"
+
+msgid ""
+"Creality Print requires the Microsoft WebView2 Runtime,But it has been found that the abnormal operation of Microsoft WebView2 may be related to the installation of Microsoft Edge. \n"
+"Click the Yes to reinstall Microsoft Edge"
+msgstr ""
+"Creality Print requires the Microsoft WebView2 Runtime,But it has been found that the abnormal operation of Microsoft WebView2 may be related to the installation of Microsoft Edge. \n"
+"Click the Yes to reinstall Microsoft Edge"
+
+msgid "Failed to reinstall the Microsoft WebView2 Runtime. Please reinstall it manually."
+msgstr "Failed to reinstall the Microsoft WebView2 Runtime. Please reinstall it manually."
+
+msgid "tutorial: %s"
+msgstr "tutorial: %s"
+
+msgid "The Microsoft WebView2 Runtime has been reinstalled successfully. The application will restart now."
+msgstr "The Microsoft WebView2 Runtime has been reinstalled successfully. The application will restart now."

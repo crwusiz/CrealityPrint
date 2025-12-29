@@ -218,6 +218,12 @@ public:
     BoundingBox(const Points &points) : BoundingBoxBase<Point>(points) {}
 
     BoundingBox inflated(coordf_t delta) const throw() { BoundingBox out(*this); out.offset(delta); return out; }
+    BoundingBox scaled(double factor) const
+    {
+        BoundingBox out(*this);
+        out.scale(factor);
+        return out;
+    }
 
     friend BoundingBox get_extents_rotated(const Points &points, double angle);
 };

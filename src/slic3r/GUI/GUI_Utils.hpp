@@ -248,7 +248,8 @@ public:
         }
 #endif // AUTOMATION_TOOL
         if (Test::enable_test) {
-            return 0;
+            if (Test::Visitor().call_cmd("is_ban_dialog", "") == "y")
+                return 0;
         }
 #endif
         dialogStack.push_front(this);

@@ -954,7 +954,7 @@ bool IMSlider::vertical_slider(const char* str_id, int* higher_value, int* lower
     ImGui::ItemSize(draw_region);
 
     const float  text_dummy_height   = 35.0f * scale * m_scale;
-    const float  handle_radius       = 12.0f * m_scale;
+    const float  handle_radius       = 14.0f * m_scale;
     const float  handle_border       = 2.0f * m_scale;
     const float  line_width          = 1.0f * m_scale;
     const float  line_length         = 12.0f * m_scale;
@@ -1110,7 +1110,7 @@ bool IMSlider::vertical_slider(const char* str_id, int* higher_value, int* lower
             auto text_utf8    = into_u8(higher_label);
             text_content_size = ImGui::CalcTextSize(text_utf8.c_str());
             text_size = text_content_size + text_padding * 2;
-            ImVec2 text_start = ImVec2(higher_handle.Min.x - text_size.x - triangle_offsets[2].x, higher_handle_center.y - text_size.y);
+            ImVec2 text_start = ImVec2(higher_handle.Min.x - text_size.x - 8.0f * m_scale,higher_handle_center.y - text_size.y * 0.5f);
             ImRect text_rect(text_start, text_start + text_size);
 
             ImGui::SetNextWindowPos(text_start);
@@ -1119,15 +1119,18 @@ bool IMSlider::vertical_slider(const char* str_id, int* higher_value, int* lower
                                      ImGuiWindowFlags_NoFocusOnAppearing;
 
             if (ImGui::Begin("##draw_higher_label", 0, flags)) {
-             
-                ImGui::RenderFrame(text_rect.Min, text_rect.Max, tip_bg, false, text_frame_rounding);
-                ImVec2 pos_1 = text_rect.Max - triangle_offsets[0];
-                ImVec2 pos_2 = pos_1 - triangle_offsets[1];
-                ImVec2 pos_3 = pos_1 + triangle_offsets[2];
+                const float bubble_rounding = 6.0f * m_scale;
+                ImGui::RenderFrame(text_rect.Min, text_rect.Max, tip_bg, false, bubble_rounding);
+                const float tri_w = 8.0f * m_scale;
+                const float tri_h = 10.0f * m_scale;
+                const float cy    = (text_rect.Min.y + text_rect.Max.y) * 0.5f;
+                ImVec2 pos_1(text_rect.Max.x, cy - tri_h * 0.5f);
+                ImVec2 pos_2(text_rect.Max.x, cy + tri_h * 0.5f);
+                ImVec2 pos_3(text_rect.Max.x + tri_w, cy);
                 window->DrawList->AddTriangleFilled(pos_1, pos_2, pos_3, tip_bg);
-                
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
                 ImGui::RenderText(text_start + text_padding, higher_label.c_str());
-
+                ImGui::PopStyleColor();
                 ImGui::End(); 
             }
         };
@@ -1138,28 +1141,31 @@ bool IMSlider::vertical_slider(const char* str_id, int* higher_value, int* lower
             auto text_utf8    = into_u8(lower_label);
             text_content_size = ImGui::CalcTextSize(text_utf8.c_str());
             text_size = text_content_size + text_padding * 2;
-            auto text_start = ImVec2(lower_handle.Min.x - text_size.x - triangle_offsets[2].x, lower_handle_center.y);
-            auto text_rect = ImRect(text_start, text_start + text_size);
+            ImVec2 text_start = ImVec2(lower_handle.Min.x - text_size.x - 8.0f * m_scale,
+                                       lower_handle_center.y - text_size.y * 0.5f);
+            ImRect text_rect(text_start, text_start + text_size);
 #if 0
             ImVec4 bgc          = ImVec4(1.0, 1.0, 1.0, 1.0);
             ImGui::PushStyleColor(ImGuiCol_WindowBg, bgc);
 #endif // 0
-            
             ImGui::SetNextWindowPos(text_start);
             ImGui::SetNextWindowSize(text_size); //+ triangle_offsets[2]
 
             ImGuiWindowFlags flags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoFocusOnAppearing;
             if (ImGui::Begin("##draw_lower_label", 0, flags)) {
-
-                ImGui::RenderFrame(text_rect.Min, text_rect.Max, tip_bg, false, text_frame_rounding);
-                auto pos_1 = ImVec2(text_rect.Max.x, text_rect.Min.y) - triangle_offsets[0];
-                auto pos_2 = pos_1 + triangle_offsets[1];
-                auto pos_3 = pos_1 + triangle_offsets[2];
+                const float bubble_rounding = 6.0f * m_scale;
+                ImGui::RenderFrame(text_rect.Min, text_rect.Max, tip_bg, false, bubble_rounding);
+                const float tri_w = 8.0f * m_scale;
+                const float tri_h = 10.0f * m_scale;
+                const float cy    = (text_rect.Min.y + text_rect.Max.y) * 0.5f;
+                ImVec2 pos_1(text_rect.Max.x, cy - tri_h * 0.5f);
+                ImVec2 pos_2(text_rect.Max.x, cy + tri_h * 0.5f);
+                ImVec2 pos_3(text_rect.Max.x + tri_w, cy);
                 window->DrawList->AddTriangleFilled(pos_1, pos_2, pos_3, tip_bg);
-                
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
                 ImGui::RenderText(text_start + text_padding, lower_label.c_str());
-
+                ImGui::PopStyleColor();
                 ImGui::End(); 
             }
 #if 0
@@ -1275,20 +1281,53 @@ bool IMSlider::render(int canvas_width, int canvas_height)
         const float remaining_space = canvas_width - left_widgets_width - right_widgets_width;
         const float minsize = 280.0f;
         ImVec2      winsize = config.getWindowSize(DispConfig::e_wt_slider_move, scale);
+        
+        const float desired_slider_len = 400.0f * scale;
+        const float misc_side_width    = 170.0f * scale; // left/right widgets and paddings
+        ImVec2 steps_label_sz          = ImGui::CalcTextSize(_u8L("Steps").c_str());
+        const float label_spacing      = ImGui::GetStyle().ItemSpacing.x;
+        const float desired_total_w    = misc_side_width + desired_slider_len + steps_label_sz.x + label_spacing;
+       
+        winsize.x = std::max(winsize.x, desired_total_w);
+
         winsize.x = std::min(std::max(remaining_space, minsize), winsize.x);
 
         ImGui::SetNextWindowPos(ImVec2(left_widgets_width + remaining_space / 2, canvas_height - 10), ImGuiCond_Always, ImVec2(0.5, 1.0));
         ImGui::SetNextWindowSize(winsize);
 
         ImGui::PushStyleColor(ImGuiCol_WindowBg,m_is_dark ? ImVec4(75.0 / 255.0, 75.0 / 255.0, 77.0 / 255.0, 1.0) : ImVec4(1,1,1,1));
-        ImGui::PushStyleColor(ImGuiCol_Border, m_is_dark ? ImVec4(110.0 / 255.0, 110.0 / 255.0, 115.0 / 255.0, 1.0) : ImVec4(203.0/255, 203.0/255, 204.0/255,1.0));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 5);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1);
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(225.0f/255.0f, 228.0f/255.0f, 233.0f/255.0f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8);
+        // Remove outer window border for the slider card
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 
         int flag = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         
         if (ImGui::Begin("moves_slider", nullptr, flag)) {
+
+            {
+                ImVec2 win_pos = ImGui::GetWindowPos();
+                ImVec2 win_sz  = ImGui::GetWindowSize();
+                ImDrawList* bg = ImGui::GetBackgroundDrawList();
+                const ImGuiStyle& style = ImGui::GetStyle();
+
+                const ImVec4 sh_rgb = ImVec4(118.0f/255.0f, 142.0f/255.0f, 171.0f/255.0f, 1.0f); // #768EAB
+                const float alphas[8] = { 0.050f, 0.040f, 0.032f, 0.026f, 0.020f, 0.014f, 0.010f, 0.006f };
+                const float steps[8]  = { 2.00f, 1.60f, 1.20f, 0.90f, 0.70f, 0.50f, 0.35f, 0.20f }; // px spreads before scaling
+
+                for (int i = 0; i < 8; ++i) {
+                    float spread = steps[i] * scale;
+                    float round  = style.WindowRounding + spread;
+
+                    float off_x = spread * 0.10f;
+                    float off_y = spread * 0.80f;
+                    ImU32 col = ImGui::ColorConvertFloat4ToU32(ImVec4(sh_rgb.x, sh_rgb.y, sh_rgb.z, alphas[i]));
+                    bg->AddRectFilled(ImVec2(win_pos.x - off_x, win_pos.y + off_y),
+                                      ImVec2(win_pos.x + win_sz.x + off_x, win_pos.y + win_sz.y + spread + off_y),
+                                      col, round);
+                }
+            }
             
             float win_h = ImGui::GetWindowHeight();
             float item_height = ImGui::GetFrameHeight();
@@ -1297,7 +1336,9 @@ bool IMSlider::render(int canvas_width, int canvas_height)
             float border_size = input_size + updown_button_size.x + 5.0f * scale;
 
             const float misc_size  = 170.0f * scale;// play button size + border_size + animate button size + spaces
-            float       slider_size = winsize.x - misc_size;
+            ImVec2      steps_label_sz2 = ImGui::CalcTextSize(_u8L("Steps").c_str());
+            const float label_spacing2  = ImGui::GetStyle().ItemSpacing.x;
+            float       slider_size     = std::min(600.0f * scale, winsize.x - misc_size - steps_label_sz2.x - label_spacing2);
 
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
             
@@ -1312,7 +1353,28 @@ bool IMSlider::render(int canvas_width, int canvas_height)
                     
                 }*/
             }
+            
+            ImGui::SameLine();
+            {
+                const std::string label_txt = _u8L("Steps");
+                ImVec4            txt_col   = m_is_dark ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f)
+                                                        : ImVec4(51.0f/255.0f, 51.0f/255.0f, 51.0f/255.0f, 1.0f);
 
+                float base_font_px = ImGui::GetFontSize();
+                float font_scale   = (16.0f * scale) / (base_font_px > 0 ? base_font_px : 14.0f);
+                if (font_scale <= 0.0f) font_scale = 1.0f;
+
+                ImGui::SetWindowFontScale(font_scale);
+                ImVec2 txt_sz = ImGui::CalcTextSize(label_txt.c_str());
+                ImGui::SetCursorPosY((win_h - txt_sz.y) * 0.5f);
+
+                ImGui::PushStyleColor(ImGuiCol_Text, txt_col);
+                ImGui::TextUnformatted(label_txt.c_str());
+                ImGui::PopStyleColor();
+
+                ImGui::SetWindowFontScale(1.0f);
+            }
+            
             ImGui::PushStyleColor(ImGuiCol_FrameBg,ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
             ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
             ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -1327,7 +1389,7 @@ bool IMSlider::render(int canvas_width, int canvas_height)
             int value = GetHigherValue();
             int min   = GetMinValue();
             int max   = GetMaxValue();
-            if (ImGui::BBLSliderScalar("##steps_slider", ImGuiDataType_S32, &value, &min, &max)) {
+            if (ImGui::BBLSliderScalar("##steps_slider", ImGuiDataType_S32, &value, &min, &max, nullptr, ImGuiSliderFlags_NoInput)) {
                 SetHigherValue(value);
             }
             
@@ -1379,10 +1441,24 @@ bool IMSlider::render(int canvas_width, int canvas_height)
                     if (hover)
                         ImGui::PushStyleColor(ImGuiCol_Text, ImGuiWrapper::COL_CREALITY);
 
-                    if (ImGui::ArrowButtonEX_CP("##up", ImGuiDir_Up, updown_button_size))
-                    {
+                    if (ImGui::InvisibleButton("##up_line", updown_button_size)) {
                         value++;
                         SetHigherValue(value);
+                    }
+                    {
+                        ImVec2 rmin = ImGui::GetItemRectMin();
+                        ImVec2 rmax = ImGui::GetItemRectMax();
+                        ImVec2 c    = ImVec2((rmin.x + rmax.x) * 0.5f, (rmin.y + rmax.y) * 0.5f);
+                        float  hw   = updown_button_size.x * 0.32f; // half width for chevron arms
+                        float  hh   = updown_button_size.y * 0.32f; // half height for chevron arms
+                        float  th   = std::max(1.5f, 1.5f * scale);  // line thickness
+                        ImU32  col  = ImGui::IsItemHovered() ? ImGui::ColorConvertFloat4ToU32(ImGuiWrapper::COL_CREALITY)
+                                                            : ImGui::GetColorU32(ImGuiCol_Text);
+                        ImVec2 apex  = ImVec2(c.x, c.y - hh);
+                        ImVec2 left  = ImVec2(c.x - hw, c.y + hh * 0.5f);
+                        ImVec2 right = ImVec2(c.x + hw, c.y + hh * 0.5f);
+                        draw_list->AddLine(left, apex, col, th);
+                        draw_list->AddLine(apex, right, col, th);
                     }
                     if (hover)
                         ImGui::PopStyleColor();
@@ -1393,9 +1469,24 @@ bool IMSlider::render(int canvas_width, int canvas_height)
                     if (hover)
                         ImGui::PushStyleColor(ImGuiCol_Text, ImGuiWrapper::COL_CREALITY);
 
-                    if (ImGui::ArrowButtonEX_CP("##down", ImGuiDir_Down, updown_button_size)) {
+                    if (ImGui::InvisibleButton("##down_line", updown_button_size)) {
                         value--;
                         SetHigherValue(value);
+                    }
+                    {
+                        ImVec2 rmin = ImGui::GetItemRectMin();
+                        ImVec2 rmax = ImGui::GetItemRectMax();
+                        ImVec2 c    = ImVec2((rmin.x + rmax.x) * 0.5f, (rmin.y + rmax.y) * 0.5f);
+                        float  hw   = updown_button_size.x * 0.32f;
+                        float  hh   = updown_button_size.y * 0.32f;
+                        float  th   = std::max(1.5f, 1.5f * scale);
+                        ImU32  col  = ImGui::IsItemHovered() ? ImGui::ColorConvertFloat4ToU32(ImGuiWrapper::COL_CREALITY)
+                                                            : ImGui::GetColorU32(ImGuiCol_Text);
+                        ImVec2 apex  = ImVec2(c.x, c.y + hh);
+                        ImVec2 left  = ImVec2(c.x - hw, c.y - hh * 0.5f);
+                        ImVec2 right = ImVec2(c.x + hw, c.y - hh * 0.5f);
+                        draw_list->AddLine(left, apex, col, th);
+                        draw_list->AddLine(apex, right, col, th);
                     }
 
                     if (hover)
@@ -1409,14 +1500,31 @@ bool IMSlider::render(int canvas_width, int canvas_height)
                 ImGui::PopStyleColor(3);
             }
 
-            // one layer button
             ImGui::SameLine();
-            ImGui::SetCursorPosY((win_h - (ONE_LAYER_BUTTON_SIZE.y * scale + ImGui::GetStyle().FramePadding.y * 2)) / 2.0);
+            {
+                bool  layer_hover_variant = !is_one_layer(); // false -> none_layer.svg, true -> hover_layer.svg
+                float k = layer_hover_variant ? 1.0f : 1.5f;  // enlarge none_layer only (1.5x)
 
-            auto normtx = DispConfig().getTextureId(DispConfig::e_tt_layer, !is_one_layer());
-            if (ImGui::ImageButton3(normtx, normtx, ImVec2(ONE_LAYER_BUTTON_SIZE.x * scale, ONE_LAYER_BUTTON_SIZE .y*scale))) {
-                switch_one_layer_mode();
-                ret = true;
+                const ImVec2 pad = ImGui::GetStyle().FramePadding;
+                float base_w = ONE_LAYER_BUTTON_SIZE.x * scale;
+                float base_h = ONE_LAYER_BUTTON_SIZE.y * scale;
+                float draw_w = base_w * k;
+                float draw_h = base_h * k;
+
+                float base_top_y = (win_h - (base_h + pad.y * 2)) / 2.0f;
+                float base_left_x = ImGui::GetCursorPosX();
+
+                float delta_x = (draw_w - base_w) * 0.5f;
+                float delta_y = (draw_h - base_h) * 0.5f;
+
+                ImGui::SetCursorPosX(base_left_x - delta_x);
+                ImGui::SetCursorPosY(base_top_y - delta_y);
+
+                auto normtx = DispConfig().getTextureId(DispConfig::e_tt_layer, layer_hover_variant);
+                if (ImGui::ImageButton3(normtx, normtx, ImVec2(draw_w, draw_h))) {
+                    switch_one_layer_mode();
+                    ret = true;
+                }
             }
             if (ImGui::IsItemHovered()) {
                 show_tooltip(_u8L("Click to toggle showing only the current layer").c_str());
@@ -1437,7 +1545,19 @@ bool IMSlider::render(int canvas_width, int canvas_height)
         ImVec2 pos  = ImVec2(manipulate_rect.x, manipulate_rect.y);
         ImVec2 size = ImVec2(manipulate_rect.z, manipulate_rect.w);
 
-        ImVec2 slider_pos = ImVec2(pos.x + size.x / 2, pos.y + size.y + 10 * scale);
+        // Offset the slider position; use different offsets for Prepare vs Preview pages
+        float slider_offset_x = 0.0f;
+        float slider_offset_y = 0.0f;
+        if (view_type == GLCanvas3D::CanvasPreview) {
+            slider_offset_x = 10.0f * scale; // shift right on Preview
+            slider_offset_y = 20.0f * scale; // extra spacing below
+        } else if (view_type == GLCanvas3D::CanvasView3D) {
+            slider_offset_x = 17.0f * scale; // shift right on Prepare
+            slider_offset_y = 20.0f * scale; // a bit more down on Prepare
+        }
+        ImVec2 slider_pos = ImVec2(pos.x + size.x / 2 + slider_offset_x,
+                                   pos.y + size.y + 10 * scale + slider_offset_y);
+
         ImVec2 slider_size = config.getWindowSize(tp, scale);
         
         const float remain_h = canvas_height - slider_pos.y - 115 * scale;

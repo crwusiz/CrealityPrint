@@ -39,6 +39,17 @@ static PrinterTechnology printer_technology()
     return wxGetApp().preset_bundle->printers.get_selected_preset().printer_technology();
 }
 
+static bool allow_support_enforcers()
+{
+    bool is_belt = wxGetApp().preset_bundle->machine_is_belt();
+    if (!is_belt) {
+        const auto& printers = wxGetApp().preset_bundle->printers;
+        if (printers.size() > 0)
+            is_belt = printers.get_selected_preset().config.opt_bool("machine_is_belt");
+    }
+    return !is_belt;
+}
+
 static int filaments_count()
 {
     return wxGetApp().filaments_cnt();
@@ -783,7 +794,7 @@ void MenuFactory::append_menu_item_add_svg(wxMenu *menu, ModelVolumeType type, b
     append_menu_itemm_add_(_L("SVG"), GLGizmosManager::Svg, menu, type, is_submenu_item);
 }
 
-void MenuFactory::append_menu_items_add_volume(wxMenu* menu)
+void MenuFactory::append_menu_items_add_volume(wxMenu* menu, int insert_pos/*= wxNOT_FOUND*/)
 {
     // Update "add" items(delete old & create new)  settings popupmenu
     for (auto& item : ADD_VOLUME_MENU_ITEMS) {
@@ -797,23 +808,39 @@ void MenuFactory::append_menu_items_add_volume(wxMenu* menu)
             menu->Destroy(item_id);
     }
 
+    const int height_item_id = menu->FindItem(_L("Height range Modifier"));
+    if (height_item_id != wxNOT_FOUND)
+        menu->Destroy(height_item_id);
+
+    const bool support_enforcer_allowed = allow_support_enforcers();
+    m_support_enforcer_menu_state = support_enforcer_allowed;
+
+    if (insert_pos == wxNOT_FOUND)
+        insert_pos = menu->GetMenuItemCount();
+    insert_pos = std::min(insert_pos, (int)menu->GetMenuItemCount());
+    if (m_add_volume_insert_pos < 0)
+        m_add_volume_insert_pos = insert_pos;
+
     for (size_t type = 0; type < ADD_VOLUME_MENU_ITEMS.size(); type++)
     {
+        if (!support_enforcer_allowed && type == size_t(ModelVolumeType::SUPPORT_ENFORCER))
+            continue;
+
         auto& item = ADD_VOLUME_MENU_ITEMS[type];
 
         wxMenu* sub_menu = append_submenu_add_generic(menu, ModelVolumeType(type));
         append_submenu(menu, sub_menu, wxID_ANY, _(item.first), "", item.second,
-            []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
+            []() { return obj_list()->is_instance_or_object_selected(); }, m_parent, insert_pos++);
     }
 
-    append_menu_item_layers_editing(menu);
+    append_menu_item_layers_editing(menu, insert_pos);
 }
 
-wxMenuItem* MenuFactory::append_menu_item_layers_editing(wxMenu* menu)
+wxMenuItem* MenuFactory::append_menu_item_layers_editing(wxMenu* menu, int insert_pos/*= wxNOT_FOUND*/)
 {
     return append_menu_item(menu, wxID_ANY, _L("Height range Modifier"), "",
         [](wxCommandEvent&) { obj_list()->layers_editing(); wxGetApp().params_panel()->switch_to_object(); }, "height_range_modifier", menu,
-        []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
+        []() { return obj_list()->is_instance_or_object_selected(); }, m_parent, insert_pos);
 }
 
 wxMenuItem* MenuFactory::append_menu_item_settings(wxMenu* menu_)
@@ -1003,7 +1030,15 @@ void MenuFactory::append_menu_item_fill_bed(wxMenu *menu)
 {
     append_menu_item(
         menu, wxID_ANY, _L("Fill bed with copies"), _L("Fill the remaining area of bed with copies of the selected object"),
-        [](wxCommandEvent &) { plater()->canvas3D()->triger_extra_render_event(GLCanvas3D::ERenderEvent::FillBedOptions); }, "", nullptr, []() { return plater()->can_increase_instances(); }, m_parent);
+        [](wxCommandEvent &) { plater()->canvas3D()->triger_extra_render_event(
+            GLCanvas3D::ERenderEvent::FillBedOptions); }, "", 
+            nullptr, 
+            []() { 
+                if (wxGetApp().preset_bundle->machine_is_belt())
+                    return false;
+                else
+                    return plater()->can_increase_instances(); 
+            }, m_parent);
 }
 
 wxMenuItem* MenuFactory::append_menu_item_printable(wxMenu* menu)
@@ -1907,6 +1942,8 @@ wxMenu* MenuFactory::default_menu()
 
 wxMenu* MenuFactory::object_menu()
 {
+    if (allow_support_enforcers() != m_support_enforcer_menu_state)
+        append_menu_items_add_volume(&m_object_menu, m_add_volume_insert_pos < 0 ? wxNOT_FOUND : m_add_volume_insert_pos);
     append_menu_items_convert_unit(&m_object_menu);
     append_menu_items_flush_options(&m_object_menu);
     append_menu_item_invalidate_cut_info(&m_object_menu);
@@ -2378,7 +2415,7 @@ void MenuFactory::append_menu_item_plate_name(wxMenu *menu)
 
 void MenuFactory::update_object_menu()
 {
-    append_menu_items_add_volume(&m_object_menu);
+    append_menu_items_add_volume(&m_object_menu, m_add_volume_insert_pos < 0 ? wxNOT_FOUND : m_add_volume_insert_pos);
 }
 
 void MenuFactory::update_default_menu()

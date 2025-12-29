@@ -2,7 +2,7 @@
 
 namespace Slic3r {
 
-ExtrusionMultiPath thick_polyline_to_multi_path(const ThickPolyline& thick_polyline, ExtrusionRole role, const Flow& flow, const float tolerance, const float merge_tolerance, int overhang)
+ExtrusionMultiPath thick_polyline_to_multi_path(const ThickPolyline& thick_polyline, ExtrusionRole role, const Flow& flow, const float tolerance, const float merge_tolerance,  int overhang, const std::optional<uint32_t> &perimeter_index)
 {
     ExtrusionMultiPath multi_path;
     ExtrusionPath      path(role);
@@ -81,6 +81,9 @@ ExtrusionMultiPath thick_polyline_to_multi_path(const ThickPolyline& thick_polyl
             path.mm3_per_mm  = new_flow.mm3_per_mm();
             path.width       = new_flow.width();
             path.height      = new_flow.height();
+            if (perimeter_index.has_value())
+                path.perimeter_index = static_cast<uint16_t>(*perimeter_index);//Prusa VFA, The external perimeter has value 0, the first internal perimeter has 1, and so on.
+
         } else {
             assert(path.width >= EPSILON);
             thickness_delta = scaled<double>(fabs(path.width - new_flow.width()));
@@ -104,7 +107,7 @@ ExtrusionMultiPath thick_polyline_to_multi_path(const ThickPolyline& thick_polyl
 }
 
 //BBS: new function to filter width to avoid too fragmented segments
-static ExtrusionPaths thick_polyline_to_extrusion_paths_2(const ThickPolyline& thick_polyline, ExtrusionRole role, const Flow& flow, const float tolerance)
+static ExtrusionPaths thick_polyline_to_extrusion_paths_2(const ThickPolyline& thick_polyline, ExtrusionRole role, const Flow& flow, const float tolerance, const std::optional<uint32_t> &perimeter_index)
 {
     ExtrusionPaths paths;
     ExtrusionPath path(role);
@@ -145,6 +148,8 @@ static ExtrusionPaths thick_polyline_to_extrusion_paths_2(const ThickPolyline& t
                     path.mm3_per_mm = new_flow.mm3_per_mm();
                     path.width = new_flow.width();
                     path.height = new_flow.height();
+                    if (perimeter_index.has_value())
+                        path.perimeter_index = static_cast<uint16_t>(*perimeter_index); // Prusa VFA, The external perimeter has value 0, the first internal perimeter has 1, and so on.
                     paths.emplace_back(std::move(path));
                 }
             }
@@ -214,6 +219,8 @@ static ExtrusionPaths thick_polyline_to_extrusion_paths_2(const ThickPolyline& t
             path.mm3_per_mm = new_flow.mm3_per_mm();
             path.width = new_flow.width();
             path.height = new_flow.height();
+            if (perimeter_index.has_value())
+                path.perimeter_index = static_cast<uint16_t>(*perimeter_index); // Prusa VFA, The external perimeter has value 0, the first internal perimeter has 1, and so on.                                                                               
             paths.emplace_back(std::move(path));
         }
     }
@@ -221,14 +228,14 @@ static ExtrusionPaths thick_polyline_to_extrusion_paths_2(const ThickPolyline& t
     return paths;
 }
 
-void variable_width(const ThickPolylines& polylines, ExtrusionRole role, const Flow& flow, std::vector<ExtrusionEntity*>& out)
+void variable_width(const ThickPolylines& polylines, ExtrusionRole role, const Flow& flow,const std::optional<uint32_t> &perimeter_index, std::vector<ExtrusionEntity*>& out)
 {
     // This value determines granularity of adaptive width, as G-code does not allow
     // variable extrusion within a single move; this value shall only affect the amount
     // of segments, and any pruning shall be performed before we apply this tolerance.
     const float tolerance = float(scale_(0.05));
     for (const ThickPolyline& p : polylines) {
-        ExtrusionPaths paths = thick_polyline_to_extrusion_paths_2(p, role, flow, tolerance);
+        ExtrusionPaths paths = thick_polyline_to_extrusion_paths_2(p, role, flow, tolerance, perimeter_index);
         // Append paths to collection.
         if (!paths.empty()) {
             if (paths.front().first_point() == paths.back().last_point())

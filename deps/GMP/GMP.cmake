@@ -1,6 +1,10 @@
 
 set(_srcdir ${CMAKE_CURRENT_LIST_DIR}/gmp)
-
+# Default empty patch command; enable only for LoongArch builds
+set(patch_command "")
+if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "loongarch")
+    set(patch_command git init && ${PATCH_CMD} ${CMAKE_CURRENT_LIST_DIR}/0001-loongarch64-build.patch)
+endif()
 if (IN_GIT_REPO)
     set(GMP_DIRECTORY_FLAG --directory ${BINARY_DIR_REL}/dep_GMP-prefix/src/dep_GMP)
 endif ()
@@ -48,7 +52,12 @@ else ()
             set(_gmp_ccflags "${_gmp_ccflags} -march=armv7-a") # Works on RPi-4
             set(_gmp_build_tgt armv7)
         endif()
-        set(_gmp_build_tgt "--build=${_gmp_build_tgt}-pc-linux-gnu")
+        if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "loongarch")
+	    # TODO: Only the rules of uos/deepin under the Loongson architecture
+            set(_gmp_build_tgt "--build=${_gmp_build_tgt}-linux-gnu")
+	    else()
+            set(_gmp_build_tgt "--build=${_gmp_build_tgt}-pc-linux-gnu")
+        endif()
     else ()
         set(_gmp_build_tgt "") # let it guess
     endif()
@@ -63,10 +72,11 @@ else ()
         URL https://github.com/SoftFever/OrcaSlicer_deps/releases/download/gmp-6.2.1/gmp-6.2.1.tar.bz2
         URL_HASH SHA256=eae9326beb4158c386e39a356818031bd28f3124cf915f8c5b1dc4c7a36b4d7c
         DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/GMP
-        #PATCH_COMMAND git apply ${GMP_DIRECTORY_FLAG} --verbose ${CMAKE_CURRENT_LIST_DIR}/0001-GMP_GCC15.patch
+        PATCH_COMMAND ${patch_command}
         BUILD_IN_SOURCE ON
         CONFIGURE_COMMAND  env "CFLAGS=${_gmp_ccflags}" "CXXFLAGS=${_gmp_ccflags}" ./configure ${_cross_compile_arg} --enable-shared=no --enable-cxx=yes --enable-static=yes "--prefix=${DESTDIR}" ${_gmp_build_tgt}
         BUILD_COMMAND     make -j
         INSTALL_COMMAND   make install
     )
 endif ()
+

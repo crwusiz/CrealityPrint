@@ -2423,7 +2423,7 @@ void ObjectList::load_mesh_object(const TriangleMesh& mesh, const wxString& name
     // new_object->instances[0]->set_offset(center ? to_3d(Vec2d(empty_cell(0), empty_cell(1)), -new_object->origin_translation.z()) : bb.center());
 
     wxGetApp().plater()->arrange_loaded_object_to_new_position(new_object->instances[0]);
-
+    
     new_object->ensure_on_bed();
 
     // BBS init assmeble transformation
@@ -5876,7 +5876,7 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
     }
 
     // update scene
-    wxGetApp().plater()->update();
+    wxGetApp().plater()->update(false, true);
 
     // BBS: update extruder/filament column
     Refresh();
@@ -6259,6 +6259,7 @@ void ObjectList::render_plate(ObjectDataViewModelNode* plate)
         tree_node_flags |= ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_Selected;
     }*/
 
+    float row_start_y = ImGui::GetCursorPosY();
     ImGui::AlignTextToFramePadding();
     Plater*     the_plater      = wxGetApp().plater();
     std::string plate_full_name = plate->GetName().ToUTF8().data();
@@ -7297,7 +7298,7 @@ void GUI::ObjectList::render_current_device_name(const float max_right)
     }
 }
 
-void ObjectList::render_printer_preset_by_ImGui()
+void ObjectList::render_printer_preset_by_ImGui(bool folded_view)
 {
     float  scale     = wxGetApp().plater()->get_current_canvas3D()->get_scale();
     ImVec2 icon_size = ImVec2(22 * scale, 22 * scale);
@@ -7309,6 +7310,7 @@ void ObjectList::render_printer_preset_by_ImGui()
     ImGui::PushStyleColor(ImGuiCol_Text, text_color);
 
     // Title
+    float row_start_y = ImGui::GetCursorPosY();
     ImGui::AlignTextToFramePadding();
     // ImGuiWrapper::title(_u8L("Printer"));
     ImGui::SetWindowFontScale(1.2f);
@@ -7316,10 +7318,16 @@ void ObjectList::render_printer_preset_by_ImGui()
     imgui.title(_u8L("Printer"), true);
     ImGui::SetWindowFontScale(1.0f);
 
+    ImVec2 collapse_size = ImVec2(icon_size.x * 0.8f, icon_size.y * 0.8f);
+    float  buttons_width = icon_size.x + collapse_size.x + ImGui::GetStyle().ItemSpacing.x;
+    float  right_edge    = folded_view ? (300.0f * scale - ImGui::GetStyle().WindowPadding.x) : ImGui::GetWindowContentRegionMax().x;
+
     ImGui::SameLine();
 
-    const float device_label_max_right = 240.0f * scale;
-    ImGui::SetCursorPosX(device_label_max_right);
+    float setting_y  = row_start_y + (ImGui::GetFrameHeight() - icon_size.y) * 0.5f;
+    float collapse_y = row_start_y + (ImGui::GetFrameHeight() - collapse_size.y) * 0.5f + (folded_view ? 2.0f * scale : -2.0f * scale);
+
+    ImGui::SetCursorPos(ImVec2(right_edge - buttons_width, setting_y));
 
     // Setting
     if (!m_texture.valid()) {
@@ -7330,8 +7338,23 @@ void ObjectList::render_printer_preset_by_ImGui()
     if (m_texture.valid()) {
         ImGui::PushID(ObjList_Texture::IM_TEXTURE_NAME::texSetting);
 
-        if (ImGui::ImageButton(normal_id, icon_size, m_texture.get_texture_uv0(ObjList_Texture::IM_TEXTURE_NAME::texSetting, false),
-                               m_texture.get_texture_uv1(ObjList_Texture::IM_TEXTURE_NAME::texSetting, false), 0)) {
+        ImTextureID setting_id = normal_id;
+        if (m_png_textures) {
+            const bool is_dark = wxGetApp().dark_mode();
+            const auto tex_idx =
+                is_dark ? ObjList_Png_Texture_Wrapper::pngTexSettingDark : ObjList_Png_Texture_Wrapper::pngTexSettingLight;
+            auto& tex = m_png_textures->get(tex_idx);
+            if (tex && !tex->vaild()) {
+                const auto png_path =
+                    is_dark ? (Slic3r::resources_dir() + "/images/setting_dark.png") : (Slic3r::resources_dir() + "/images/setting_light.png");
+                tex->load_from_png_file(png_path, true, GLTexture::None, false);
+            }
+            if (tex && tex->vaild()) {
+                setting_id = (ImTextureID) tex->get_id();
+            }
+        }
+
+        if (ImGui::ImageButton(setting_id, icon_size, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), 0)) {
             wxGetApp().run_wizard(ConfigWizard::RR_USER, ConfigWizard::SP_PRINTERS);
         }
 
@@ -7342,14 +7365,55 @@ void ObjectList::render_printer_preset_by_ImGui()
 
     // collapse button
     ImGui::PushID(ObjList_Texture::IM_TEXTURE_NAME::texCollapse);
-
-    if (ImGui::ImageButton(normal_id, icon_size, m_texture.get_texture_uv0(ObjList_Texture::IM_TEXTURE_NAME::texCollapse, false),
-                           m_texture.get_texture_uv1(ObjList_Texture::IM_TEXTURE_NAME::texCollapse, false), 0)) {
-        m_left_panel_fold = true;
-        wxGetApp().plater()->get_current_canvas3D()->set_left_panel_fold(GLCanvas3D::CanvasView3D, true);
+    ImGui::SetCursorPosY(collapse_y);
+    ImTextureID collapse_id = normal_id;
+    ImVec2      collapse_uv0(0.0f, 0.0f);
+    ImVec2      collapse_uv1(1.0f, 1.0f);
+    if (m_png_textures) {
+        const bool is_dark = wxGetApp().dark_mode();
+        const auto tex_idx =
+            is_dark ? ObjList_Png_Texture_Wrapper::pngTexCollapseDark : ObjList_Png_Texture_Wrapper::pngTexCollapseLight;
+        auto& tex = m_png_textures->get(tex_idx);
+        if (tex && !tex->vaild()) {
+            const auto png_path = is_dark ? (Slic3r::resources_dir() + "/images/collapse_dark.png") : (Slic3r::resources_dir() + "/images/collapse_light.png");
+            tex->load_from_png_file(png_path, true, GLTexture::None, false);
+        }
+        if (tex && tex->vaild()) {
+            collapse_id = (ImTextureID) tex->get_id();
+        }
     }
-
+    if (folded_view)
+        std::swap(collapse_uv0.x, collapse_uv1.x);
+    ImVec2 btn_pos = ImGui::GetCursorScreenPos();
+    ImVec2 btn_size = collapse_size;
+    bool pressed = ImGui::InvisibleButton("##collapse_btn_rotated", btn_size);
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 collapse_p0 = btn_pos;
+    ImVec2 collapse_p1 = btn_pos + ImVec2(btn_size.x, 0);
+    ImVec2 collapse_p2 = btn_pos + ImVec2(btn_size.x, btn_size.y);
+    ImVec2 collapse_p3 = btn_pos + ImVec2(0, btn_size.y);
+    // rotate 90 deg clockwise by remapping UVs
+    ImVec2 uv_tl = collapse_uv0;
+    ImVec2 uv_tr = ImVec2(collapse_uv1.x, collapse_uv0.y);
+    ImVec2 uv_br = collapse_uv1;
+    ImVec2 uv_bl = ImVec2(collapse_uv0.x, collapse_uv1.y);
+    draw_list->AddImageQuad(collapse_id, collapse_p0, collapse_p1, collapse_p2, collapse_p3, uv_bl, uv_tl, uv_tr, uv_br);
+    if (pressed) {
+        m_left_panel_fold = !folded_view;
+        auto* canvas      = wxGetApp().plater()->get_current_canvas3D();
+        if (canvas != nullptr) {
+            canvas->set_left_panel_fold(GLCanvas3D::CanvasPreview, m_left_panel_fold);
+            canvas->set_as_dirty();
+            canvas->request_extra_frames(3);
+        }
+        wxGetApp().imgui()->set_requires_extra_frame();
+    }
     ImGui::PopID();
+
+    if (folded_view) {
+        ImGui::PopStyleColor(2);
+        return;
+    }
 
     const float device_name_max_right = 300.0f * scale;
     //render_current_device_name(device_name_max_right);
@@ -7386,7 +7450,7 @@ void ObjectList::render_printer_preset_by_ImGui()
     SidebarPrinter&          bar               = wxGetApp().plater()->sidebar_printer();
     std::vector<std::string> items             = bar.texts_of_combo_printer();
     int                      item_selected_idx = bar.get_selection_combo_printer(); // Here we store our selection data as an index.
-
+    
     // Pass in the preview value visible before opening the combo (it could technically be different contents or not pulled from items[])
 
     ImGuiContext&     g      = *GImGui;
@@ -7580,8 +7644,22 @@ void ObjectList::render_printer_preset_by_ImGui()
 
     
     auto itemSize1 = ImGui::GetCursorScreenPos(); // ImGui::GetCursorPos();
-    if (ImGui::ImageButton(normal_id, icon_size, m_texture.get_texture_uv0(ObjList_Texture::IM_TEXTURE_NAME::texEdit, false),
-                           m_texture.get_texture_uv1(ObjList_Texture::IM_TEXTURE_NAME::texEdit, false), 0)) {
+    ImTextureID edit_id = normal_id;
+    if (m_png_textures) {
+        const bool is_dark = wxGetApp().dark_mode();
+        const auto tex_idx = is_dark ? ObjList_Png_Texture_Wrapper::pngTexEditDark : ObjList_Png_Texture_Wrapper::pngTexEditLight;
+        auto& tex = m_png_textures->get(tex_idx);
+        if (tex && !tex->vaild()) {
+            const auto png_path =
+                is_dark ? (Slic3r::resources_dir() + "/images/edit_dark.png") : (Slic3r::resources_dir() + "/images/edit_light.png");
+            tex->load_from_png_file(png_path, true, GLTexture::None, false);
+        }
+        if (tex && tex->vaild()) {
+            edit_id = (ImTextureID) tex->get_id();
+        }
+    }
+
+    if (ImGui::ImageButton(edit_id, icon_size, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), 0)) {
         SidebarPrinter& bar = wxGetApp().plater()->sidebar_printer();
         bar.edit_filament();
     }
@@ -7833,10 +7911,26 @@ void ObjectList::render_unfold_button()
         if (ImGui::ImageButton(normal_id, ImVec2(22 * scale, 22 * scale), ImVec2(uv1.x, uv0.y), ImVec2(uv0.x, uv1.y), 0)) {
             m_left_panel_fold = false;
             wxGetApp().plater()->get_current_canvas3D()->set_left_panel_fold(GLCanvas3D::CanvasView3D, false);
+            wxGetApp().imgui()->set_requires_extra_frame();
         }
 
         ImGui::PopID();
     }
+}
+
+bool ObjectList::get_collapse_icon(ImTextureID& id, ImVec2& uv0, ImVec2& uv1, bool mirror_x)
+{
+    if (!m_texture.valid())
+        m_texture.init_svg_texture();
+    if (!m_texture.valid())
+        return false;
+
+    id = m_texture.get_texture_id();
+    uv0 = m_texture.get_texture_uv0(ObjList_Texture::IM_TEXTURE_NAME::texCollapse, false);
+    uv1 = m_texture.get_texture_uv1(ObjList_Texture::IM_TEXTURE_NAME::texCollapse, false);
+    if (mirror_x)
+        std::swap(uv0.x, uv1.x);
+    return true;
 }
 
 bool ObjectList::get_object_list_window_focus() { return m_obj_list_window_focus; }
@@ -8217,8 +8311,18 @@ void ObjectList::draw_device_list_popup()
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {0, 0});
         if (ImGui::Button(label2.c_str()))
         {
+            // click device mgr page button back home
+            if (wxGetApp().mainframe->get_printer_mgr_view())
+            {
+                nlohmann::json commandJson;
+                nlohmann::json dataJson;
+                commandJson["command"] = "backhome";
+                commandJson["data"]    = dataJson;
+                auto jsonStr           = RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true));
+                wxGetApp().mainframe->get_printer_mgr_view()->ExecuteScriptCommand(jsonStr);
+            }
             // jump to device page
-            wxGetApp().mainframe->select_tab((int) MainFrame::tpDeviceMgr);
+            wxGetApp().mainframe->select_tab((int) MainFrame::tpDeviceMgr); 
         }
         ImGui::PopStyleColor(1);
         ImGui::PopStyleVar(1);
@@ -8304,8 +8408,9 @@ void ObjectList::draw_device_list_content()
 
     //******************Device Info, Scroll Area*********************
     ImGui::BeginChild("##ScrollableContent");
-    ImGui::SetItemDefaultFocus();
-    
+    ImGui::SetItemDefaultFocus();    
+    ImGui::SetScrollX(0);
+
     float colDesigneWidth[] = {56.0f * scale, 56.0f * scale, 152.0f * scale, 72.0f * scale};
     int   col               = 0;
     float curWidth          = 0;
@@ -8325,36 +8430,7 @@ void ObjectList::draw_device_list_content()
 
             if (ImGui::InvisibleButton("##invisibleBtn" + count, { ImVec2{(336 + 15) * scale, rowHeight} }))
             {
-                // set current device
-                nlohmann::json commandJson;
-                nlohmann::json dataJson;
-                dataJson["device_id"]  = it.second.mac;
-                commandJson["command"] = "set_current_device";
-                commandJson["data"]    = dataJson;
-                auto jsonStr           = RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true));
-                wxGetApp().mainframe->get_printer_mgr_view()->ExecuteScriptCommand(jsonStr);
-
-                auto& printer_collection = wxGetApp().preset_bundle->printers;
-                if (printer_collection.get_edited_preset().is_system) {
-                    // use local cache
-                    auto& cache         = EasyCache::get_instance().data();
-                    auto  preset_name   = printer_collection.get_edited_preset().name;
-                    auto  printer_model = printer_collection.get_edited_preset().config.opt_string("printer_model");
-                    auto  nozzle_dia    = printer_collection.get_edited_preset().config.opt_serialize("nozzle_diameter");
-                    if (nozzle_dia.empty()) {
-                        cache["system_preset_bundle_deivce"][printer_model]["unique"] = it.second.mac;
-                    } else {
-                        cache["system_preset_bundle_deivce"][printer_model][nozzle_dia] = it.second.mac;
-                    }
-                } else {
-                    auto& seled_config = printer_collection.get_edited_preset().config;
-                    seled_config.set_key_value("printer_select_mac", new ConfigOptionString(it.second.mac));
-                    auto preset_name = printer_collection.get_edited_preset().name;
-                    printer_collection.save_current_preset(preset_name, false, true);
-                    auto new_preset       = printer_collection.find_preset(preset_name, false, true);
-                    new_preset->sync_info = "update";
-                    new_preset->save_info();
-                }
+                set_cur_device_by_mac(it.second.mac);
             }
 
             col            = 0;
@@ -8458,6 +8534,53 @@ bool ObjectList::set_cur_device_by_cur_preset()
     wxGetApp().mainframe->get_printer_mgr_view()->ExecuteScriptCommand(jsonStr);
 
     return !selected_mac.empty();
+}
+
+bool ObjectList::set_cur_device_by_mac(std::string mac_addr)
+{
+    nlohmann::json commandJson;
+    nlohmann::json dataJson;
+    dataJson["device_id"]  = mac_addr;
+    commandJson["command"] = "set_current_device";
+    commandJson["data"]    = dataJson;
+    auto jsonStr           = RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true));
+    wxGetApp().mainframe->get_printer_mgr_view()->ExecuteScriptCommand(jsonStr);
+
+    auto& printer_collection = wxGetApp().preset_bundle->printers;
+    if (printer_collection.get_edited_preset().is_system) {
+        // use local cache
+        auto& cache         = EasyCache::get_instance().data();
+        auto  preset_name   = printer_collection.get_edited_preset().name;
+        auto  printer_model = printer_collection.get_edited_preset().config.opt_string("printer_model");
+        auto  nozzle_dia    = printer_collection.get_edited_preset().config.opt_serialize("nozzle_diameter");
+        if (nozzle_dia.empty()) {
+            cache["system_preset_bundle_deivce"][printer_model]["unique"] = mac_addr;
+        } else {
+            cache["system_preset_bundle_deivce"][printer_model][nozzle_dia] = mac_addr;
+        }
+    } else {
+        auto& seled_config = printer_collection.get_edited_preset().config;
+        seled_config.set_key_value("printer_select_mac", new ConfigOptionString(mac_addr));
+        auto preset_name = printer_collection.get_edited_preset().name;
+        printer_collection.save_current_preset(preset_name, false, true);
+        auto new_preset       = printer_collection.find_preset(preset_name, false, true);
+        new_preset->sync_info = "update";
+        new_preset->save_info();
+    }
+    return true;
+}
+
+bool ObjectList::bind_phy_printer_by_ip_or_name(std::string ip_or_name)
+{
+    for (const auto& it : m_device_list_data.datas)
+    {
+        if (it.second.address == ip_or_name || it.second.name == ip_or_name)
+        {
+            set_cur_device_by_mac(it.second.mac);
+            return true;
+        }
+    }
+    return false;
 }
 
 ObjectList::ObjList_Png_Texture_Wrapper::ObjList_Png_Texture_Wrapper()

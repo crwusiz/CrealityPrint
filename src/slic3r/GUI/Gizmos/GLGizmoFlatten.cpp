@@ -174,7 +174,8 @@ void GLGizmoFlatten::update_planes()
     const Transform3d &inst_matrix = mo->instances.front()->get_matrix_no_offset();
 
     // Following constants are used for discarding too small polygons.
-    const float minimal_area = 5.f; // in square mm (world coordinates)
+    const float experted_minimal_area = 5.f;
+    const float minimal_area = 1.f; // in square mm (world coordinates)
     const float minimal_side = 1.f; // mm
     const float minimal_angle = 1.f; // degree, initial value was 10, but cause bugs
 
@@ -378,6 +379,30 @@ void GLGizmoFlatten::update_planes()
 
     // We'll sort the planes by area and only keep the 254 largest ones (because of the picking pass limitations):
     std::sort(m_planes.rbegin(), m_planes.rend(), [](const PlaneData& a, const PlaneData& b) { return a.area < b.area; });
+
+    // When encountering very small parts, `m_planes` will be empty. Directly reducing `minimal_area` would cause `m_planes` to become too large. If the number of faces with an area greater than `experted_minimal_area` exceeds `plane_count`, only faces with an area greater than `experted_minimal_area` will be retained. If there are not enough, at most `plane_count` faces will be retained.
+    auto delte_index_to_end = [](int index, std::vector<PlaneData>& planes) {
+        for (size_t i = planes.size() - 1; i >= index; i--) {
+            planes.pop_back();
+        }
+    };
+    const int plane_count = 10;
+    for (size_t i = 0; i < m_planes.size(); i++) {
+        if (m_planes[i].area < experted_minimal_area) {
+            if (i + 1 >= plane_count) {
+                delte_index_to_end(i + 1, m_planes);
+                break;
+            } else { //<plane_count
+                for (size_t j = i + 1; j < m_planes.size(); j++) {
+                    if (j + 1 >= plane_count) {
+                        delte_index_to_end(plane_count, m_planes);
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+    }
     m_planes.resize(std::min((int)m_planes.size(), 254));
 
     // Planes are finished - let's save what we calculated it from:

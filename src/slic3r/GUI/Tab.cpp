@@ -73,6 +73,8 @@
 #include "CommunicateWithCXCloud.hpp"
 #include "libslic3r/ModelVolume.hpp"
 
+#include "../Utils/TestHelper.hpp"
+
 namespace Slic3r {
 namespace GUI {
 
@@ -866,6 +868,26 @@ void Tab::decorate()
             tt = &m_tt_white_bullet;
         }
 
+        if (opt.first == "acceleration_limit_mess_enable") {
+            auto iter = m_options_list.find("acceleration_limit_mess");
+            if (iter != m_options_list.end() && (opt.second & osSystemValue) != 0) {
+                if (iter->second & osInitValue != 0) {
+                    color = &m_sys_label_clr;
+                } else {
+                    color = &m_modified_label_clr;
+                }
+            }
+        } else if (opt.first == "speed_limit_to_height_enable") {
+            auto iter = m_options_list.find("speed_limit_to_height");
+            if (iter != m_options_list.end() && (opt.second & osSystemValue) != 0) {
+                if (iter->second & osInitValue != 0) {
+                    color = &m_sys_label_clr;
+                } else {
+                    color = &m_modified_label_clr;
+                }
+            }
+        }
+
         if (option_without_field) {
             if (Line* line = get_line(opt.first)) {
                 line->set_undo_bitmap(icon);
@@ -1245,7 +1267,7 @@ void Tab::update_mode(const int mode)
     //    m_mode_sizer->SetMode(m_mode);
 
     update_visibility();
-
+    toggleByUserMode();
     update_changed_tree_ui();
 }
 
@@ -1255,6 +1277,7 @@ void Tab::update_visibility()
 
     for (auto page : m_pages)
         page->update_visibility(m_mode, page.get() == m_active_page);
+    update_support_options_visibility();
     rebuild_page_tree();
 
     if (m_type == Preset::TYPE_SLA_PRINT)
@@ -1480,6 +1503,89 @@ void Tab::toggle_line(const std::string &opt_key, bool toggle)
     if (line) line->toggle_visible = toggle;
 };
 
+void Tab::update_support_options_visibility()
+{
+    Page* support_page = nullptr;
+    Page* others_page  = nullptr;
+    for (auto& page : m_pages) {
+        if (page) {
+            if (page->title() == L("Support"))
+                support_page = page.get();
+            else if (page->title() == L("Others"))
+                others_page = page.get();
+        }
+    }
+    if (support_page == nullptr)
+        return;
+
+    const bool is_belt_machine = wxGetApp().preset_bundle->machine_is_belt();
+    auto toggle_line_in_support = [support_page](const char* key, bool visible) {
+        if (Line* line = support_page->get_line(key))
+            line->toggle_visible = visible;
+    };
+
+    toggle_line_in_support("support_type", !is_belt_machine);
+
+    for (const char* key : { "raft_layers", "raft_contact_distance" })
+        toggle_line_in_support(key, !is_belt_machine);
+
+    for (const char* key : { "support_filament", "support_interface_filament", "support_interface_not_for_body" })
+        toggle_line_in_support(key, !is_belt_machine);
+
+    static const char* advanced_keys[] = {
+        "raft_first_layer_density",
+        "raft_first_layer_expansion",
+        //"support_top_z_distance",
+        "support_bottom_z_distance",
+        "tree_support_wall_count",
+        "support_base_pattern_spacing",
+        "support_angle",
+        "support_interface_top_layers",
+        "support_interface_bottom_layers",
+        "support_interface_min_area",
+        "support_interface_spacing",
+        "support_bottom_interface_spacing",
+        "support_expansion",
+        "support_object_xy_distance",
+        "support_object_first_layer_gap",
+        "support_xy_overrides_z",
+        "bridge_no_support",
+        "max_bridge_length",
+        "independent_support_layer_height",
+        "ironing_support_layer",
+        "tree_hybrid_cross_height"
+    };
+    for (const char* key : advanced_keys)
+        toggle_line_in_support(key, !is_belt_machine);
+
+    toggle_line_in_support("support_base_pattern", true);
+    toggle_line_in_support("support_interface_pattern", true);
+    toggle_line_in_support("support_top_z_distance", true);
+    //toggle_line_in_support("support_bottom_z_distance", true);
+
+    if (others_page) {
+        auto toggle_line_in_others = [others_page](const char* key, bool visible) {
+            if (Line* line = others_page->get_line(key))
+                line->toggle_visible = visible;
+        };
+
+        toggle_line_in_others("print_sequence", !is_belt_machine);
+
+        for (const char* key : { "skirt_type", "skirt_loops", "min_skirt_length",
+                                 "skirt_distance", "skirt_height", "skirt_speed",
+                                 "draft_shield" })
+            toggle_line_in_others(key, !is_belt_machine);
+
+        for (const char* key : { "brim_type", "brim_width", "brim_object_gap",
+                                 "brim_ears_max_angle", "brim_ears_detection_length" })
+            toggle_line_in_others(key, !is_belt_machine);
+
+        for (const char* key : { "fuzzy_skin", "fuzzy_skin_point_distance",
+                                 "fuzzy_skin_thickness", "fuzzy_skin_first_layer" })
+            toggle_line_in_others(key, !is_belt_machine);
+    }
+}
+
 // To be called by custom widgets, load a value into a config,
 // update the preset selection boxes (the dirty flags)
 // If value is saved before calling this function, put saved_value = true,
@@ -1532,8 +1638,14 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         return;
     }
 
+    if (opt_key == "machine_is_belt")
+        update_support_options_visibility();
+
     const bool is_fff = supports_printer_technology(ptFFF);
     ConfigOptionsGroup* og_freq_chng_params = wxGetApp().sidebar().og_freq_chng_params(is_fff);
+
+    if (Test::enable_test)
+        return;
     //BBS: GUI refactor
     if (og_freq_chng_params) {
         if (opt_key == "sparse_infill_density" || opt_key == "pad_enable")
@@ -1630,6 +1742,17 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         }
     }
 
+    if (opt_key == "prime_tower_width") {
+        auto   plate_size   = wxGetApp().plater()->bed().build_volume().bounding_box().size();
+        double max_width    = unscale_(std::max(plate_size(0), plate_size(1)));
+        double double_value = boost::any_cast<double>(value);
+        if (double_value > max_width) {
+            DynamicPrintConfig new_conf = *m_config;
+            new_conf.set_key_value(opt_key, new ConfigOptionFloat(max_width));
+            m_config_manipulation.apply(m_config, &new_conf);
+        }
+    }
+
     // reload scene to update timelapse wipe tower
     if (opt_key == "timelapse_type") {
         bool wipe_tower_enabled = m_config->option<ConfigOptionBool>("enable_prime_tower")->value;
@@ -1709,23 +1832,171 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         }
     }
 
-    // BBS popup a message to ask the user to set optimum parameters for support interface if support materials are used
-    if (opt_key == "support_interface_filament") {
-        int interface_filament_id = m_config->opt_int("support_interface_filament") - 1; // the displayed id is based from 1, while internal id is based from 0
-        if (is_support_filament(interface_filament_id) && !(m_config->opt_float("support_top_z_distance") == 0 && m_config->opt_float("support_interface_spacing") == 0 &&
-                                                            m_config->opt_enum<SupportMaterialInterfacePattern>("support_interface_pattern") == SupportMaterialInterfacePattern::smipConcentric)) {
-            wxString msg_text = _L("When using support material for the support interface, We recommend the following settings:\n"
-                                   "0 top z distance, 0 interface spacing, concentric pattern and disable independent support layer height");
+    if (opt_key == "wall_sequence") {
+        // ����Ƿ�ѡ���� "adaptive outer wall/inner wall"
+
+        if (m_config->opt_enum<WallSequence>("wall_sequence") == WallSequence::AdaptiveOuterInner) {
+            // ��� overhang_speed_classic �Ƿ��ѹ�ѡ
+            if (!(m_config->opt_bool("overhang_speed_classic") && m_config->opt_bool("enable_overhang_speed") &&
+                 !m_config->opt_bool("slowdown_for_curled_perimeters"))) {
+                wxString msg_text = _L("We have added an experimental wall sequence called \"adaptive outer wall/inner wall\" , which automatically switches the wall printing order when overhangs are detected.\n"
+"We recommend using it together with \"Slow Down for Overhangs\" and \"Classic Mode\" enabled, and \"Slow Down for Curled Perimeters\" disabled.");
+                msg_text += "\n\n" + _L("Change these settings automatically? \n"
+                                        "Yes - Change these settings automatically\n"
+                                        "No  - Do not change these settings for me");
+                MessageDialog dialog(wxGetApp().plater(), msg_text, "Suggestion", wxICON_WARNING | wxYES | wxNO);
+                DynamicPrintConfig new_conf = *m_config;
+                if (dialog.ShowModal() == wxID_YES) {
+                    new_conf.set_key_value("enable_overhang_speed", new ConfigOptionBool(true));
+                    new_conf.set_key_value("overhang_speed_classic", new ConfigOptionBool(true));
+                    new_conf.set_key_value("slowdown_for_curled_perimeters", new ConfigOptionBool(false));
+                    m_config_manipulation.apply(m_config, &new_conf);
+                }
+            }
+        }
+    }
+
+    if (opt_key == "support_filament")
+    {
+        int filament_id = m_config->opt_int("support_filament") - 1; // the displayed id is based from 1, while internal id is based from 0
+        int interface_filament_id = m_config->opt_int("support_interface_filament") - 1;
+        auto& filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;
+        auto& filaments = Slic3r::GUI::wxGetApp().preset_bundle->filaments;
+        bool            support_TPU = false;
+
+        if (filament_id >= 0 && filament_id < filament_presets.size())
+        {
+            Slic3r::Preset* filament = filaments.find_preset(filament_presets[filament_id]);
+            if (filament)
+            {
+                std::string filament_type = filament->config.option<ConfigOptionStrings>("filament_type")->values[0];
+                support_TPU = filament_type == "PLA" && has_filaments({ "TPU", "TPU-AMS" });
+            }
+        }
+
+        if (is_support_filament(filament_id, false) && !is_soluble_filament(filament_id) && !has_filaments({ "TPU", "TPU-AMS" }))
+        {
+            wxString           msg_text = _L("Non-soluble support materials are not recommended for support base. \n"
+                "Are you sure to use them for support base? \n");
+            MessageDialog      dialog(wxGetApp().plater(), msg_text, "", wxICON_WARNING | wxYES | wxNO);
+            DynamicPrintConfig new_conf = *m_config;
+            if (dialog.ShowModal() == wxID_NO)
+            {
+                new_conf.set_key_value("support_filament", new ConfigOptionInt(0));
+                m_config_manipulation.apply(m_config, &new_conf);
+                on_value_change(opt_key, 0);
+            }
+            wxGetApp().plater()->update();
+        }
+
+        if ((is_soluble_filament(filament_id) || support_TPU) &&
+            !(m_config->opt_float("support_top_z_distance") == 0 && m_config->opt_float("support_interface_spacing") == 0 &&
+                m_config->opt_float("support_object_xy_distance") == 0 &&
+                m_config->opt_enum<SupportMaterialInterfacePattern>("support_interface_pattern") == SupportMaterialInterfacePattern::smipRectilinearInterlaced &&
+                filament_id == interface_filament_id)) {
+
+            wxString msg_text;
+            if (support_TPU)
+            {
+                msg_text = _L("When using PLA to support TPU, We recommend the following settings:\n"
+                    "0 top z distance, 0 interface spacing, 0 support/object xy distance, interlaced rectilinear pattern, disable \n"
+                    "independent support layer height and use PLA for both support interface and support base");
+            }
+            else
+            {
+                msg_text = _L("When using soluble material for the support, We recommend the following settings:\n"
+                    "0 top z distance, 0 interface spacing, 0 support/object xy distance, interlaced rectilinear pattern, disable \n"
+                    "independent support layer height and use soluble materials for both support interface and support base");
+            }
+
             msg_text += "\n\n" + _L("Change these settings automatically? \n"
-                                    "Yes - Change these settings automatically\n"
-                                    "No  - Do not change these settings for me");
+                "Yes - Change these settings automatically\n"
+                "No  - Do not change these settings for me");
+
             MessageDialog      dialog(wxGetApp().plater(), msg_text, "Suggestion", wxICON_WARNING | wxYES | wxNO);
             DynamicPrintConfig new_conf = *m_config;
-            if (dialog.ShowModal() == wxID_YES) {
+            if (dialog.ShowModal() == wxID_YES)
+            {
                 new_conf.set_key_value("support_top_z_distance", new ConfigOptionFloat(0));
                 new_conf.set_key_value("support_interface_spacing", new ConfigOptionFloat(0));
-                new_conf.set_key_value("support_interface_pattern", new ConfigOptionEnum<SupportMaterialInterfacePattern>(SupportMaterialInterfacePattern::smipConcentric));
+                new_conf.set_key_value("support_object_xy_distance", new ConfigOptionFloat(0));
+                new_conf.set_key_value("support_interface_pattern",
+                    new ConfigOptionEnum<SupportMaterialInterfacePattern>(SupportMaterialInterfacePattern::smipRectilinearInterlaced));
                 new_conf.set_key_value("independent_support_layer_height", new ConfigOptionBool(false));
+                new_conf.set_key_value("support_interface_filament", new ConfigOptionInt(filament_id + 1));
+                m_config_manipulation.apply(m_config, &new_conf);
+            }
+            wxGetApp().plater()->update();
+        }
+    }
+
+    // BBS popup a message to ask the user to set optimum parameters for support interface if support materials are used
+    if (opt_key == "support_interface_filament") {
+        int filament_id = m_config->opt_int("support_filament") - 1;
+        int interface_filament_id = m_config->opt_int("support_interface_filament") - 1; // the displayed id is based from 1, while internal id is based from 0
+        auto& filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;
+        auto& filaments = Slic3r::GUI::wxGetApp().preset_bundle->filaments;
+
+
+        bool            support_TPU = false;
+        if (interface_filament_id >= 0 && interface_filament_id < filament_presets.size())
+        {
+            Slic3r::Preset* filament = filaments.find_preset(filament_presets[interface_filament_id]);
+            if (filament)
+            {
+                std::string filament_type = filament->config.option<ConfigOptionStrings>("filament_type")->values[0];
+                support_TPU = filament_type == "PLA" && has_filaments({ "TPU", "TPU-AMS" });
+            }
+        }
+
+        bool is_support_filament_config = is_support_filament(interface_filament_id, false);
+
+        bool is_parameters_set = m_config->opt_float("support_top_z_distance") == 0 && m_config->opt_float("support_interface_spacing") == 0 &&
+            m_config->opt_enum<SupportMaterialInterfacePattern>("support_interface_pattern") == SupportMaterialInterfacePattern::smipRectilinearInterlaced;
+
+        bool support_config = is_support_filament_config && !(is_parameters_set && (support_TPU ? m_config->opt_float("support_object_xy_distance") == 0 : -1));
+
+        bool soluble_config = (is_soluble_filament(interface_filament_id) && !is_soluble_filament(filament_id));
+
+        if (support_config || soluble_config)
+        {
+            wxString msg_text;
+            if (support_TPU)
+            {
+                msg_text = _L("When using PLA to support TPU, We recommend the following settings:\n"
+                    "0 top z distance, 0 interface spacing, 0 support/object xy distance, interlaced rectilinear pattern, disable \n"
+                    "independent support layer height and use PLA for both support interface and support base");
+            }
+            else if (!is_soluble_filament(interface_filament_id))
+            {
+                msg_text = _L("When using support material for the support interface, We recommend the following settings:\n"
+                              "0 top z distance, 0 interface spacing, concentric pattern and disable independent support layer height");
+            }
+            else
+            {
+                msg_text = _L("When using soluble material for the support interface, We recommend the following settings:\n"
+                    "0 top z distance, 0 interface spacing, 0 support/object xy distance, interlaced rectilinear pattern, disable \n"
+                    "independent support layer height and use soluble materials for both support interface and support base");
+            }
+
+            msg_text += "\n\n" + _L("Change these settings automatically? \n"
+                "Yes - Change these settings automatically\n"
+                "No  - Do not change these settings for me");
+            MessageDialog      dialog(wxGetApp().plater(), msg_text, "Suggestion", wxICON_WARNING | wxYES | wxNO);
+            DynamicPrintConfig new_conf = *m_config;
+            if (dialog.ShowModal() == wxID_YES)
+            {
+                new_conf.set_key_value("support_top_z_distance", new ConfigOptionFloat(0));
+                new_conf.set_key_value("support_interface_spacing", new ConfigOptionFloat(0));
+                new_conf.set_key_value("support_interface_pattern",
+                    new ConfigOptionEnum<SupportMaterialInterfacePattern>(SupportMaterialInterfacePattern::smipRectilinearInterlaced));
+                new_conf.set_key_value("independent_support_layer_height", new ConfigOptionBool(false));
+
+                if (support_TPU || (is_soluble_filament(interface_filament_id) && !is_soluble_filament(filament_id)))
+                {
+                    new_conf.set_key_value("support_object_xy_distance", new ConfigOptionFloat(0));
+                    new_conf.set_key_value("support_filament", new ConfigOptionInt(interface_filament_id + 1));
+                }
                 m_config_manipulation.apply(m_config, &new_conf);
             }
             wxGetApp().plater()->update();
@@ -1988,6 +2259,10 @@ void Tab::apply_config_from_cache()
 
     if (!m_cache_config.empty()) {
         m_presets->get_edited_preset().config.apply(m_cache_config);
+        ConfigOption* opt = m_cache_config.option("prime_tower_width");
+        if (opt) {
+            on_value_change("prime_tower_width", dynamic_cast<const ConfigOptionFloat*>(opt)->value);
+        }
         m_cache_config.clear();
 
         was_applied = true;
@@ -2280,7 +2555,8 @@ void TabPrint::build()
         option.opt.is_code = true;
         option.opt.height = 15;
         optgroup->append_single_option_line(option, "small-area-infill-flow-compensation");
-        
+        optgroup->append_single_option_line("z_direction_outwall_speed_continuous");
+
         optgroup = page->new_optgroup(L("Bridging"), L"param_bridge");
         optgroup->append_single_option_line("bridge_flow");
 	    optgroup->append_single_option_line("internal_bridge_flow");
@@ -2331,6 +2607,29 @@ void TabPrint::build()
         optgroup->append_single_option_line("filter_out_gap_fill");
         optgroup->append_single_option_line("infill_wall_overlap");
         optgroup->append_single_option_line("external_infill_margin");
+
+        optgroup->append_single_option_line("fill_multiline", "strength_settings_infill##fill-multiline");        
+
+        //optgroup->append_single_option_line("sparse_infill_rotate_template", "strength_settings_infill#rotation");
+        optgroup->append_single_option_line("locked_skin_infill_pattern", "fill-patterns#infill types and their properties of sparse");
+        optgroup->append_single_option_line("locked_skeleton_infill_pattern", "fill-patterns#infill types and their properties of sparse");
+
+        optgroup->append_single_option_line("skin_infill_density", "strength_settings_infill#locked-zag");
+        optgroup->append_single_option_line("skeleton_infill_density", "strength_settings_infill#locked-zag");
+        optgroup->append_single_option_line("infill_lock_depth", "strength_settings_infill#locked-zag");
+        optgroup->append_single_option_line("skin_infill_depth", "strength_settings_infill#locked-zag");
+        optgroup->append_single_option_line("skin_infill_line_width", "strength_settings_infill#locked-zag");
+        optgroup->append_single_option_line("skeleton_infill_line_width", "strength_settings_infill#locked-zag");
+
+        optgroup->append_single_option_line("infill_rotate_step");
+        optgroup->append_single_option_line("symmetric_infill_y_axis", "strength_settings_infill#zig-zag");
+        optgroup->append_single_option_line("infill_shift_step", "strength_settings_infill#cross-hatch");
+
+        optgroup->append_single_option_line("lateral_lattice_angle_1", "strength_settings_infill#2d-lattice");
+        optgroup->append_single_option_line("lateral_lattice_angle_2", "strength_settings_infill#2d-lattice");
+        optgroup->append_single_option_line("infill_overhang_angle", "strength_settings_infill#2d-honeycomb");
+
+
 
         optgroup = page->new_optgroup(L("Advanced"), L"param_advanced");
         optgroup->append_single_option_line("infill_direction");
@@ -2395,7 +2694,8 @@ void TabPrint::build()
         optgroup->append_single_option_line("travel_acceleration");
         optgroup->append_single_option_line("accel_to_decel_enable");
         optgroup->append_single_option_line("accel_to_decel_factor");
-
+        optgroup->append_single_option_line("travel_short_distance_acceleration");
+        optgroup->append_single_option_line("travel_short_distance_threshold");
         optgroup = page->new_optgroup(L("Jerk(XY)"), L"param_jerk", 15);
         optgroup->append_single_option_line("default_jerk");
         optgroup->append_single_option_line("outer_wall_jerk");
@@ -2421,7 +2721,7 @@ void TabPrint::build()
 
     page = add_options_page(L("Support"), "custom-gcode_support"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Support"), L"param_support");
-    optgroup->append_single_option_line("enable_support", "support");
+        optgroup->append_single_option_line("enable_support", "support");
         optgroup->append_single_option_line("support_type", "support#support-types");
         optgroup->append_single_option_line("support_style", "support#support-styles");
         optgroup->append_single_option_line("support_threshold_angle", "support#threshold-angle");
@@ -2430,7 +2730,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("support_on_build_plate_only");
         optgroup->append_single_option_line("support_critical_regions_only");
         optgroup->append_single_option_line("support_remove_small_overhang");
-        optgroup->append_single_option_line("minimum_support_area");
+        //optgroup->append_single_option_line("minimum_support_area");
         //optgroup->append_single_option_line("enforce_support_layers");
 
         optgroup = page->new_optgroup(L("Raft"), L"param_raft");
@@ -2449,7 +2749,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("raft_first_layer_density");   // not only for raft, but for support too
         optgroup->append_single_option_line("raft_first_layer_expansion"); // not only for raft, but for support too
         optgroup->append_single_option_line("support_top_z_distance", "support#top-z-distance");
-        optgroup->append_single_option_line("support_bottom_z_distance", "support#bottom-z-distance");
+        //optgroup->append_single_option_line("support_bottom_z_distance", "support#bottom-z-distance");
         optgroup->append_single_option_line("support_base_pattern", "support#base-pattern");
         optgroup->append_single_option_line("tree_support_wall_count");
         optgroup->append_single_option_line("support_base_pattern_spacing", "support#base-pattern");
@@ -2491,11 +2791,16 @@ void TabPrint::build()
         optgroup->append_single_option_line("support_base_pattern_tree");
         optgroup->append_single_option_line("tree_support_wall_count_tree");
         
-        page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
+        update_support_options_visibility();
+
+    page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
 
         optgroup = page->new_optgroup(L("Prime tower"), L"param_tower");
         optgroup->append_single_option_line("enable_prime_tower");
         optgroup->append_single_option_line("prime_tower_width");
+        optgroup->append_single_option_line("prime_tower_rib_wall", "parameter/prime-tower#rib-wall");
+        optgroup->append_single_option_line("prime_tower_skip_points", "parameter/prime-tower");
+        optgroup->append_single_option_line("prime_tower_enable_framework", "parameter/prime-tower#internal-ribs");
         optgroup->append_single_option_line("prime_volume");
         optgroup->append_single_option_line("prime_tower_brim_width");
         optgroup->append_single_option_line("wipe_tower_rotation_angle");
@@ -2809,31 +3114,44 @@ void TabPrint::toggle_options()
     if (auto choice2 = dynamic_cast<Choice*>(field2)) {
         bool             has_ai_infill   = m_config->opt_bool("ai_infill");
         auto             def2            = print_config_def.get("sparse_infill_pattern");
-        std::vector<int> enum_set_AI     = {1, 2};                                                         //{ipRectilinear,ipGrid};
-        std::vector<int> enum_set_Normal = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,18,19,20,21,22,23,24,25}; //{ipConcentric,
-                                                                                                           // ipRectilinear,
-                                                                                                           // ipGrid,
-                                                                                                           // ipLine,
-                                                                                                           // ipCubic,
-                                                                                                           // ipTriangles,
-                                                                                                           // ipStars,
-                                                                                                           // ipGyroid,
-                                                                                                           // ipHoneycomb,
-                                                                                                           // ipAdaptiveCubic,
-                                                                                                           // ipAlignedRectilinear,
-                                                                                                           // ip3DHoneycomb,
-                                                                                                           // ipHilbertCurve,
-                                                                                                           // ipArchimedeanChords,
-                                                                                                           // ipOctagramSpiral,
-                                                                                                           // ipSupportCubic,
-                                                                                                           // ipLightning,
-                                                                                                           // ipCrossHatch,
-                                                                                                            // ipCross,
-                                                                                                            // ipCross3d,
-                                                                                                            // ipquarter_cubic,
-                                                                                                            // iptetrahedral,
-                                                                                                            // ipTpmsD
-                                                                                                            // ipTpmsGradual123};
+        std::vector<int> enum_set_AI     = {
+            ipRectilinear,
+            ipGrid,
+        }; //{ipRectilinear,ipGrid};
+        std::vector<int> enum_set_Normal = {
+            ipConcentric,
+            ipRectilinear,
+            ipGrid,
+            ipLine,
+            ipCubic,
+            ipTriangles,
+            ipStars,
+            ipGyroid,
+            ipHoneycomb,
+            ipAdaptiveCubic,
+            ipAlignedRectilinear,            
+            ip3DHoneycomb,
+            ipHilbertCurve,
+            ipArchimedeanChords,
+            ipOctagramSpiral,
+            ipSupportCubic,
+            ipLightning,
+            ipCrossHatch,
+            ipCross,
+            ipCross3d,
+            ipquarter_cubic,
+            iptetrahedral,
+            ipTpmsD,
+            ipGradualTpmsG,
+            ipGradualTpmsD,
+            ipGradualTpmsFK,
+            ipTpmsFK,
+            ipZigZag,
+            ipCrossZag,
+            ipLockedZag,
+            ipLateralHoneycomb,
+            ipLateralLattice,
+        }; 
         auto& set2        = has_ai_infill ? enum_set_AI : enum_set_Normal;
         auto& opt2        = const_cast<ConfigOptionDef&>(field2->m_opt);
         auto  cb2         = dynamic_cast<ComboBox*>(choice2->window);
@@ -2866,9 +3184,9 @@ void TabPrint::toggle_options()
         }
     }
 
-    //ipGradualTpmsG, ipGradualTpmsD, ipGradualTpmsFKS,
+    //ipGradualTpmsG, ipGradualTpmsD, ipGradualTpmsFK,
     auto cur_infillpattern_type = m_config->opt_enum<InfillPattern>("sparse_infill_pattern");
-    bool is_gradual_tpms = std::set<InfillPattern>{ipGradualTpmsG, ipGradualTpmsD, ipGradualTpmsFKS}.count(cur_infillpattern_type) != 0;
+    bool is_gradual_tpms = std::set<InfillPattern>{ipGradualTpmsG, ipGradualTpmsD, ipGradualTpmsFK}.count(cur_infillpattern_type) != 0;
     toggle_line("tpms_start_infill_density", is_gradual_tpms);
     toggle_line("tpms_end_infill_density", is_gradual_tpms);
     toggle_line("tpms_gradual_direction", is_gradual_tpms);
@@ -3747,6 +4065,7 @@ void TabFilament::build()
         optgroup->append_single_option_line("required_nozzle_HRC");
         optgroup->append_single_option_line("default_filament_colour");
         optgroup->append_single_option_line("filament_diameter");
+        optgroup->append_single_option_line("filament_adhesiveness_category");
         optgroup->append_single_option_line("filament_flow_ratio");
 
         optgroup->append_single_option_line("enable_pressure_advance");
@@ -3890,8 +4209,8 @@ void TabFilament::build()
         optgroup->append_line(line);
         optgroup->append_single_option_line("reduce_fan_stop_start_freq");
         optgroup->append_single_option_line("slow_down_for_layer_cooling", "auto-cooling");
-        optgroup->append_single_option_line("dont_slow_down_outer_wall");
-        optgroup->append_single_option_line("smart_cooling_zones");
+        optgroup->append_single_option_line("cooling_slowdown_logic");
+        optgroup->append_single_option_line("cooling_perimeter_transition_distance");
         optgroup->append_single_option_line("slow_down_min_speed");
 
         optgroup->append_single_option_line("enable_overhang_bridge_fan", "auto-cooling");
@@ -4061,6 +4380,7 @@ void TabFilament::toggle_options()
       is_BBL_printer =wxGetApp().preset_bundle->is_bbl_vendor();
       is_creality_vendor = wxGetApp().preset_bundle->is_cx_vendor();
     }
+    const bool is_belt_machine = wxGetApp().preset_bundle->machine_is_belt();
 
     auto cfg = m_preset_bundle->printers.get_edited_preset().config;
     if (m_active_page->title() == L("Cooling")) {
@@ -4073,10 +4393,15 @@ void TabFilament::toggle_options()
       bool enable_special_fan = m_config->opt_bool("enable_special_area_additional_cooling_fan", 0);
       toggle_option("cool_special_cds_fan_speed", enable_special_fan);
      
-      // Orca: toggle dont slow down for external perimeters if
       bool has_slow_down_for_layer_cooling = m_config->opt_bool("slow_down_for_layer_cooling", 0);
-      toggle_option("dont_slow_down_outer_wall", has_slow_down_for_layer_cooling);
-      toggle_option("smart_cooling_zones", has_slow_down_for_layer_cooling);
+      toggle_option("cooling_slowdown_logic", has_slow_down_for_layer_cooling);
+
+      // Prusa Cooling Slowdown logic
+      const auto cooling_logic = CoolingSlowdownLogicType(m_config->opt_enum("cooling_slowdown_logic", 0));
+      const bool enable_transition_distance = (cooling_logic == CoolingSlowdownLogicType::ConsistentSurface);
+      toggle_option("cooling_perimeter_transition_distance", enable_transition_distance && has_slow_down_for_layer_cooling);
+
+      // Orca: toggle dont slow down for external perimeters if
     }
     if (m_active_page->title() == L("Filament"))
     {
@@ -4096,6 +4421,9 @@ void TabFilament::toggle_options()
         else {
             toggle_line("epoxy_resin_plate_temp_initial_layer", false);
         }
+
+        toggle_line("filament_shrink", !is_belt_machine);
+        toggle_line("filament_shrinkage_compensation_z", !is_belt_machine);
         
         bool _bmaterial_flow_dependent_temperature = m_config->opt_bool("material_flow_dependent_temperature",0);
         toggle_option("material_flow_temp_graph", _bmaterial_flow_dependent_temperature);
@@ -4735,6 +5063,8 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("machine_load_filament_time");
         optgroup->append_single_option_line("machine_unload_filament_time");
         optgroup->append_single_option_line("time_cost");
+        //optgroup->append_single_option_line("machine_is_belt");
+        
         optgroup->append_single_option_line("multicolor_method");
         optgroup  = page->new_optgroup(L("Cooling Fan"), "param_cooling_fan");
         Line line = Line{ L("Fan speed-up time"), optgroup->get_option("fan_speedup_time").opt.tooltip };
@@ -5713,6 +6043,7 @@ void Tab::load_current_preset(Preset::Type trigger/* = Preset::Type::TYPE_INVALI
 
     // Reload preset pages with the new configuration values.
     reload_config();
+    update_support_options_visibility();
 
     update_ui_items_related_on_parent_preset(m_presets->get_selected_preset_parent());
 
@@ -6158,7 +6489,9 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         // Orca: update presets for the selected printer
         if (m_type == Preset::TYPE_PRINTER && wxGetApp().app_config->get_bool("remember_printer_config")) {
           m_preset_bundle->update_selections(*wxGetApp().app_config);
+          wxGetApp().preset_bundle->update_filament_presets = false;
           wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
+          wxGetApp().preset_bundle->update_filament_presets = true;
         }
         load_current_preset();
 

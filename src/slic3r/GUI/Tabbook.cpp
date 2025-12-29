@@ -162,9 +162,8 @@ bool TabButtonsListCtrl::SetPageImage(size_t n, const std::string &bmp_name)
     if (n >= m_pageButtons.size())
         return false;
 
-    ScalableBitmap bitmap;
-    if (!bmp_name.empty())
-        bitmap = ScalableBitmap(this, bmp_name, 14);
+    // 避免默认构造后赋值的浅拷贝，直接初始化本地位图
+    ScalableBitmap bitmap = bmp_name.empty() ? ScalableBitmap() : ScalableBitmap(this, bmp_name, 14);
     m_pageButtons[n]->SetBitmap(bitmap);
 
     return true;

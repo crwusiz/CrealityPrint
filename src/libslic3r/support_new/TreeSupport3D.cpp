@@ -1156,7 +1156,9 @@ void generate_initial_areas(
         ;
     const size_t  num_support_roof_layers = mesh_group_settings.support_roof_layers;
     const bool    roof_enabled        = num_support_roof_layers > 0;
-    const bool    force_tip_to_roof   = roof_enabled && (interface_placer.support_parameters.soluble_interface || sqr<double>(config.min_radius) * M_PI > mesh_group_settings.minimum_roof_area);
+
+    //这里config.min_radius乘与0.1 是为了解决bug11332。可能会引发支撑面比较细小的情况，需要找到案例验证
+    const bool    force_tip_to_roof   = roof_enabled && (interface_placer.support_parameters.soluble_interface || sqr<double>(config.min_radius * 0.1) * M_PI > mesh_group_settings.minimum_roof_area);
     // cap for how much layer below the overhang a new support point may be added, as other than with regular support every new inserted point
     // may cause extra material and time cost.  Could also be an user setting or differently calculated. Idea is that if an overhang
     // does not turn valid in double the amount of layers a slope of support angle would take to travel xy_distance, nothing reasonable will come from it.
@@ -4061,18 +4063,24 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
         // use smart overhang detection
         std::vector<Polygons>        overhangs;
         tree_support->detect_overhangs();
-        volumes.addSharpTail(tree_support->overhang_sharps);
+        //volumes.addSharpTail(tree_support->overhang_sharps);
         const int       num_raft_layers = int(config.raft_layers.size());
         const int       num_layers = int(print_object.layer_count()) + num_raft_layers;
         overhangs.resize(num_layers);
-        for (size_t i = 0; i < print_object.layer_count(); i++) {
-            for (ExPolygon& expoly : print_object.get_layer(i)->loverhangs) {
-                Polygons polys = to_polygons(expoly);
-                if (tree_support->overhang_types[&expoly] == TreeSupport::SharpTail) { polys = offset(polys, scale_(0.2));
+        for (size_t i = 0; i < print_object.layer_count(); i++) 
+        {
+            for (auto& expoly_type : print_object.get_layer(i)->loverhangs_with_type)
+            {
+                Polygons polys = to_polygons(expoly_type.first);
+
+                if (expoly_type.second & TreeSupport::SharpTail)
+                {
+                    polys = offset(polys, scale_(0.2));
                 }
                 append(overhangs[i + num_raft_layers], polys);
             }
         }
+
         // add vertical enforcer points
         std::vector<float> zs = zs_from_layers(print_object.layers());
         Polygon            base_circle = make_circle(scale_(0.5), SUPPORT_TREE_CIRCLE_RESOLUTION);

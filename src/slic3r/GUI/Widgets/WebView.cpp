@@ -6,6 +6,7 @@
 
 #include <wx/webviewarchivehandler.h>
 #include <wx/webviewfshandler.h>
+#include <wx/utils.h>
 #if wxUSE_WEBVIEW_EDGE
 #include <wx/msw/webview_edge.h>
 #elif defined(__WXMAC__)
@@ -41,6 +42,7 @@ webkit_javascript_result_unref              (WebKitJavascriptResult *js_result);
 }
 #endif
 
+#include <cstdlib>
 #ifdef __WIN32__
 // Run Download and Install in another thread so we don't block the UI thread
 DWORD DownloadAndInstallWV2RT() {
@@ -57,23 +59,8 @@ DWORD DownloadAndInstallWV2RT() {
   // (e.g., https://developer.microsoft.com/microsoft-edge/webview2/).
   // HRESULT hr = URLDownloadToFileW(NULL, L"https://go.microsoft.com/fwlink/p/?LinkId=2124703",
   //                               L".\\plugin\\MicrosoftEdgeWebview2Setup.exe", 0, 0);
-  fs::path target_file_path = (fs::temp_directory_path() / "MicrosoftEdgeWebview2Setup.exe");
-  bool downloaded = false;
-  Slic3r::Http::get("https://go.microsoft.com/fwlink/p/?LinkId=2124703")
-      .on_error([](std::string body, std::string error, unsigned http_status) {
-
-      })
-      .on_complete([&downloaded, target_file_path](std::string body, unsigned http_status) {
-        fs::fstream file(target_file_path, std::ios::out | std::ios::binary | std::ios::trunc);
-        file.write(body.c_str(), body.size());
-        file.flush();
-        file.close();
-
-        downloaded = true;
-      })
-      .perform_sync();
-  // Sleep for 1 second to wait for the buffer writen into disk
-  std::this_thread::sleep_for(1000ms);
+  fs::path target_file_path = (fs::path(Slic3r::resources_dir()).parent_path() / "MicrosoftEdgeWebView2RuntimeInstallerX64.exe");
+  bool downloaded = true;
   if (downloaded) {
     // Either Package the WebView2 Bootstrapper with your app or download it using fwlink
     // Then invoke install at Runtime.
@@ -232,6 +219,13 @@ wxDEFINE_EVENT(EVT_WEBVIEW_RECREATED, wxCommandEvent);
 
 static std::vector<wxWebView*> g_webviews;
 static std::vector<wxWebView*> g_delay_webviews;
+#ifdef __WIN32__
+static bool g_webview_atexit_registered = false;
+static wxString g_webview_userdata_dir;
+#endif
+#if defined __linux__
+static bool g_linux_webview_schemes_registered = false;
+#endif
 
 class WebViewRef : public wxObjectRefData
 {
@@ -259,6 +253,15 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         wxWebViewEdge::MSWSetBrowserExecutableDir(edgeFixedDir.GetFullPath());
         wxLogMessage("Using fixed edge version");
     }
+    // Use a per-run user data folder to avoid stale WebView2 locks.
+    if (g_webview_userdata_dir.empty()) {
+        wxFileName userdata(wxStandardPaths::Get().GetTempDir(), "");
+        userdata.AppendDir(wxString::Format("slicer_webview_userdata_%d", wxGetProcessId()));
+        wxFileName::Mkdir(userdata.GetFullPath(), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
+        g_webview_userdata_dir = userdata.GetFullPath();
+        // WebView2 will pick up this env var when creating the control.
+        wxSetEnv("WEBVIEW2_USER_DATA_FOLDER", g_webview_userdata_dir);
+    }
 #endif
     auto url2  = url;
 #ifdef __WIN32__
@@ -285,6 +288,36 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("bbl")));
         // And the memory: file system
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
+#elif defined __linux__
+        if (webView) {
+            std::ifstream osRelease("/etc/os-release");
+            std::string   line;
+            bool          isUOS = false;
+            while (std::getline(osRelease, line)) {
+                if (line.find("UOS") != std::string::npos || line.find("UnionTech") != std::string::npos) {
+                    isUOS = true;
+                    break;
+                }
+            }
+            if (isUOS) {
+                webView->SetUserAgent(
+                    wxString::Format("BBL-Slicer/v%s (%s; UOS)", SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
+                setenv("WEBKIT_DISABLE_TLS_VERIFICATION", "0", 0);
+                setenv("G_TLS_GNUTLS_PRIORITY", "NORMAL:-VERS-ALL:+VERS-TLS1.2", 1);
+                setenv("WEBKIT_TLS_ERRORS_POLICY", "ignore-tls-errors", 0);
+                BOOST_LOG_TRIVIAL(info) << "Set TLS 1.2 as default for WebView on Linux";
+            } else {
+                webView->SetUserAgent(
+                    wxString::Format("BBL-Slicer/v%s (%s; Linux) Mozilla/5.0 (X11; Linux) AppleWebKit/537.36 (KHTML, like Gecko)",
+                                     SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
+            }
+            if (!g_linux_webview_schemes_registered) {
+                webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
+                webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
+                g_linux_webview_schemes_registered = true;
+            }
+            webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        }
 #else
         // With WKWebView handlers need to be registered before creation
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
@@ -329,6 +362,12 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     }
     webView->SetRefData(new WebViewRef(webView));
     g_webviews.push_back(webView);
+#ifdef __WIN32__
+    if (!g_webview_atexit_registered) {
+        g_webview_atexit_registered = true;
+        std::atexit([] { WebView::DestroyAll(); });
+    }
+#endif
     return webView;
 }
 #if wxUSE_WEBVIEW_EDGE
@@ -338,7 +377,76 @@ bool WebView::CheckWebViewRuntime()
     auto wxVersion = factory.GetVersionInfo();
     return wxVersion.GetMajor() != 0;
 }
+bool WebView::ReInstallWebViewRuntime()
+{
+    int returnCode = 2; // Download failed
+    SHELLEXECUTEINFOW shExInfo = {0};
+    //移除edge
+    fs::path remove_edge_path = (fs::path(Slic3r::resources_dir()).parent_path() / "Remove-Edge.exe");
+    //SHELLEXECUTEINFOW shExInfo = {0};
+    shExInfo.cbSize = sizeof(shExInfo);
+    shExInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+    shExInfo.hwnd = 0;
+    shExInfo.lpVerb = L"runas";
+    shExInfo.lpFile = remove_edge_path.generic_wstring().c_str();
+    shExInfo.lpParameters = L" /install";
+    shExInfo.lpDirectory = 0;
+    shExInfo.nShow = 0;
+    shExInfo.hInstApp = 0;
 
+    if (ShellExecuteExW(&shExInfo)) {
+      WaitForSingleObject(shExInfo.hProcess, INFINITE);
+      returnCode = 0; // Install successfull
+    } else {
+      returnCode = 1; // remove failed
+      return false;
+    }
+    //重新安装webview2 runtime
+    fs::path target_file_path = (fs::path(Slic3r::resources_dir()).parent_path() / "MicrosoftEdgeWebView2RuntimeInstallerX64.exe");
+    // Either Package the WebView2 Bootstrapper with your app or download it using fwlink
+    // Then invoke install at Runtime.
+    //SHELLEXECUTEINFOW shExInfo = {0};
+    shExInfo.cbSize = sizeof(shExInfo);
+    shExInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+    shExInfo.hwnd = 0;
+    shExInfo.lpVerb = L"runas";
+    shExInfo.lpFile = target_file_path.generic_wstring().c_str();
+    shExInfo.lpParameters = L" /install";
+    shExInfo.lpDirectory = 0;
+    shExInfo.nShow = 0;
+    shExInfo.hInstApp = 0;
+
+    if (ShellExecuteExW(&shExInfo)) {
+      WaitForSingleObject(shExInfo.hProcess, INFINITE);
+      returnCode = 0; // Install successfull
+    } else {
+      returnCode = 1; // Install failed
+    }
+    //重新安装edge
+    fs::path edge_file_path = (fs::path(Slic3r::resources_dir()).parent_path() / "MicrosoftEdgeSetup.exe");
+    // Either Package the WebView2 Bootstrapper with your app or download it using fwlink
+    // Then invoke install at Runtime.
+    // 判断edge安装文件是否存在
+    if (fs::exists(edge_file_path)) {
+        shExInfo.cbSize = sizeof(shExInfo);
+        shExInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+        shExInfo.hwnd = 0;
+        shExInfo.lpVerb = L"runas";
+        shExInfo.lpFile = edge_file_path.generic_wstring().c_str();
+        shExInfo.lpParameters = L" /install";
+        shExInfo.lpDirectory = 0;
+        shExInfo.nShow = 0;
+        shExInfo.hInstApp = 0;
+
+        if (ShellExecuteExW(&shExInfo)) {
+        WaitForSingleObject(shExInfo.hProcess, INFINITE);
+        returnCode = 0; // Install successfull
+        } else {
+        returnCode = 1; // Install failed
+        }
+    }
+    return returnCode == 0;
+}
 bool WebView::DownloadAndInstallWebViewRuntime()
 {
     return DownloadAndInstallWV2RT() == 0;
@@ -388,6 +496,27 @@ bool WebView::RunScript(wxWebView *webView, wxString const &javascript)
     } catch (std::exception &e) {
         return false;
     }
+}
+
+void WebView::DestroyAll()
+{
+    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " destroying " << g_webviews.size() << " webviews";
+    for (auto *webView : g_webviews) {
+        if (!webView)
+            continue;
+#ifdef __WIN32__
+        webView->Stop();
+        webView->LoadURL("about:blank");
+#endif
+
+    }
+    g_webviews.clear();
+#ifdef __WIN32__
+    // Clean up per-run user data folder if we set one.
+    if (!g_webview_userdata_dir.empty())
+        wxFileName::Rmdir(g_webview_userdata_dir, wxPATH_RMDIR_RECURSIVE);
+#endif
+    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " done";
 }
 
 void WebView::RecreateAll()

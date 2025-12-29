@@ -575,6 +575,7 @@ private:
     // when true renders an extra frame by not resetting m_dirty to false
     // see request_extra_frame()
     bool m_extra_frame_requested;
+    int  m_extra_frames_to_render{0};
     bool m_event_handlers_bound{false};
 
     GLVolumeCollection m_volumes;
@@ -1139,6 +1140,7 @@ public:
     void msw_rescale();
 
     void request_extra_frame() { m_extra_frame_requested = true; }
+    void request_extra_frames(int count) { if (count > 0) m_extra_frames_to_render = std::max(m_extra_frames_to_render, count); }
 
     void schedule_extra_frame(int miliseconds);
 
@@ -1239,6 +1241,8 @@ public:
     void triger_extra_render_event(ERenderEvent event);
     void unregister_extra_render_event(ERenderEvent event);
     bool unregister_all_extra_render_event();
+
+    Transform3d get_preview_extra_transform();
 
 private:
     bool _is_shown_on_screen() const;

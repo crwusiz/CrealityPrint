@@ -97,6 +97,7 @@ private:
     int m_current_obj_idx{ -1 };
 
     void generate_new_volume(bool delete_input, const TriangleMesh& mesh_result);
+    std::vector<TriangleMesh> execute_mesh_boolean();
 };
 
 } // namespace GUI

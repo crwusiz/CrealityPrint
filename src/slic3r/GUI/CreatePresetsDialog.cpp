@@ -4662,7 +4662,7 @@ void ExportMidPanel::getCheckedPrinterPresets(std::list<std::shared_ptr<ExportMi
     for (auto item : m_stPrinterPresets.lstPresets) {
         for (auto item2 : item->lstTreeLineDataNode) {
             std::shared_ptr<STLineDataNode> spSTLineDataNode = std::make_shared<STLineDataNode>();
-            spSTLineDataNode->name                           = item2->name.ToStdString();
+            spSTLineDataNode->name = item2->name.empty()?into_u8(item2->name_ascii): item2->name.ToStdString();
             bool hasChecked                                  = false;
             for (auto item3 : item2->lstFilamentPresetParam) {
                 if (item3->checkbox->GetValue()) {
@@ -5020,6 +5020,7 @@ ExportMidPanel::STTreeLineDataNode* ExportMidPanel::createCheckbox(const STLineD
 {
     STTreeLineDataNode* stTreeLineDataNode = new STTreeLineDataNode;
     stTreeLineDataNode->name               = pSTLineDataNode->name;
+    stTreeLineDataNode->name_ascii         = from_u8(pSTLineDataNode->name);
     wxBoxSizer*         sizer              = new wxBoxSizer(wxHORIZONTAL);
     stTreeLineDataNode->sizer              = sizer;
     sizer->SetMinSize(wxSize(FromDIP(124), FromDIP(28)));
@@ -5619,7 +5620,7 @@ std::string ExportConfigsDialog::initial_file_path(const wxString &path, const s
 std::string ExportConfigsDialog::initial_file_name(const wxString &path, const std::string file_name)
 {
     std::string             export_path         = into_u8(path);
-    boost::filesystem::path printer_export_path = (boost::filesystem::path(export_path) / file_name).make_preferred();
+    boost::filesystem::path printer_export_path = (boost::filesystem::path(export_path) / from_u8(file_name)).make_preferred();
     if (boost::filesystem::exists(printer_export_path)) {
         MessageDialog dlg(this, wxString::Format(_L("The '%s' folder already exists in the current directory. Do you want to clear it and rebuild it.\nIf not, a time suffix will be "
                              "added, and you can modify the name after creation."), file_name), wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Info"), wxYES_NO | wxYES_DEFAULT | wxCENTRE);

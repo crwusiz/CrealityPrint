@@ -202,6 +202,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/GUI_Preview.hpp
     GUI/GUI_App_Parse.cpp
     GUI/GUI_App.cpp
+    GUI/SupportMeshCreator.hpp
+    GUI/SupportMeshCreator.cpp
     GUI/FileDownloader.hpp
     GUI/FileDownloader.cpp
     GUI/FileUploader.hpp
@@ -295,6 +297,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Monitor.hpp
     GUI/WebViewDialog.cpp
     GUI/WebViewDialog.hpp
+    GUI/LoginDialog.cpp
+    GUI/LoginDialog.hpp
     GUI/PrinterWebView.cpp
     GUI/PrinterWebView.hpp
     GUI/print_manage/PrinterMgr.cpp
@@ -335,6 +339,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/print_manage/Routes/SenderRoutes.cpp
     GUI/print_manage/Routes/DeviceMgrRoutes.hpp
     GUI/print_manage/Routes/DeviceMgrRoutes.cpp
+    GUI/print_manage/Routes/ModelLibraryRoutes.hpp
+    GUI/print_manage/Routes/ModelLibraryRoutes.cpp
     GUI/print_manage/TypeDefine.hpp
     GUI/print_manage/AppUtils.hpp
     GUI/print_manage/AppUtils.cpp
@@ -356,6 +362,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/WebDownPluginDlg.cpp
     GUI/WebGuideDialog.hpp
     GUI/WebGuideDialog.cpp
+    GUI/WebModelLibraryView.hpp
+    GUI/WebModelLibraryView.cpp
     GUI/WebUserLoginDialog.cpp
     GUI/WebUserLoginDialog.hpp
     GUI/ConfigManipulation.cpp
@@ -428,6 +436,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/DownloaderFileGet.cpp
     GUI/DownloadProgressDialog.hpp
     GUI/DownloadProgressDialog.cpp
+    GUI/CloudDownloadProgressDialog.hpp
+    GUI/CloudDownloadProgressDialog.cpp
     GUI/UpdateDialogs.cpp
     GUI/UpdateDialogs.hpp
     GUI/Jobs/Job.hpp
@@ -687,6 +697,8 @@ set(SLIC3R_GUI_SOURCES
     Config/OptionConfig.cpp
     GUI/AnalyticsDataUploadManager.hpp
     GUI/AnalyticsDataUploadManager.cpp
+	GUI/AICloudServiceDialog.hpp
+	GUI/AICloudServiceDialog.cpp
     Utils/ProfileFamilyLoader.hpp
     Utils/ProfileFamilyLoader.cpp
     Utils/TestHelper.cpp
@@ -695,6 +707,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/StepMeshDialog.cpp
     GUI/CrProject.hpp
     GUI/CrProject.cpp
+	GUI/PhysicalPrinter.hpp
+    GUI/PhysicalPrinter.cpp
 )
 
 option(AUTO_CONVERT_3MF "Enable auto conversion of 3MF files" OFF)

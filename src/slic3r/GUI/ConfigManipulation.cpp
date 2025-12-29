@@ -296,7 +296,8 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
            ! config->opt_bool("detect_thin_wall") &&
            ! config->opt_bool("overhang_reverse") &&
             config->opt_enum<WallDirection>("wall_direction") == WallDirection::Auto &&
-            config->opt_enum<TimelapseType>("timelapse_type") == TimelapseType::tlTraditional))
+            config->opt_enum<TimelapseType>("timelapse_type") == TimelapseType::tlTraditional &&
+            !config->opt_bool("z_direction_outwall_speed_continuous")))
     {
         DynamicPrintConfig new_conf = *config;
         auto answer = show_spiral_mode_settings_dialog(is_object_config);
@@ -311,6 +312,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
             new_conf.set_key_value("overhang_reverse", new ConfigOptionBool(false));
             new_conf.set_key_value("wall_direction", new ConfigOptionEnum<WallDirection>(WallDirection::Auto));
             new_conf.set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
+            new_conf.set_key_value("z_direction_outwall_speed_continuous", new ConfigOptionBool(false));
             sparse_infill_density = 0;
             timelapse_type = TimelapseType::tlTraditional;
             support = false;
@@ -345,6 +347,17 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         }
         apply(config, &new_conf);
     }
+
+    //fix:[#14152]修改选项后，仅置灰，不修改值
+    //开启机型参数中的冲刷进擦拭塔选项后，使用的是旧擦拭塔，所需取消他们的勾选
+    //bool purge_in_primetower = wxGetApp().preset_bundle->printers.get_edited_preset().config.opt_bool("purge_in_prime_tower");
+    //if (purge_in_primetower || timelapse_type == TimelapseType::tlSmooth)
+    //{
+    //    DynamicPrintConfig new_conf = *config;
+    //    new_conf.set_key_value("prime_tower_rib_wall", new ConfigOptionBool(false));
+    //    new_conf.set_key_value("prime_tower_skip_points", new ConfigOptionBool(false));
+    //    apply(config, &new_conf);
+    //}
 
     // BBS
     int filament_cnt = wxGetApp().preset_bundle->filament_presets.size();
@@ -530,23 +543,96 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     
     bool have_infill = config->option<ConfigOptionPercent>("sparse_infill_density")->value > 0;
     // sparse_infill_filament uses the same logic as in Print::extruders()
-    for (auto el : { "sparse_infill_pattern", "infill_combination",
-        "minimum_sparse_infill_area", "sparse_infill_filament", "infill_anchor_max"})
+    for (auto el : { "sparse_infill_pattern", "infill_combination", "minimum_sparse_infill_area", "sparse_infill_filament", "infill_anchor_max",
+          "infill_shift_step", "infill_rotate_step", "symmetric_infill_y_axis"})//"sparse_infill_rotate_template",
         toggle_line(el, have_infill);
     
+	
+	    // Infill patterns that support multiline infill.
+    InfillPattern pattern = config->opt_enum<InfillPattern>("sparse_infill_pattern");
+    bool          has_ai_infill        = config->opt_bool("ai_infill");
+    bool          have_multiline_infill_pattern = (!has_ai_infill)&&(pattern == ipGyroid || pattern == ipGrid || pattern == ipRectilinear || pattern == ipTpmsD || pattern == ipTpmsFK || pattern == ipCrossHatch || pattern == ipHoneycomb || pattern == ipLateralLattice || pattern == ipLateralHoneycomb ||
+                                                  pattern == ipCubic || pattern == ipStars || pattern == ipAlignedRectilinear || pattern == ipLightning || pattern == ip3DHoneycomb || pattern == ipAdaptiveCubic || pattern == ipSupportCubic);
+    toggle_line("fill_multiline", have_multiline_infill_pattern);
+
+    toggle_field("sparse_infill_density", pattern != ipLockedZag);
+    
+    
+    
+    // If the infill pattern does not support multiline infill, set fill_multiline to 1.
+    if (!have_multiline_infill_pattern) {
+        DynamicPrintConfig new_conf = *config;
+        new_conf.set_key_value("fill_multiline", new ConfigOptionInt(1));
+        apply(config, &new_conf);
+    }
+	
+	
     // Only allow configuration of open anchors if the anchoring is enabled.
     bool has_infill_anchors = have_infill && config->option<ConfigOptionFloatOrPercent>("infill_anchor_max")->value > 0;
     toggle_field("infill_anchor", has_infill_anchors);
+    toggle_field("infill_anchor_max", has_infill_anchors);
+	
+	
+    //cross zag
+    bool is_cross_zag = config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value == InfillPattern::ipCrossZag;
+    bool is_locked_zig = config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value == InfillPattern::ipLockedZag;
+    bool is_zig_zag = config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value == InfillPattern::ipZigZag;
+    bool is_zag        = is_cross_zag  || is_zig_zag;
+
+    if (is_zag) {
+        toggle_field("infill_anchor", false);
+        toggle_field("infill_anchor_max", false);
+    }
+
+
+    //toggle_line("infill_shift_step", is_cross_zag || is_locked_zig);
+    toggle_line("infill_shift_step", is_cross_zag);
+    
+    for (auto el : {"skeleton_infill_density", "skin_infill_density", "infill_lock_depth", "skin_infill_depth", "skin_infill_line_width",
+                    "skeleton_infill_line_width", "locked_skin_infill_pattern", "locked_skeleton_infill_pattern"})
+        toggle_line(el, is_locked_zig);
+
+    toggle_line("infill_rotate_step", is_zig_zag);
+    toggle_line("symmetric_infill_y_axis", is_zig_zag || is_cross_zag || is_locked_zig);
+
+    bool has_top_solid_infill    = config->opt_int("top_shell_layers") > 0;
+    bool has_bottom_solid_infill = config->opt_int("bottom_shell_layers") > 0;
+    bool has_solid_infill        = has_top_solid_infill || has_bottom_solid_infill;
+
+    for (auto el : { "infill_direction", "sparse_infill_line_width", "fill_multiline","gap_fill_target","filter_out_gap_fill","infill_wall_overlap",
+        "sparse_infill_speed", "bridge_speed", "internal_bridge_speed", "bridge_angle", "internal_bridge_angle",
+        "solid_infill_direction", "internal_solid_infill_pattern", "solid_infill_filament",
+        })
+        toggle_field(el, have_infill || has_solid_infill);
+		
+		
+		
+    bool lattice_options = config->opt_enum<InfillPattern>("sparse_infill_pattern") == InfillPattern::ipLateralLattice;
+    for (auto el : { "lateral_lattice_angle_1", "lateral_lattice_angle_2"})
+        toggle_line(el, lattice_options);
+
+    //Orca: hide rotate template for solid infill if not support
+    const auto _sparse_infill_pattern = config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value;
+    //bool       show_sparse_infill_rotate_template = _sparse_infill_pattern == ipRectilinear || _sparse_infill_pattern == ipLine ||
+    //                                          _sparse_infill_pattern == ipZigZag || _sparse_infill_pattern == ipCrossZag ||
+    //                                          _sparse_infill_pattern == ipLockedZag;
+
+    //toggle_line("sparse_infill_rotate_template", show_sparse_infill_rotate_template);
+
+    //Orca: hide rotate template for solid infill if not support
+    const auto _solid_infill_pattern = config->option<ConfigOptionEnum<InfillPattern>>("internal_solid_infill_pattern")->value;
+    toggle_line("infill_overhang_angle", config->opt_enum<InfillPattern>("sparse_infill_pattern") == InfillPattern::ipLateralHoneycomb);
+	
+	
     
     bool has_spiral_vase         = config->opt_bool("spiral_mode");
     toggle_line("spiral_mode_smooth", has_spiral_vase);
     toggle_line("spiral_mode_max_xy_smoothing", has_spiral_vase && config->opt_bool("spiral_mode_smooth"));
-    bool has_top_solid_infill 	 = config->opt_int("top_shell_layers") > 0;
-    bool has_bottom_solid_infill = config->opt_int("bottom_shell_layers") > 0;
-    bool has_solid_infill 		 = has_top_solid_infill || has_bottom_solid_infill;
+    toggle_field("z_direction_outwall_speed_continuous", !has_spiral_vase);
     // solid_infill_filament uses the same logic as in Print::extruders()
     for (auto el : { "top_surface_pattern", "bottom_surface_pattern", "internal_solid_infill_pattern", "solid_infill_filament"})
         toggle_field(el, has_solid_infill);
+
     
     for (auto el : { "infill_direction", "sparse_infill_line_width",
         "sparse_infill_speed", "bridge_speed", "internal_bridge_speed", "bridge_angle","solid_infill_direction", "rotate_solid_infill_direction" })
@@ -625,8 +711,6 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     //support_style != smsDefault;
     bool support_is_organic = support_is_tree && !support_is_normal_tree;
 
-
-
     // settings shared by normal and organic trees
     //for (auto el : {"tree_support_branch_angle", "tree_support_branch_distance", "tree_support_branch_diameter" })
     //    toggle_line(el, support_is_normal_tree);
@@ -700,14 +784,15 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("flush_into_support", bSEMM);
 
     bool have_prime_tower = config->opt_bool("enable_prime_tower");
-    for (auto el : { "prime_tower_width", "prime_tower_brim_width"})
+    for (auto el : {"prime_tower_width", "prime_tower_brim_width", "prime_tower_skip_points", "prime_tower_rib_wall", "prime_tower_enable_framework"})
         toggle_line(el, have_prime_tower);
+
+    bool have_rib_wall = config->opt_bool("prime_tower_rib_wall") && have_prime_tower;
+    toggle_field("prime_tower_width", !have_rib_wall);
 
     for (auto el : {"wall_filament", "sparse_infill_filament", "solid_infill_filament", "wipe_tower_filament"})
         toggle_line(el, !bSEMM);
 
-    bool purge_in_primetower = preset_bundle->printers.get_edited_preset().config.opt_bool("purge_in_prime_tower");
-    
     for (auto el : {"wipe_tower_rotation_angle", "wipe_tower_cone_angle", "wipe_tower_extra_spacing", "wipe_tower_max_purge_speed",
                     "wipe_tower_bridging", "wipe_tower_extra_flow", "wipe_tower_no_sparse_layers"})
         toggle_line(el, have_prime_tower && !is_BBL_Printer);
@@ -835,6 +920,19 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("interlocking_beam_layer_count", use_beam_interlocking);
     toggle_line("interlocking_depth", use_beam_interlocking);
     toggle_line("interlocking_boundary_avoidance", use_beam_interlocking);
+
+    //开启机型参数中的冲刷进擦拭塔选项后，使用的是旧擦拭塔，所以需要并置灰
+    bool purge_in_primetower = preset_bundle->printers.get_edited_preset().config.opt_bool("purge_in_prime_tower");
+    if (purge_in_primetower || config->opt_enum<TimelapseType>("timelapse_type") == TimelapseType::tlSmooth)
+    {
+        toggle_field("prime_tower_rib_wall", false);
+        toggle_field("prime_tower_skip_points", false);
+    }
+    else
+    {
+        toggle_field("prime_tower_rib_wall", true);
+        toggle_field("prime_tower_skip_points", true);
+    }
 }
 
 void ConfigManipulation::update_print_sla_config(DynamicPrintConfig* config, const bool is_global_config/* = false*/)
@@ -915,7 +1013,7 @@ void ConfigManipulation::toggle_print_sla_options(DynamicPrintConfig* config)
 
 int ConfigManipulation::show_spiral_mode_settings_dialog(bool is_object_config)
 {
-    wxString msg_text = _(L("Spiral mode only works when wall loops is 1, support is disabled, top shell layers is 0, sparse infill density is 0 and timelapse type is traditional."));
+    wxString msg_text = _(L("Spiral mode only works when wall loops is 1, support is disabled, top shell layers is 0, sparse infill density is 0, timelapse type is traditional and smoothing wall speed along Z is false."));
     auto printer_structure_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
     if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
         msg_text += _(L(" But machines with I3 structure will not generate timelapse videos."));

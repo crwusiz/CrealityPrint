@@ -300,6 +300,67 @@ void PrintObject::_transform_hole_to_polyholes()
     }
 }
 
+void PrintObject::merge_layer_node(const size_t layer_id, int& max_merged_id, std::map<int, std::vector<std::pair<int, int>>>& node_record)
+{
+    Layer*                 this_layer = m_layers[layer_id];
+    std::vector<LoopNode>& loop_nodes = this_layer->loop_nodes;
+    for (size_t idx = 0; idx < loop_nodes.size(); ++idx) {
+        // new cool node
+        if (loop_nodes[idx].lower_node_id.empty()) {
+            max_merged_id++;
+            loop_nodes[idx].merged_id = max_merged_id;
+            std::vector<std::pair<int, int>> node_pos;
+            node_pos.emplace_back(layer_id, idx);
+            node_record.emplace(max_merged_id, node_pos);
+            continue;
+        }
+
+        // it should finds key in map
+        if (loop_nodes[idx].lower_node_id.size() == 1) {
+            loop_nodes[idx].merged_id = m_layers[layer_id - 1]->loop_nodes[loop_nodes[idx].lower_node_id.front()].merged_id;
+            node_record[loop_nodes[idx].merged_id].emplace_back(layer_id, idx);
+            continue;
+        }
+
+        // min index
+        int              min_merged_id = -1;
+        std::vector<int> appear_id;
+        for (size_t lower_idx = 0; lower_idx < loop_nodes[idx].lower_node_id.size(); ++lower_idx) {
+            int id = m_layers[layer_id - 1]->loop_nodes[loop_nodes[idx].lower_node_id[lower_idx]].merged_id;
+            if (min_merged_id == -1 || min_merged_id > id)
+                min_merged_id = id;
+            appear_id.push_back(id);
+        }
+
+        loop_nodes[idx].merged_id = min_merged_id;
+        node_record[min_merged_id].emplace_back(layer_id, idx);
+
+        // update other node merged id
+        for (size_t appear_node_idx = 0; appear_node_idx < appear_id.size(); ++appear_node_idx) {
+            if (appear_id[appear_node_idx] == min_merged_id)
+                continue;
+
+            auto it = node_record.find(appear_id[appear_node_idx]);
+            // protect
+            if (it == node_record.end())
+                continue;
+
+            std::vector<std::pair<int, int>>& appear_node_pos = it->second;
+
+            for (size_t node_idx = 0; node_idx < appear_node_pos.size(); ++node_idx) {
+                int node_layer = appear_node_pos[node_idx].first;
+                int node_pos   = appear_node_pos[node_idx].second;
+
+                LoopNode& node = m_layers[node_layer]->loop_nodes[node_pos];
+
+                node.merged_id = min_merged_id;
+                node_record[min_merged_id].emplace_back(node_layer, node_pos);
+            }
+            node_record.erase(it);
+        }
+    }
+}
+
 // 1) Merges typed region slices into stInternal type.
 // 2) Increases an "extra perimeters" counter at region slices where needed.
 // 3) Generates perimeters, gap fills and fill regions (fill regions of type stInternal).
@@ -412,8 +473,49 @@ void PrintObject::make_perimeters()
 
     m_print->throw_if_canceled();
     BOOST_LOG_TRIVIAL(error) << "Generating perimeters in parallel - end  memory info ;" << log_memory_info();
-    ;
 
+    if (this->m_print->m_config.z_direction_outwall_speed_continuous) {
+        // BBS: get continuity of nodes
+        BOOST_LOG_TRIVIAL(debug) << "Calculating perimeters connection in parallel - start";
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, m_layers.size()), [this](const tbb::blocked_range<size_t>& range) {
+            for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++layer_idx) {
+                m_print->throw_if_canceled();
+                if (layer_idx > 1) {
+                    Layer& prev_layer = *m_layers[layer_idx - 1];
+                    m_layers[layer_idx]->calculate_perimeter_continuity(m_layers[layer_idx - 1]->loop_nodes);
+                }
+            }
+        });
+
+        m_print->throw_if_canceled();
+        BOOST_LOG_TRIVIAL(debug) << "Calculating perimeters connection in parallel - end";
+
+        BOOST_LOG_TRIVIAL(debug) << "Calculating cooling nodes - start";
+
+        int                                             max_merged_id = -1;
+        std::map<int, std::vector<std::pair<int, int>>> node_record;
+        for (size_t layer_idx = 1; layer_idx < m_layers.size(); ++layer_idx) {
+            m_print->throw_if_canceled();
+            merge_layer_node(layer_idx, max_merged_id, node_record);
+        }
+        m_print->throw_if_canceled();
+        BOOST_LOG_TRIVIAL(debug) << "Calculating cooling nodes - end";
+
+        // write merged node to each perimeter
+        BOOST_LOG_TRIVIAL(debug) << "Record cooling_node id for each extrusion in parallel - start";
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, m_layers.size()), [this](const tbb::blocked_range<size_t>& range) {
+            for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++layer_idx) {
+                m_print->throw_if_canceled();
+                if (layer_idx >= 1) {
+                    Layer& prev_layer = *m_layers[layer_idx - 1];
+                    m_layers[layer_idx]->record_cooling_node_for_each_extrusion();
+                }
+            }
+        });
+
+        m_print->throw_if_canceled();
+        BOOST_LOG_TRIVIAL(debug) << "Record cooling_node id for each extrusion in parallel - end";
+    }
     this->set_done(posPerimeters);
     system_memory_stats(__FUNCTION__);
 }
@@ -687,13 +789,14 @@ void PrintObject::generate_support_material()
         this->clear_support_layers();
         m_cache_support_necessary = SupportNecessaryType::NoNeedSupp;
 
+        const bool belt_machine = m_print->config().machine_is_belt;
         if ((this->has_support() && m_layers.size() > 1) || (this->has_raft() && !m_layers.empty())) {
             //DEFINE_PERFORMANCE_TEST("Generating support 50%");
             m_print->set_status(50, L("Generating support"));
 
             this->_generate_support_material();
             m_print->throw_if_canceled();
-        } else if (!m_print->get_no_check_flag()) {
+        } else if (!m_print->get_no_check_flag() && !belt_machine) {
             // BBS: pop a warning if objects have significant amount of overhangs but support material is not enabled
             //DEFINE_PERFORMANCE_TEST("Checking support necessity 50%");
             m_print->set_status(50, L("Checking support necessity"));
@@ -1356,7 +1459,7 @@ void PrintObject::detect_surfaces_type()
             		((num_layers > 1) ? num_layers - 1 : num_layers) :
             		// In non-spiral vase mode, go over all layers.
             		m_layers.size()),
-            [this, region_id, interface_shells, &surfaces_new](const tbb::blocked_range<size_t>& range) {
+            [this, spiral_mode, region_id, interface_shells, &surfaces_new](const tbb::blocked_range<size_t>& range) {
                 // If we have soluble support material, don't bridge. The overhang will be squished against a soluble layer separating
                 // the support from the print.
                 // BBS: the above logic only applys for normal(auto) support. Complete logic:
@@ -1388,63 +1491,72 @@ void PrintObject::detect_surfaces_type()
                         layerm_slices_surfaces = union_ex(layerm_slices_surfaces, to_expolygons(layerm->fill_surfaces.surfaces));
                     }
 
+                    bool detect_top    = spiral_mode || layerm->region().config().top_shell_layers;
+                    bool detect_bottom = spiral_mode || layerm->region().config().bottom_shell_layers;
+
                     // find top surfaces (difference between current surfaces
                     // of current layer and upper one)
                     Surfaces top;
-                    if (upper_layer) {
-                        ExPolygons upper_slices = interface_shells ?
-                            diff_ex(layerm_slices_surfaces, upper_layer->m_regions[region_id]->slices.surfaces, ApplySafetyOffset::Yes) :
-                            diff_ex(layerm_slices_surfaces, upper_layer->lslices, ApplySafetyOffset::Yes);
-                        surfaces_append(top, opening_ex(upper_slices, offset), stTop);
-                    } else {
-                        // if no upper layer, all surfaces of this one are solid
-                        // we clone surfaces because we're going to clear the slices collection
-                        top = layerm->slices.surfaces;
-                        for (Surface &surface : top)
-                            surface.surface_type = stTop;
+                    if (detect_top)
+                    {
+                        if (upper_layer) {
+                            ExPolygons upper_slices = interface_shells ?
+                                diff_ex(layerm_slices_surfaces, upper_layer->m_regions[region_id]->slices.surfaces, ApplySafetyOffset::Yes) :
+                                diff_ex(layerm_slices_surfaces, upper_layer->lslices, ApplySafetyOffset::Yes);
+                            surfaces_append(top, opening_ex(upper_slices, offset), stTop);
+                        } else {
+                            // if no upper layer, all surfaces of this one are solid
+                            // we clone surfaces because we're going to clear the slices collection
+                            top = layerm->slices.surfaces;
+                            for (Surface &surface : top)
+                                surface.surface_type = stTop;
+                        }
                     }
 
                     // Find bottom surfaces (difference between current surfaces of current layer and lower one).
                     Surfaces bottom;
-                    if (lower_layer) {
+                    if (detect_bottom)
+                    {
+                        if (lower_layer) {
 #if 0
-                        //FIXME Why is this branch failing t\multi.t ?
-                        Polygons lower_slices = interface_shells ?
-                            to_polygons(lower_layer->get_region(region_id)->slices.surfaces) :
-                            to_polygons(lower_layer->slices);
-                        surfaces_append(bottom,
-                            opening_ex(diff(layerm_slices_surfaces, lower_slices, true), offset),
-                            surface_type_bottom_other);
+                            //FIXME Why is this branch failing t\multi.t ?
+                            Polygons lower_slices = interface_shells ?
+                                to_polygons(lower_layer->get_region(region_id)->slices.surfaces) :
+                                to_polygons(lower_layer->slices);
+                            surfaces_append(bottom,
+                                opening_ex(diff(layerm_slices_surfaces, lower_slices, true), offset),
+                                surface_type_bottom_other);
 #else
-                        // Any surface lying on the void is a true bottom bridge (an overhang)
-                        surfaces_append(
-                            bottom,
-                            opening_ex(
-                                diff_ex(layerm_slices_surfaces, lower_layer->lslices, ApplySafetyOffset::Yes),
-                                offset),
-                            surface_type_bottom_other);
-                        // if user requested internal shells, we need to identify surfaces
-                        // lying on other slices not belonging to this region
-                        if (interface_shells) {
-                            // non-bridging bottom surfaces: any part of this layer lying
-                            // on something else, excluding those lying on our own region
+                            // Any surface lying on the void is a true bottom bridge (an overhang)
                             surfaces_append(
                                 bottom,
                                 opening_ex(
-                                    diff_ex(
-                                        intersection(layerm_slices_surfaces, lower_layer->lslices), // supported
-                                        lower_layer->m_regions[region_id]->slices.surfaces,
-                                        ApplySafetyOffset::Yes),
+                                    diff_ex(layerm_slices_surfaces, lower_layer->lslices, ApplySafetyOffset::Yes),
                                     offset),
-                                stBottom);
-                        }
+                                surface_type_bottom_other);
+                            // if user requested internal shells, we need to identify surfaces
+                            // lying on other slices not belonging to this region
+                            if (interface_shells) {
+                                // non-bridging bottom surfaces: any part of this layer lying
+                                // on something else, excluding those lying on our own region
+                                surfaces_append(
+                                    bottom,
+                                    opening_ex(
+                                        diff_ex(
+                                            intersection(layerm_slices_surfaces, lower_layer->lslices), // supported
+                                            lower_layer->m_regions[region_id]->slices.surfaces,
+                                            ApplySafetyOffset::Yes),
+                                        offset),
+                                    stBottom);
+                            }
 #endif
-                    } else {
-                        // if no lower layer, all surfaces of this one are solid
-                        // we clone surfaces because we're going to clear the slices collection
-                        bottom = layerm->slices.surfaces;
-                        for (Surface &surface : bottom)
-                            surface.surface_type = stBottom;
+                        } else {
+                            // if no lower layer, all surfaces of this one are solid
+                            // we clone surfaces because we're going to clear the slices collection
+                            bottom = layerm->slices.surfaces;
+                            for (Surface &surface : bottom)
+                                surface.surface_type = stBottom;
+                        }
                     }
 
                     // now, if the object contained a thin membrane, we could have overlapping bottom
@@ -3702,8 +3814,8 @@ void PrintObject::remove_bridges_from_contacts(
                     // Offset a polyline into a thick line.
                     //polygons_append(bridges, offset(lines, 0.5f * w + 10.f));
 
-                    //¶à²ãÇ½µÄÊ±ºò£¬ÕâÀïÇÅ½ÓÂ·¾¶µÄ¼ä¾à²»Ì«ºÃÈ·¶¨£¨¿ÉÒÔ²Î¿¼make_perimetersº¯Êı£©£¬ËùÒÔÍ³Ò»Ê¹ÓÃÍâÇ½µÄ¿í¶È
-                    //½â¾öbug https://zentao.creality.com/zentao/bug-view-11937.html
+                    //å¤šå±‚å¢™çš„æ—¶å€™ï¼Œè¿™é‡Œæ¡¥æ¥è·¯å¾„çš„é—´è·ä¸å¤ªå¥½ç¡®å®šï¼ˆå¯ä»¥å‚è€ƒmake_perimeterså‡½æ•°ï¼‰ï¼Œæ‰€ä»¥ç»Ÿä¸€ä½¿ç”¨å¤–å¢™çš„å®½åº¦
+                    //è§£å†³bug https://zentao.creality.com/zentao/bug-view-11937.html
                     polygons_append(bridges, offset(lines, 0.5f * (w + fw) + 10.f));
                 }
             }

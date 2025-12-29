@@ -10,7 +10,7 @@ namespace Slic3r {
 	{
 	public:
 		~FillQuarter() override = default;
-
+        bool is_self_crossing() override { return false; }
 		void setOrigin(const InfillPattern& _pattern, const Point& _infill_origin, const Point& _offset, const coord_t& _z, const coord_t& line_distance, const coord_t& infill_line_width);
 	protected:
 		Fill* clone() const override { return new FillQuarter(*this); };

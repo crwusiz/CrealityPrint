@@ -1,6 +1,8 @@
 #include "boost/filesystem/operations.hpp"
 #include "libslic3r/Technologies.hpp"
 #include "GUI_App.hpp"
+#include "slic3r/Utils/Http.hpp"
+#include <nlohmann/json.hpp>
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
@@ -26,6 +28,7 @@
 #include "slic3r/GUI/HMS.hpp"
 #include "slic3r/GUI/WebViewDialog.hpp"
 #include "slic3r/GUI/WebUserLoginDialog.hpp"
+#include "slic3r/GUI/LoginDialog.hpp"
 #include "slic3r/GUI/FileDownloader.hpp"
 #include "slic3r/GUI/print_manage/utils/cxmdns.h"
 #include "slic3r/GUI/print_manage/Utils.hpp"
@@ -46,10 +49,15 @@
 #include <regex>
 #include <thread>
 #include <string_view>
+#include <fstream>
+#include <chrono>
+#include <iomanip>
+#include <boost/filesystem.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/log/core.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/convert.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -69,7 +77,9 @@
 #include <wx/wupdlock.h>
 #include <wx/filefn.h>
 #include <wx/sysopt.h>
+#include <wx/process.h>
 #include <wx/richmsgdlg.h>
+#include <wx/hyperlink.h>
 #include <wx/log.h>
 #include <wx/intl.h>
 #include <wx/tokenzr.h>
@@ -83,11 +93,13 @@
 
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/ModelVolume.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/miniz_extension.hpp"
 #include "libslic3r/Color.hpp"
 #include "slic3r/GUI/Project.hpp"
+#include "slic3r/GUI/WebModelLibraryView.hpp"
 #ifdef _WIN32
 #include "libslic3r/UnittestFlow.hpp"
 #include "libslic3r/AutomationMgr.hpp"
@@ -128,6 +140,7 @@
 
 #include "KBShortcutsDialog.hpp"
 #include "DownloadProgressDialog.hpp"
+#include "CloudDownloadProgressDialog.hpp"
 
 #include "BitmapCache.hpp"
 #include "Notebook.hpp"
@@ -202,6 +215,7 @@
 #if AUTO_CONVERT_3MF
 #include "AutoConvert3mfMgr.hpp"
 #endif
+#include "AICloudServiceDialog.hpp"
 
 using namespace std::literals;
 namespace pt = boost::property_tree;
@@ -959,7 +973,7 @@ static void generic_exception_handle()
         //throw;
      } catch (const boost::io::bad_format_string& ex) {
      	BOOST_LOG_TRIVIAL(error) << boost::format("Uncaught exception: %1%") % ex.what();
-        	flush_logs();
+        flush_logs();
         wxString errmsg = _L("Creality3DSlicer will terminate because of a localization error. "
                              "It will be appreciated if you report the specific scenario this issue happened.");
         wxMessageBox(errmsg + "\n\n" + wxString(ex.what()), _L("Critical error"), wxOK | wxICON_ERROR);
@@ -1037,6 +1051,42 @@ void  GUI_App::reload_homepage()
         }
     }
 
+}
+
+void GUI_App::reload_region_sensitive_views()
+{
+    auto mf = mainframe;
+    if (!mf) return;
+    auto mlv = mf->get_modellibrary_view();
+    if (!mlv) return;
+
+    // 在线模型库切换区域需要切换到对应域名；为确保内容更新，这里统一走导航刷新，
+    // 同时尽量保留当前路径与查询参数以保持用户所在的页面。
+    wxString new_base = wxString::FromUTF8(Slic3r::GUI::get_cloud_webaddress());
+    wxString current  = wxEmptyString;
+    if (mlv->GetWebView())
+        current = mlv->GetWebView()->GetCurrentURL();
+
+    wxString target;
+    if (current.IsEmpty() || current == wxWebViewDefaultURLStr) {
+        // 未初始化或首次进入，跳到模型库首页
+        target = new_base + "model-category/3d-print-all";
+    } else {
+        wxURI    uri(current);
+        wxString path  = uri.GetPath();
+        wxString query = uri.GetQuery();
+
+        // 规范化拼接，避免出现双斜杠
+        if (!new_base.EndsWith("/")) new_base += "/";
+        if (path.StartsWith("/")) path = path.Mid(1);
+
+        target = new_base + path;
+        if (!query.IsEmpty()) target += "?" + query;
+    }
+
+    // 在导航到新的域名前刷新 Cookies（UA 仅在初始化设置）
+    mlv->UpdateUserAgent();
+    mlv->load_url(target);
 }
 bool GUI_App::send_app_message(const std::string& msg,bool bforce)
 {
@@ -1140,9 +1190,104 @@ void GUI_App::post_login_status_cmd(bool isSuccess, UserInfo user)
     }
     wxString strJS        = wxString::Format("window.handleStudioCmd(%s)", m_Res.dump(-1, ' ', true, json::error_handler_t::ignore));
     GUI::wxGetApp().run_script(strJS);
+    
+
+    // 关闭LoginDialog窗口
+    if (m_login_dialog) {
+        m_login_dialog->EndModal(isSuccess ? wxID_OK : wxID_CANCEL);
+    }
 }
 
 // param_set 参数集合页
+
+// 启动监听 user_info.json 的文件变更，用于跨进程同步登录状态到当前实例
+void GUI_App::start_user_info_watcher()
+{
+    try {
+        auto user_file = fs::path(data_dir()).append("user_info.json");
+        if (!m_user_info_watcher) {
+            m_user_info_watcher = std::make_unique<wxFileSystemWatcher>();
+            m_user_info_watcher->Add(wxFileName(boost::nowide::widen(user_file.string())));
+            m_user_info_watcher->Bind(wxEVT_FSWATCHER, &GUI_App::on_user_info_file_event, this);
+            BOOST_LOG_TRIVIAL(info) << "start_user_info_watcher: watching " << user_file.string();
+        }
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(info) << "start_user_info_watcher: failed to start watcher";
+    }
+}
+
+// 文件系统事件：当 user_info.json 被创建、修改、重命名或删除时触发
+void GUI_App::on_user_info_file_event(wxFileSystemWatcherEvent& evt)
+{
+    const int change = evt.GetChangeType();
+    auto user_file   = fs::path(data_dir()).append("user_info.json");
+
+    auto apply_logout = [this] {
+        m_user.token.clear();
+        m_user.nickName.clear();
+        m_user.avatar.clear();
+        m_user.userId.clear();
+        m_user.bLogin = false;
+        app_config->set("cloud", "user_id", m_user.userId);
+        app_config->set("cloud", "token", m_user.token);
+        CallAfter([this] {
+            post_login_status_cmd(false, {});
+            if (mainframe && mainframe->get_modellibrary_view()) {
+                mainframe->get_modellibrary_view()->UpdateUserAgent();
+            }
+        });
+    };
+
+    if (change == wxFSW_EVENT_CREATE || change == wxFSW_EVENT_MODIFY || change == wxFSW_EVENT_RENAME) {
+        try {
+            if (!fs::exists(user_file)) {
+                apply_logout();
+                return;
+            }
+
+            json j;
+            boost::nowide::ifstream ifs(user_file.string());
+            ifs >> j;
+
+            UserInfo user;
+            user.token    = j.value("token", "");
+            user.nickName = j.value("nickName", "");
+            user.avatar   = j.value("avatar", "");
+            user.userId   = j.value("userId", "");
+
+            const bool old_login  = m_user.bLogin;
+            const wxString old_token = m_user.token;
+            const wxString old_uid   = m_user.userId;
+
+            m_user.token    = user.token;
+            m_user.nickName = user.nickName;
+            m_user.avatar   = user.avatar;
+            m_user.userId   = user.userId;
+            m_user.bLogin   = !m_user.token.empty();
+
+            app_config->set("cloud", "user_id", m_user.userId);
+            app_config->set("cloud", "token", m_user.token);
+
+            const bool login_unchanged = (old_login == m_user.bLogin);
+            const bool token_unchanged = (old_token == m_user.token);
+            const bool uid_unchanged   = (old_uid   == m_user.userId);
+
+            if (login_unchanged && token_unchanged && uid_unchanged)
+                return; // 无变化，不触发更新
+
+            CallAfter([this, user] {
+                post_login_status_cmd(!user.token.empty(), user);
+                if (mainframe && mainframe->get_modellibrary_view()) {
+                    mainframe->get_modellibrary_view()->UpdateUserAgent();
+                }
+            });
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", parse user_info.json failed: " << e.what();
+        }
+    } else if (change == wxFSW_EVENT_DELETE) {
+        apply_logout();
+    }
+}
 // token_expired token过期
 // login 登录
 void GUI_App::swith_community_sub_page(const std::string& pageName)
@@ -1163,6 +1308,13 @@ void GUI_App::switch_to_tab(const std::string& tabName)
 
     if (tabName == "tpHome") {
         mainframe->select_tab(MainFrame::tpHome);
+    }
+    else if (tabName == "tpOnlineModel") {
+        mainframe->select_tab(MainFrame::tpOnlineModel);
+        wxCommandEvent e = wxCommandEvent(wxCUSTOMEVT_NOTEBOOK_SEL_CHANGED);
+        e.SetId(MainFrame::TabPosition::tpOnlineModel); // printer details page
+        wxPostEvent(wxGetApp().mainframe->topbar(), e);
+        //mainframe->m_topbar->SetSelection(size_t(MainFrame::tpOnlineModel));
     }
 }
 
@@ -1315,12 +1467,12 @@ void GUI_App::post_init()
 //#endif
         if (app_config->get("default_page") == "1")
         {
-            mainframe->select_tab(size_t(1));
+            mainframe->select_tab(size_t(MainFrame::tp3DEditor));
             mainframe->m_topbar->SetSelection(size_t(MainFrame::tp3DEditor));
         }
         else if (is_editor())
         {
-            mainframe->select_tab(size_t(0));
+            mainframe->select_tab(size_t(MainFrame::tpHome));
             mainframe->m_topbar->SetSelection(size_t(MainFrame::tpHome));
          }
         mainframe->Thaw();
@@ -1414,7 +1566,7 @@ void GUI_App::post_init()
             }
 
             //  检测是否有5.x的配置需要加载
-            mainframe->checkHaveOldPresetsNeedLoad();
+            // mainframe->checkHaveOldPresetsNeedLoad();
             //  检查是否有参数需要更新
             //UpdateParams::getInstance().checkParamsNeedUpdate();
 #endif
@@ -2316,6 +2468,12 @@ GUI_App::~GUI_App()
         delete printerPresetConfig;
     }
 
+    if (m_login_dialog != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": destroy login_dialog");
+        m_login_dialog->Destroy();
+        m_login_dialog = nullptr;
+    }
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": exit");
 }
 
@@ -2375,6 +2533,8 @@ void GUI_App::init_download_path()
         if (!fs::exists(dp)) {
 
             boost::filesystem::path user_down_path =  boost::filesystem::path(data_dir()) / "cloud_download_data";
+            if (!fs::exists(user_down_path))
+                fs::create_directories(user_down_path);
             app_config->set("download_path", user_down_path.string());
         }
     }
@@ -2392,6 +2552,60 @@ void GUI_App::init_webview_runtime()
         }
     }
 }
+void GUI_App::reinstall_webview_runtime()
+{
+    // Check WebView Runtime
+    int nRet = wxMessageBox(
+        _L("Creality Print requires the Microsoft WebView2 Runtime,But it has been found that the abnormal operation of Microsoft WebView2 may be related to the installation of Microsoft Edge. \nClick the Yes to reinstall Microsoft Edge"),
+        _L("WebView2 Runtime"), wxYES_NO);
+    if (nRet == wxYES) {
+        const bool reinstall_ok = WebView::ReInstallWebViewRuntime();
+        if (!reinstall_ok) {
+            // Show a dialog with a clickable tutorial link.
+            wxDialog dlg(mainframe ? mainframe : nullptr, wxID_ANY, _L("WebView2 Runtime"),
+                wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+            std::string lang_code = wxGetApp().app_config->get("language");
+            wxString lang = lang_code.empty() ? wxS("en_GB") : wxString::FromUTF8(lang_code.c_str());
+            bool is_cn = lang.StartsWith(wxS("zh_CN"));
+            wxString link_url = is_cn ? wxS("https://wiki.creality.com/zh/software/6-0/webview")
+                                      : wxS("https://wiki.creality.com/en/software/6-0/webview");
+            const int padding   = dlg.FromDIP(12);
+            const int wrap_width = dlg.FromDIP(420);
+            auto *sizer = new wxBoxSizer(wxVERTICAL);
+            auto *msg   = new wxStaticText(&dlg, wxID_ANY,
+                _L("Failed to reinstall the Microsoft WebView2 Runtime. Please reinstall it manually."));
+            msg->Wrap(wrap_width);
+            sizer->Add(msg, 0, wxALL | wxEXPAND, padding);
+            auto *link = new wxHyperlinkCtrl(&dlg, wxID_ANY,
+                wxString::Format(_L("tutorial: %s"), link_url),
+                link_url);
+            sizer->Add(link, 0, wxLEFT | wxRIGHT | wxBOTTOM, padding);
+            sizer->Add(dlg.CreateStdDialogButtonSizer(wxOK), 0, wxALIGN_RIGHT | wxALL, dlg.FromDIP(10));
+            dlg.SetSizerAndFit(sizer);
+            dlg.CentreOnParent();
+            dlg.ShowModal();
+            if (mainframe)
+                mainframe->Close(true);
+            else
+                ExitMainLoop();
+            return;
+        }
+
+        wxMessageBox(_L("The Microsoft WebView2 Runtime has been reinstalled successfully. The application will restart now."),
+                     _L("WebView2 Runtime"), wxOK | wxICON_INFORMATION);
+
+        wxString exe_path = wxStandardPaths::Get().GetExecutablePath();
+        wxString restart_cmd = wxString::Format("\"%s\"", exe_path);
+        long     pid = wxExecute(restart_cmd, wxEXEC_ASYNC);
+        if (pid <= 0)
+            BOOST_LOG_TRIVIAL(error) << "[WebViewRuntime] Failed to relaunch Creality Print after reinstall.";
+
+        if (mainframe)
+            mainframe->Close(true);
+        else
+            ExitMainLoop();
+    }
+}
 #endif
 
 void GUI_App::init_app_config()
@@ -2406,9 +2620,11 @@ void GUI_App::init_app_config()
 	// Unix: ~/ .Slic3r
 	// Windows : "C:\Users\username\AppData\Roaming\Slic3r" or "C:\Documents and Settings\username\Application Data\Slic3r"
 	// Mac : "~/Library/Application Support/Slic3r"
-
+    bool is_copy_after = false;
     if (data_dir().empty()) {
         boost::filesystem::path data_dir_path;
+        std::string lastAppUserForder;
+        std::string curUserForder;
         #ifndef __linux__
             std::string data_dir = wxStandardPaths::Get().GetUserDataDir().ToUTF8().data();
 
@@ -2420,6 +2636,12 @@ void GUI_App::init_app_config()
             data_dir_path = boost::filesystem::path(data_dir);
 
             set_data_dir(data_dir);
+            #ifdef __APPLE__
+            lastAppUserForder = data_dir + "/" + SLIC3R_APP_USE_FORDER + "/" + std::string("6.0");
+            #else
+            lastAppUserForder = data_dir + "\\" + SLIC3R_APP_USE_FORDER + "\\" + std::string("6.0");
+            #endif
+            curUserForder     = Slic3r::data_dir();
         #else
             // Since version 2.3, config dir on Linux is in ${XDG_CONFIG_HOME}.
             // https://github.com/prusa3d/PrusaSlicer/issues/2911
@@ -2428,10 +2650,25 @@ void GUI_App::init_app_config()
                 dir = wxFileName::GetHomeDir() + wxS("/.config");
             set_data_dir((dir + "/" + GetAppName()).ToUTF8().data());
             data_dir_path = boost::filesystem::path(data_dir());
+            lastAppUserForder = std::string((dir + "/" + GetAppName()).ToUTF8().data())
+                + "/" + SLIC3R_APP_USE_FORDER + "/6.0";
+	    curUserForder = Slic3r::data_dir();
         #endif
         if (!boost::filesystem::exists(data_dir_path)){
             boost::filesystem::create_directory(data_dir_path);
         }
+        try {
+            if (std::string(CREALITYPRINT_VERSION_MAJOR) == "7" && !Slic3r::data_dir().empty() &&
+                fs::is_empty(curUserForder) && boost::filesystem::exists(lastAppUserForder)) {
+                if (!boost::filesystem::exists(curUserForder))
+                    boost::filesystem::create_directories(curUserForder);
+                fs::copy_options option = fs::copy_options::recursive | fs::copy_options::copy_symlinks;
+                fs::copy(lastAppUserForder, curUserForder, option);
+
+                is_copy_after = true;
+                
+            }
+        } catch (const fs::filesystem_error& e) {}
 
         // Change current dirtory of application
         chdir(encode_path((Slic3r::data_dir() + "/log").c_str()).c_str());
@@ -2454,9 +2691,13 @@ void GUI_App::init_app_config()
 #endif
 
     //BBS: remove GCodeViewer as seperate APP logic
-	if (!app_config)
+    if (!app_config)
         app_config = new AppConfig();
-        //app_config = new AppConfig(is_editor() ? AppConfig::EAppMode::Editor : AppConfig::EAppMode::GCodeViewer);
+    if (is_copy_after) {
+        //6.0 is max_recent_count=18.。 so here set 30
+        app_config->set("max_recent_count", "30");
+    }
+    // app_config = new AppConfig(is_editor() ? AppConfig::EAppMode::Editor : AppConfig::EAppMode::GCodeViewer);
     
     m_config_corrupted = false;
 	// load settings
@@ -2570,61 +2811,90 @@ std::string GetMACAddress()
 }
 #endif
 inline auto I18nToLangaugeIndex(const std::string& i18n) -> std::string {
-      static const auto I18N_INDEX_MAP = std::map<std::string, std::string>{
-        { std::string("en")   , std::string("0")  },
-        { std::string("en_us"), std::string("0")  },
-        { std::string("en_uk"), std::string("0")  },
-
-        { std::string("zh")   , std::string("1")  },
-        { std::string("zh_cn"), std::string("1")  },
-        { std::string("zh_tw"), std::string("2")  },
-        { std::string("zh_hk"), std::string("3")  },
-
-        { std::string("ko")   , std::string("5")  },
-        { std::string("ko_kr"), std::string("5")  },
-
-        { std::string("ja")   , std::string("10") },
-        { std::string("ja_jp"), std::string("10") },
-
-        { std::string("pt")   , std::string("11") },
-        { std::string("pt_pt"), std::string("11") },
-        { std::string("pt_br"), std::string("15") },
-
-        { std::string("ru")   , std::string("4")  },
-        { std::string("xa")   , std::string("6")  },
-        { std::string("es")   , std::string("7")  },
-        { std::string("de")   , std::string("8")  },
-        { std::string("fr")   , std::string("9")  },
-        { std::string("th")   , std::string("12") },
-        { std::string("nl")   , std::string("13") },
-        { std::string("it")   , std::string("14") },
-        { std::string("tr")   , std::string("16") },
-        { std::string("ro")   , std::string("17") },
-        { std::string("he")   , std::string("18") },
-        { std::string("po")   , std::string("19") },
-        { std::string("in")   , std::string("20") },
-        { std::string("hu")   , std::string("21") },
+      // 归一化：
+      // - 小写
+      // - 将 '-' 转为 '_'
+      // - 去掉 ".utf8"、".utf-8"、区域后缀（如 ".UTF-8"、"@latin" 等）
+      auto normalize = [](std::string s) {
+          // to lower
+          std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+          // hyphen -> underscore
+          std::replace(s.begin(), s.end(), '-', '_');
+          // strip trailing locale modifiers
+          size_t pos = s.find_first_of(".@ ");
+          if (pos != std::string::npos)
+              s = s.substr(0, pos);
+          // common zh variants
+          if (s == "zh_hans" || s == "zh_cn_hans") s = "zh_cn";
+          if (s == "zh_hant" || s == "zh_tw_hant" || s == "zh_hk_hant") s = "zh_tw";
+          return s;
       };
+      const std::string key = normalize(i18n);
+      // 语言到索引映射（标注对应国家/地区）
+      static const auto I18N_INDEX_MAP = std::map<std::string, std::string>{
+        { std::string("en")   , std::string("0")  },   // 英语（通用）
+        { std::string("en_us"), std::string("0")  },   // 英语（美国）
+        { std::string("en_uk"), std::string("0")  },   // 英语（英国）
+        { std::string("en_gb"), std::string("0")  },   // 英语（英国，Linux 常见）
 
-      auto iter = I18N_INDEX_MAP.find(i18n);
-      if (iter != I18N_INDEX_MAP.cend()) {
+        { std::string("zh")   , std::string("1")  },   // 中文（通用）
+        { std::string("zh_cn"), std::string("1")  },   // 中文（中国大陆）
+        { std::string("zh_tw"), std::string("2")  },   // 中文（中国台湾）
+        { std::string("zh_hk"), std::string("3")  },   // 中文（中国香港）
+
+        { std::string("ko")   , std::string("5")  },   // 韩语（韩国）
+        { std::string("ko_kr"), std::string("5")  },   // 韩语（韩国）
+
+        { std::string("ja")   , std::string("10") },   // 日语（日本）
+        { std::string("ja_jp"), std::string("10") },   // 日语（日本）
+
+        { std::string("pt")   , std::string("11") },   // 葡萄牙语（葡萄牙）
+        { std::string("pt_pt"), std::string("11") },   // 葡萄牙语（葡萄牙）
+        { std::string("pt_br"), std::string("15") },   // 葡萄牙语（巴西）
+
+        { std::string("ru")   , std::string("4")  },   // 俄语（俄罗斯）
+        { std::string("ru_ru"), std::string("4")  },   // 俄语（俄罗斯）
+        { std::string("uk_ua"), std::string("4")  },
+        { std::string("xa")   , std::string("6")  },   // 未知/保留（请根据后续规范映射）
+        { std::string("es")   , std::string("7")  },   // 西班牙语（西班牙/拉美）
+        { std::string("ca_es"), std::string("7")  },   // 加泰罗尼亚语（西班牙）
+        { std::string("de")   , std::string("8")  },   // 德语（德国）
+        { std::string("de_de"), std::string("8")  },   // 德语（德国）
+        { std::string("fr")   , std::string("9")  },   // 法语（法国）
+        { std::string("fr_fr"), std::string("9")  },   // 法语（法国）
+        { std::string("th")   , std::string("12") },   // 泰语（泰国）
+        { std::string("th_th"), std::string("12") },   // 泰语（泰国）
+        { std::string("nl")   , std::string("13") },   // 荷兰语（荷兰）
+        { std::string("nl_nl"), std::string("13") },   // 荷兰语（荷兰）
+        { std::string("it")   , std::string("14") },   // 意大利语（意大利）
+        { std::string("it_it"), std::string("14") },   // 意大利语（意大利）
+        { std::string("tr")   , std::string("16") },   // 土耳其语（土耳其）
+        { std::string("ro")   , std::string("17") },   // 罗马尼亚语（罗马尼亚）
+        { std::string("he")   , std::string("18") },   // 希伯来语（以色列）
+        { std::string("pl")   , std::string("19") },   // 波兰语（波兰）
+        { std::string("pl_pl"), std::string("19") },   // 波兰语（波兰）
+        { std::string("in")   , std::string("20") },   // 印度尼西亚语（印度尼西亚）
+        { std::string("in_in"), std::string("20") },   // 印度尼西亚语（印度尼西亚）
+        { std::string("hu")   , std::string("21") },   // 匈牙利语（匈牙利）
+        { std::string("hu_hu"), std::string("21") },   // 匈牙利语（匈牙利）
+      };
+      //uk_ua,sv_se,cs   no map
+      // 精确匹配（已归一化）
+      if (auto iter = I18N_INDEX_MAP.find(key); iter != I18N_INDEX_MAP.cend())
         return iter->second;
+
+      // 基于主语言的回退（如 en_US -> en）
+      size_t under = key.find('_');
+      if (under != std::string::npos) {
+          const std::string base = key.substr(0, under);
+          if (auto iter = I18N_INDEX_MAP.find(base); iter != I18N_INDEX_MAP.cend())
+              return iter->second;
       }
 
-      for (const auto& [key, value] : I18N_INDEX_MAP) {
-        if (key == i18n) {
-          return value;
-        }
-      }
-
-      for (const auto& [key, value] : I18N_INDEX_MAP) {
-        if (i18n ==key) {
-          return value;
-        }
-      }
-
-      return std::string("0");
-    }
+      // 未命中时，按地区进行回退：CN -> "1"，其它 -> "0"
+      const std::string country_code = wxGetApp().app_config->get_country_code();
+      return country_code == std::string("CN") ? std::string("1") : std::string("0");
+}
 std::map<std::string, std::string> GUI_App::get_extra_header()
 {
     wxString language = app_config->get("language");
@@ -2633,7 +2903,7 @@ std::map<std::string, std::string> GUI_App::get_extra_header()
 
                                                         {"__CXY_PLATFORM_", "11"},
                                                         {"__CXY_BRAND_", "creality"},
-                                                        {"__CXY_APP_CH_", "CP_Beta"},
+                                                        {"__CXY_APP_CH_", "creality"},
                                                         {"__CXY_OS_LANG_", I18nToLangaugeIndex(language.Lower().ToStdString())},
                                                         {"__CXY_DUID_", GetMACAddress()}};
     extra_headers.emplace("__CXY_APP_VER_", CREALITYPRINT_VERSION);
@@ -2652,14 +2922,29 @@ std::map<std::string, std::string> GUI_App::get_extra_header()
 #else()
     extra_headers.emplace("__CXY_OS_VER_", "unknown");
 #endif
-    std::string version = std::string(PROJECT_VERSION_EXTRA);
-    bool        is_release = boost::algorithm::icontains(version, "release");
-    if(is_release)
-    {
-        extra_headers.emplace("__CXY_APP_CH_", "creality");
-    }
     return extra_headers;
 }
+void GUI_App::setUserAccount(std::string userId, std::string tokenId)
+{
+    app_config->set("cloud", "user_id", userId);
+    app_config->set("cloud", "token", tokenId);
+}
+std::map<std::string, std::string> GUI_App::get_modellibrary_header()
+{
+    wxString language = app_config->get("language");
+    std::map<std::string, std::string> extra_headers;
+    extra_headers.emplace("__CXY_TOKEN_", app_config->get("cloud", "token"));
+    extra_headers.emplace("__CXY_UID_", app_config->get("cloud", "user_id"));
+    extra_headers.emplace("__CXY_OS_LANG_", I18nToLangaugeIndex(language.Lower().ToStdString()));
+    // 供前端环境识别：应用版本与 WebView 类型（跨平台一致）
+    extra_headers.emplace("__CXY_APP_VER_", CREALITYPRINT_VERSION);
+    extra_headers.emplace("__CXY_WEBVIEW_TYPE_", "creality_print_slice");
+     extra_headers.emplace("__CXY_PLATFORM_", "11");
+      
+    //extra_headers.emplace("_DARK_MODE", dark_mode() ? "1" : "0");
+    return extra_headers;
+}
+
 
 std::string GUI_App::get_local_device_dir() 
 {
@@ -2761,12 +3046,12 @@ void GUI_App::startTour(int startIndex)
     {
         // step0
         wxRect printerBtn = sidebar().obj_list()->printComboRect();
-        m_UITour->AddStep(0, printerBtn, _L("Here you can select and add your printer presets"), "", "userGuide_step1", "", wxRIGHT);
+        m_UITour->AddStep(0, printerBtn, _L_ZH("Here you can select and add your printer presets"), "", "userGuide_step1", "", wxRIGHT);
     }
 
     //step1
     wxRect wifiBtn = sidebar().obj_list()->wifiBtn();
-    m_UITour->AddStep(1 - startIndex, wifiBtn, _L("Click 【"), _L("】 to select Creality printer matching the chosen preset"),
+    m_UITour->AddStep(1 - startIndex, wifiBtn, _L_ZH("Click 【"), _L_ZH("】 to select Creality printer matching the chosen preset"),
        "userGuide_step2", "wifi", wxRIGHT);
 
     //step2
@@ -2786,7 +3071,7 @@ void GUI_App::startTour(int startIndex)
     #endif
     rect.SetWidth(40 * scale);
     rect.SetHeight(40 * scale);
-    m_UITour->AddStep(2 - startIndex, rect, _L("Here to import model files"), "", "userGuide_step3", "", wxRIGHT);
+    m_UITour->AddStep(2 - startIndex, rect, _L_ZH("Here to import model files"), "", "userGuide_step3", "", wxRIGHT);
 
     // step3
     HoverBorderIcon* flushBtn                     = sidebar().autoMap_button();
@@ -2795,19 +3080,19 @@ void GUI_App::startTour(int startIndex)
     wxPoint          screenPos = flushBtn->GetScreenPosition() - p_rect;
     wxRect           resStep3Rect                 = wxRect(screenPos.x, screenPos.y, step3Rect.width + 150 * scale, step3Rect.height);
     
-    m_UITour->AddStep(3 - startIndex, resStep3Rect, _L("Click the Mapping button【"),
-                                   _L("】to map filament colors and types(If the selected device supports multi-color printing)"), "userGuide_step4",
-                               "auto_mapping_disable", wxLEFT);
+    m_UITour->AddStep(3 - startIndex, resStep3Rect, _L_ZH("Click the Mapping button【"),
+                                   _L_ZH("】to map filament colors and types(If the selected device supports multi-color printing)"), "userGuide_step4",
+                               "auto_mapping_dark", wxLEFT);
 
     // step4
     wxRect setp4Rect = canvas->getSlicerBtnRec();
-    m_UITour->AddStep(4 - startIndex, setp4Rect, _L("Click 【Slice plate】 to generate the G-code file for printing"), "",
+    m_UITour->AddStep(4 - startIndex, setp4Rect, _L_ZH("Click 【Slice plate】 to generate the G-code file for printing"), "",
                       "userGuide_step5", "",
                                wxUP);
 
     // step5
     wxRect setp5Rect = canvas->getSenderBtnRec();
-    m_UITour->AddStep(5 - startIndex, setp5Rect, _L("Click 【Send print】, send the file to the selected device and start printing"), "",
+    m_UITour->AddStep(5 - startIndex, setp5Rect, _L_ZH("Click 【Send print】, send the file to the selected device and start printing"), "",
                                "userGuide_step6", "", wxUP);
 
     m_UITour->Start();
@@ -3304,8 +3589,20 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
     // !!! Initialization of UI settings as a language, application color mode, fonts... have to be done before first UI action.
     // Like here, before the show InfoDialog in check_older_app_config()
 
+    bool is_first_run = !boost::filesystem::exists(data_dir() + "/config.ini") || 
+                        app_config->get("language").empty();
+#ifdef __APPLE__
+    if (is_first_run) {
+        // 首次运行时使用系统语言
+        std::string system_lang = get_system_language();
+        app_config->set("language", system_lang);
+        app_config->save();
+    }
+#endif
+
     // If load_language() fails, the application closes.
     load_language(wxString(), true);
+
 #ifdef _MSW_DARK_MODE
 
 #ifndef __WINDOWS__
@@ -3507,44 +3804,48 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
             });
 
         Bind(EVT_ENTER_FORCE_UPGRADE, [this](const wxCommandEvent& evt) {
-                wxString      version_str = wxString::FromUTF8(this->app_config->get("upgrade", "version"));
-                wxString      description_text = wxString::FromUTF8(this->app_config->get("upgrade", "description"));
-                std::string   download_url = this->app_config->get("upgrade", "url");
-                wxString tips = wxString::Format(_L("Click to download new version in default browser: %s"), version_str);
+            if (this->mainframe == nullptr || this->m_is_closing)
+                return;
+            wxString       version_str      = wxString::FromUTF8(this->app_config->get("upgrade", "version"));
+            wxString       description_text = wxString::FromUTF8(this->app_config->get("upgrade", "description"));
+            std::string    download_url     = this->app_config->get("upgrade", "url");
+            wxString       tips             = wxString::Format(_L("Click to download new version in default browser: %s"), version_str);
                 DownloadDialog dialog(this->mainframe,
                     tips,
                     _L("The Creality Print needs an upgrade"),
                     false,
                     wxCENTER | wxICON_INFORMATION);
-                dialog.SetExtendedMessage(description_text);
+            dialog.SetExtendedMessage(description_text);
 
-                int result = dialog.ShowModal();
+            int result = dialog.ShowModal();
                 switch (result)
                 {
                  case wxID_YES:
                      wxLaunchDefaultBrowser(download_url);
                      break;
-                 case wxID_NO:
-                     wxGetApp().mainframe->Close(true);
-                     break;
-                 default:
-                     wxGetApp().mainframe->Close(true);
-                }
-            });
+            case wxID_NO:
+                if (wxGetApp().mainframe)
+                    wxGetApp().mainframe->Close(true);
+                break;
+            case wxID_CANCEL: break;
+            default:
+                break;
+            }
+        });
 
         Bind(EVT_SHOW_NO_NEW_VERSION, [this](const wxCommandEvent& evt) {
-            wxString msg = _L("This is the newest version.");
-            InfoDialog dlg(nullptr, _L("Info"), msg);
-            dlg.ShowModal();
+                    wxString   msg = _L("This is the newest version.");
+                    InfoDialog dlg(nullptr, _L("Info"), msg);
+                    dlg.ShowModal();
         });
 #endif
         Bind(EVT_SHOW_DIALOG, [this](const wxCommandEvent& evt) {
-            wxString msg = evt.GetString();
-            InfoDialog dlg(this->mainframe, _L("Info"), msg);
+                    wxString   msg = evt.GetString();
+                    InfoDialog dlg(this->mainframe, _L("Info"), msg);
             dlg.Bind(wxEVT_DESTROY, [this](auto& e) {
                 m_info_dialog_content = wxEmptyString;
             });
-            dlg.ShowModal();
+                    dlg.ShowModal();
         });
     }
     else {
@@ -3628,7 +3929,7 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
 
     sidebar().obj_list()->init();
     //sidebar().aux_list()->init_auxiliary();
-    mainframe->m_project->init_auxiliary();
+   // mainframe->m_project->init_auxiliary();
 
 //     update_mode(); // !!! do that later
     SetTopWindow(mainframe);
@@ -3657,6 +3958,9 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
 #endif
     mainframe->Show(true);
     BOOST_LOG_TRIVIAL(info) << "main frame firstly shown";
+
+    // 启动用户信息文件监听，确保跨实例同步在线模型库登录状态
+    start_user_info_watcher();
 
 //#if BBL_HAS_FIRST_PAGE
     //BBS: set tp3DEditor firstly
@@ -4243,6 +4547,11 @@ void GUI_App::Update_dark_mode_flag()
 {
     m_is_dark_mode = dark_mode();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": switch the current dark mode status to %1% ")%m_is_dark_mode;
+
+    // 当主题偏好被切换时，仅刷新 Cookies（UA 仅在初始化设置）
+    if (mainframe && mainframe->get_modellibrary_view()) {
+        mainframe->get_modellibrary_view()->UpdateUserAgent();
+    }
 }
 
 void GUI_App::UpdateDlgDarkUI(wxDialog* dlg)
@@ -4714,9 +5023,10 @@ void GUI_App::ShowDownNetPluginDlg() {
     }
 }
 
-void GUI_App::ShowUserLogin(bool show)
+void GUI_App::ShowUserLogin(bool show,const wxString& loginUrl)
 {
-    // BBS: User Login Dialog
+#if 0
+        // BBS: User Login Dialog
     if (show) {
         try {
             if (!login_dlg)
@@ -4733,6 +5043,34 @@ void GUI_App::ShowUserLogin(bool show)
         if (login_dlg)
             login_dlg->EndModal(wxID_OK);
     }
+#else
+    //// CP: User Login Dialog
+    if (show) {
+        try {
+            // 使用CallAfter避免WebView2重入问题
+            CallAfter([this, loginUrl]() {
+                if (m_login_dialog) {
+                    m_login_dialog->Destroy();
+                    m_login_dialog = nullptr;
+                }
+                m_login_dialog = new LoginDialog(mainframe, _("Login"));
+                m_login_dialog->ShowLoginDialog(loginUrl);
+                if (m_login_dialog->ShowModal() == wxID_OK) {
+                    // 登录成功后更新登录信息
+                    //get_login_info();
+                }
+                // 对话框关闭后清理指针
+                if (m_login_dialog) {
+                    m_login_dialog->Destroy();
+                    m_login_dialog = nullptr;
+                }
+            });
+        } catch (std::exception &e) {
+            ;
+        }
+    }
+#endif
+    // 注意：show=false的情况不再需要处理，因为LoginDialog是模态对话框
 }
 
 
@@ -4957,7 +5295,7 @@ wxString GUI_App::transition_tridid(int trid_id)
 void GUI_App::request_login(bool show_user_info)
 {
 #if !AUTO_CONVERT_3MF
-    ShowUserLogin();
+    ShowUserLogin(true, wxT("https://www.creality.com/pages/login"));
 
     if (show_user_info) {
         get_login_info();
@@ -5010,7 +5348,7 @@ bool GUI_App::check_login()
     }
 
     if (!result) {
-        ShowUserLogin();
+        ShowUserLogin(true, wxT("https://www.creality.com/pages/login"));
     }
     return result;
 }
@@ -5361,15 +5699,7 @@ bool UpdateParamPackage(pt::ptree v,json& profile_json,json& cache_json,json& ma
                                                                             .append("machine")
                                                                             .append(printer_model + ".json")
                                                                             .string();
-                        auto machine_model_lists = profile_json["machine_model_list"];  
-                        bool bFound = false;
-                        for(auto& model : machine_model_lists){
-                            if(model["name"].get<std::string>()==printer_model){
-                                bFound = true;
-                                break;
-                            }
-                        }
-                        if(!bFound){
+                        if(!fs::exists(out_machine_model_json_file)){
                             json json_out;
                             json_out["type"] = "machine_model";
                             json_out["name"] = printer_model;
@@ -5790,8 +6120,15 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         this->request_open_project(project_id.value());
                     }
                 }
-            }
-            else if (command_str.compare("get_login_info") == 0) {
+            } else if (command_str.compare("trigger_login_check") == 0) {
+                json tmp_res;
+                tmp_res["command"] = "trigger_login_check";
+                tmp_res["context"] = "3mf_download_login";
+
+                wxString tmp_str = wxString::Format("window.handleStudioCmd(%s)", tmp_res.dump(-1, ' ', true));
+                GUI::wxGetApp().run_script(tmp_str);
+                
+            } else if (command_str.compare("get_login_info") == 0) {
                 CallAfter([this] {
                         get_login_info();
                     });
@@ -5923,6 +6260,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     input.emplace_back(v.second.data());
                 }
                 bool old_login = m_user.bLogin;
+                wxString old_token = m_user.token;
+                wxString old_uid = m_user.userId;
                 if (4 <= input.size()) {
                     m_user.token    = input[0];
                     m_user.nickName = input[1];
@@ -5943,9 +6282,20 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 }
                 app_config->set("cloud", "user_id", m_user.userId);
                 app_config->set("cloud", "token", m_user.token);
-                
-                if (old_login == m_user.bLogin)
+
+                // 仅在登录状态发生变化时刷新模型库视图（避免不必要的刷新）。
+                 const bool login_unchanged = (old_login == m_user.bLogin);
+                const bool token_unchanged = (old_token == m_user.token);
+                const bool uid_unchanged   = (old_uid   == m_user.userId);
+                if (login_unchanged && token_unchanged && uid_unchanged)
                     return "";
+                if (mainframe && mainframe->get_modellibrary_view()) {
+                    mainframe->get_modellibrary_view()->UpdateUserAgent();
+                }
+                // 统一刷新社区主页与在线模型库视图，并广播跨实例消息
+                //this->reload_homepage();
+                this->reload_region_sensitive_views();
+                send_app_message("CP_LOGIN_STATUS_CHANGED", true);
                 
                 if (preset_bundle)
                     preset_bundle->remove_users_preset(*app_config);
@@ -6139,10 +6489,10 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         model_downloaders_[userId]->start_download_model_group(url, modelId, fileId, fileFormat, fileName);
                     }
                 }
-              
+
             }
 
-             else if (command_str.compare("3mf_download_start") == 0) {
+            else if (command_str.compare("3mf_download_start") == 0) {
                 std::string userId = root.get_child("userId").data();
                 if (model_downloaders_.find(userId) == model_downloaders_.cend()) {
                     model_downloaders_.emplace(userId, std::make_unique<ModelDownloader>(userId));
@@ -6155,7 +6505,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     std::string url        = v.get_child("url").data();
                     std::string fileId     = v.get_child("fileId").data();
                     std::string fileFormat = v.get_child("fileFormat").data();
-                    std::string name = v.get_child("name").data();
+                    std::string name       = v.get_child("name").data();
                     if (!name.empty()) {
                         name = std::regex_replace(name, std::regex("\n"), "");
                         //name.pop_back();
@@ -6165,12 +6515,32 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     //wxGetApp().request_model_download(wxUrl);
                     AnalyticsDataUploadManager::getInstance().mark_analytics_project_info(url, modelId, fileId, fileFormat, name);
                     model_downloaders_[userId]->start_download_3mf_group(url, modelId, fileId, fileFormat, name);
+                    // 始终显示 3MF 下载进度窗口；若存在遗留的同类窗口，先结束它。
+                    wxGetApp().CallAfter([userId, fileId]() {
+                        for (auto dialog : dialogStack) {
+                            if (auto *cdp = dynamic_cast<Slic3r::GUI::CloudDownloadProgressDialog *>(dialog)) {
+                                if (cdp->IsModal()) {
+                                    cdp->EndModal(wxID_ABORT);
+                                }
+                            }
+                        }
+
+#ifndef _WIN32
+                        auto *dlg = new Slic3r::GUI::CloudDownloadProgressDialog(_L("Downloading 3MF Project"), userId, fileId);
+                        dlg->Show(true);
+#else
+                        Slic3r::GUI::CloudDownloadProgressDialog dlg(_L("Downloading 3MF Project"), userId, fileId);
+                        int rc = dlg.ShowModal();
+                        if (wxGetApp().mainframe && !wxGetApp().mainframe->IsEnabled())
+                            wxGetApp().mainframe->Enable(true);
+                        (void)rc;
+#endif
+                    });
                     
                 }
 
             }
 
-             
             else if (command_str.compare("models_download_state") == 0) {
                 std::string userId = root.get_child("userId").data();
 
@@ -6195,8 +6565,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     j["3mfs"] = json::array();
                 }
                 return j.dump(-1, ' ', true);
-            }
-            else if (command_str.compare("models_download_delete") == 0) {
+            } else if (command_str.compare("models_download_delete") == 0) {
                 std::string userId = root.get_child("userId").data();
 
                 if (model_downloaders_.find(userId) == model_downloaders_.cend()) {
@@ -6206,8 +6575,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 for (auto& v : data_node) {
                     model_downloaders_[userId]->cancel_download_model_group(v.second.data());
                 }
-            } 
-            else if (command_str.compare("3mfs_download_delete") == 0) {
+            } else if (command_str.compare("3mfs_download_delete") == 0) {
                 std::string userId = root.get_child("userId").data();
 
                 if (model_downloaders_.find(userId) == model_downloaders_.cend()) {
@@ -6238,7 +6606,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                        target_path.parent_path().string(), false);*/
                 }
             }
-            
+
             else if (command_str.compare("models_download_import") == 0) {
                 pt::ptree                data_node = root.get_child("paths");
                 std::vector<std::string> input_files;
@@ -6350,16 +6718,18 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     json j               = json::parse(body);
                     json_res["error"]    = "";
                     json_res["response"] = j;
-                    auto response_js = wxString::Format("window.handleStudioCmd(\"%s\")", wxString::FromUTF8(escapeForJS(json_res.dump())));
-                    run_script(response_js);
+                    auto response_js = wxString::Format("window.handleStudioCmd(JSON.parse(\"%s\"))",
+                        wxString::FromUTF8(escapeForJS(json_res.dump())));
+                        run_script(response_js);
                 };
 
                 auto on_error_func = [&](std::string body, std::string error, unsigned status) {
                     json j               = json::parse(body);
                     json_res["error"]    = error;
                     json_res["response"] = body;
-                    auto response_js     = wxString::Format("window.handleStudioCmd(\"%s\")", wxString::FromUTF8(escapeForJS(json_res.dump())));
-                    run_script(response_js);
+                     auto response_js = wxString::Format("window.handleStudioCmd(JSON.parse(\"%s\"))",
+                        wxString::FromUTF8(escapeForJS(json_res.dump())));
+                        run_script(response_js);
                 };
 
                 std::string method = info_node.get_child("method").data();
@@ -6515,15 +6885,13 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 }
                 UpdateParams::getInstance().hasUpdateParams();
                 });
-            }
-            else if(command_str.compare("refresh_all_device") == 0){
+            } else if (command_str.compare("refresh_all_device") == 0) {
                 CallAfter([this] { 
                 if (wxGetApp().mainframe->get_printer_mgr_view()) {
                     wxGetApp().mainframe->get_printer_mgr_view()->request_refresh_all_device();
                 }
                 });
-            }
-            else if (command_str.compare("update_devices_list") == 0) {
+            } else if (command_str.compare("update_devices_list") == 0) {
                 boost::thread _thread = Slic3r::create_thread([this] {
                     std::vector<std::string> prefix;
                     prefix.push_back("CXSWBox");
@@ -6552,23 +6920,21 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     wxGetApp().CallAfter([this, strJS] { run_script(strJS.ToStdString()); });
                 });
             } else if (command_str.compare("get_is_first_install") == 0) {
-                   std::string res = app_config->get("is_first_install");
-                   nlohmann::json dataJson;
-                   nlohmann::json commandJson;
-                   bool onlyDefault = preset_bundle->printers.only_default_printers();
-                   if (res == "1")
-                   {
-                       dataJson["deviceAddEnd"] = "1";   
-                       commandJson["command"] = "get_is_first_install";
-                       commandJson["data"]    = dataJson;
-                   } else {
-                       if (onlyDefault)
-                       {
-                           dataJson["deviceAddEnd"] = "0";
-                           commandJson["command"]   = "get_is_first_install";
-                           commandJson["data"]      = dataJson;
+                std::string    res = app_config->get("is_first_install");
+                nlohmann::json dataJson;
+                nlohmann::json commandJson;
+                bool           onlyDefault = preset_bundle->printers.only_default_printers();
+                if (res == "1") {
+                    dataJson["deviceAddEnd"] = "1";
+                    commandJson["command"]   = "get_is_first_install";
+                    commandJson["data"]      = dataJson;
+                } else {
+                    if (onlyDefault) {
+                        dataJson["deviceAddEnd"] = "0";
+                        commandJson["command"]   = "get_is_first_install";
+                        commandJson["data"]      = dataJson;
 
-                            if (!m_appconfig_new)
+                        if (!m_appconfig_new)
                             m_appconfig_new = new AppConfig();
                         #ifdef WIN32
                            wxGetApp().mainframe->topbar()->DisableGuideModeItems();
@@ -6898,7 +7264,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 m_appconfig_new = nullptr;
 
                 app_config->set("is_first_install", "1");
-                mainframe->select_tab(size_t(1));
+                mainframe->select_tab(size_t(MainFrame::tp3DEditor));
                 mainframe->m_topbar->SetSelection(size_t(MainFrame::tp3DEditor));
                 send_result(1);
                 CallAfter([this] {
@@ -6927,7 +7293,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     });
                     tour_timer->StartOnce(1000);
                 });
-                
+
             } else if (command_str.compare("get_devices_info") == 0) {
                 json res;
                 webGetDevicesInfo(res);
@@ -7503,7 +7869,7 @@ void GUI_App::show_check_privacy_dlg(wxCommandEvent& evt)
 {
     int online_login = evt.GetInt();
     
-    PrivacyUpdateDialog privacy_dlg(this->mainframe, wxID_ANY, _L("User Experience Improvement Program1"));
+    PrivacyUpdateDialog privacy_dlg(this->mainframe, wxID_ANY, _L("User Experience Improvement Program"));
     privacy_dlg.Bind(EVT_PRIVACY_UPDATE_CONFIRM, [this, online_login](wxCommandEvent &e) {
         std::string version = std::string(CREALITYPRINT_VERSION);
         if (privacyData.contains("list") && !privacyData["list"].is_null()) {
@@ -7599,6 +7965,40 @@ void GUI_App::reinit_downloader()
     if (model_downloaders_.find(user_id) != model_downloaders_.cend()) {
         model_downloaders_[user_id]->init();
     }
+}
+
+int GUI_App::get_3mf_download_progress(const std::string& user_id, const std::string& file_id)
+{
+    auto it = model_downloaders_.find(user_id);
+    if (it == model_downloaders_.cend()) {
+        model_downloaders_.emplace(user_id, std::make_unique<ModelDownloader>(user_id));
+        it = model_downloaders_.find(user_id);
+    }
+
+    auto cache_json = it->second->get_cache_json();
+    if (cache_json.is_object() && cache_json.contains("3mfs")) {
+        for (auto &file : cache_json["3mfs"]) {
+            try {
+                const std::string fid = file["fileId"].get<std::string>();
+                if (fid == file_id) {
+                    return file["progress"].get<int>();
+                }
+            } catch (...) {
+                // ignore malformed entries
+            }
+        }
+    }
+    return 0;
+}
+
+void GUI_App::cancel_3mf_download(const std::string& user_id, const std::string& file_id)
+{
+    auto it = model_downloaders_.find(user_id);
+    if (it == model_downloaders_.cend()) {
+        model_downloaders_.emplace(user_id, std::make_unique<ModelDownloader>(user_id));
+        it = model_downloaders_.find(user_id);
+    }
+    it->second->cancel_download_3mf_group(file_id);
 }
 void GUI_App::on_check_privacy_update(wxCommandEvent& evt)
 {
@@ -8973,6 +9373,8 @@ bool GUI_App::select_language()
 bool GUI_App::load_language(wxString language, bool initial)
 {
     BOOST_LOG_TRIVIAL(info) << boost::format("%1%: language %2%, initial: %3%") %__FUNCTION__ %language %initial;
+    
+    AICloudService::getInstance()->cleanup();
     if (initial) {
     	// There is a static list of lookup path prefixes in wxWidgets. Add ours.
 	    wxFileTranslationsLoader::AddCatalogLookupPathPrefix(from_u8(localization_dir()));
@@ -9121,6 +9523,11 @@ bool GUI_App::load_language(wxString language, bool initial)
 
     if (! wxLocale::IsAvailable(language_info->Language)) {
     	// Loading the language dictionary failed.
+        BOOST_LOG_TRIVIAL(warning) << "load_language: locale not available. requested locale=" << language_info->CanonicalName.ToUTF8().data()
+                                   << ", dict_lang=" << static_cast<int>(language_dict)
+                                   << ", initial=" << (initial ? "true" : "false")
+                                   << ", config.language=" << app_config->get("language");
+        boost::log::core::get()->flush();
     	wxString message = "Switching  CrealityPrint to language " + language_info->CanonicalName + " failed.";
         bool     had_C_lang_set = false;
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -9148,6 +9555,11 @@ bool GUI_App::load_language(wxString language, bool initial)
     // to load possibly different dictionary, for example, load Czech dictionary for Slovak language.
     wxTranslations::Get()->SetLanguage(language_dict);
     m_wxLocale->AddCatalog(SLIC3R_PROCESS_NAME);
+    BOOST_LOG_TRIVIAL(warning) << "load_language: wxLocale initialized. canonical=" << m_wxLocale->GetCanonicalName().ToUTF8().data()
+                               << ", locale=" << m_wxLocale->GetLocale().ToUTF8().data()
+                               << ", dict_lang=" << static_cast<int>(language_dict)
+                               << ", initial=" << (initial ? "true" : "false");
+    boost::log::core::get()->flush();
     m_imgui->set_language(into_u8(language_info->CanonicalName));
     //use the language to dump the log
     GlobalConfig::getInstance()->setCurrentLanguage(into_u8(language_info->CanonicalName));
@@ -10960,19 +11372,65 @@ void GUI_App::start_download(std::string url)
 
 }
 
-bool is_support_filament(int extruder_id)
+bool is_soluble_filament(int extruder_id)
 {
-    auto &filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;
-    auto &filaments        = Slic3r::GUI::wxGetApp().preset_bundle->filaments;
+    auto& filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;
+    auto& filaments = Slic3r::GUI::wxGetApp().preset_bundle->filaments;
 
     if (extruder_id >= filament_presets.size()) return false;
 
-    Slic3r::Preset *filament = filaments.find_preset(filament_presets[extruder_id]);
+    Slic3r::Preset* filament = filaments.find_preset(filament_presets[extruder_id]);
     if (filament == nullptr) return false;
 
-    Slic3r::ConfigOptionBools *support_option = dynamic_cast<Slic3r::ConfigOptionBools *>(filament->config.option("filament_is_support"));
+    Slic3r::ConfigOptionBools* support_option = dynamic_cast<Slic3r::ConfigOptionBools*>(filament->config.option("filament_soluble"));
     if (support_option == nullptr) return false;
 
+    return support_option->get_at(0);
+};
+
+bool has_filaments(const std::vector<string>& model_filaments) {
+    auto& filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;
+    auto model_objects = Slic3r::GUI::wxGetApp().plater()->model().objects;
+    const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
+    Model::setExtruderParams(config, filament_presets.size());
+
+    auto get_filament_name = [](int id) { return Model::extruderParamsMap.find(id) != Model::extruderParamsMap.end() ? Model::extruderParamsMap.at(id).materialName : "PLA"; };
+    for (const ModelObject* mo : model_objects) {
+        for (auto vol : mo->volumes) {
+            auto ve = vol->get_extruders();
+            for (auto id : ve) {
+                auto name = get_filament_name(id);
+                if (find(model_filaments.begin(), model_filaments.end(), name) != model_filaments.end()) return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool is_support_filament(int extruder_id, bool strict_check)
+{
+    auto& filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;
+    auto& filaments = Slic3r::GUI::wxGetApp().preset_bundle->filaments;
+
+    if (extruder_id >= filament_presets.size()) return false;
+
+    Slic3r::Preset* filament = filaments.find_preset(filament_presets[extruder_id]);
+    if (filament == nullptr) return false;
+
+    std::string filament_type = filament->config.option<ConfigOptionStrings>("filament_type")->values[0];
+
+    Slic3r::ConfigOptionBools* support_option = dynamic_cast<Slic3r::ConfigOptionBools*>(filament->config.option("filament_is_support"));
+
+    if (!strict_check && (filament_type == "PETG" || filament_type == "PLA")) {
+        std::vector<string> model_filaments;
+        if (filament_type == "PETG")
+            model_filaments.emplace_back("PLA");
+        else {
+            model_filaments = { "PETG", "TPU", "TPU-AMS" };
+        }
+        if (has_filaments(model_filaments)) return true;
+    }
+    if (support_option == nullptr) return false;
     return support_option->get_at(0);
 };
 
@@ -11079,6 +11537,60 @@ int GUI_App::load_machine_preset_data()
 //mouse scheme
 void GUI_App::on_interinstance_message(const std::string& msg)
 {
+    // 登录状态变更：优先同步本实例的账号信息（从 user_info.json 读取），
+    // 再刷新社区与模型库视图，确保多实例的 token/cookies 一致。
+    if (msg == std::string("CP_LOGIN_STATUS_CHANGED")) {
+        try {
+            auto user_file = fs::path(data_dir()).append("user_info.json");
+            if (fs::exists(user_file)) {
+                nlohmann::json j;
+                boost::nowide::ifstream ifs(user_file.string());
+                ifs >> j;
+
+                UserInfo user;
+                user.token    = j.value("token", "");
+                user.nickName = j.value("nickName", "");
+                user.avatar   = j.value("avatar", "");
+                user.userId   = j.value("userId", "");
+
+                m_user.token    = user.token;
+                m_user.nickName = user.nickName;
+                m_user.avatar   = user.avatar;
+                m_user.userId   = user.userId;
+                m_user.bLogin   = !m_user.token.empty();
+
+                app_config->set("cloud", "user_id", m_user.userId);
+                app_config->set("cloud", "token", m_user.token);
+            } else {
+                // 文件不存在表示登出，清空本实例的账号信息
+                m_user.token.clear();
+                m_user.nickName.clear();
+                m_user.avatar.clear();
+                m_user.userId.clear();
+                m_user.bLogin = false;
+                app_config->set("cloud", "user_id", m_user.userId);
+                app_config->set("cloud", "token", m_user.token);
+            }
+        } catch (...) {
+            // 解析失败时不中断流程，仅继续刷新以尽量保持一致
+        }
+
+        // 刷新模型库 UA 与 Cookies（依赖 app_config 的最新 token/uid）
+        if (mainframe && mainframe->get_modellibrary_view()) {
+            mainframe->get_modellibrary_view()->UpdateUserAgent();
+        }
+        // 刷新社区与模型库视图，避免手动 F5
+        this->reload_homepage();
+        this->reload_region_sensitive_views();
+
+        // 同步刷新设备管理页，确保云设备组在多实例登录变更后立即更新
+        if (mainframe && mainframe->get_printer_mgr_view()) {
+            wxGetApp().CallAfter([this] {
+                if (mainframe) mainframe->refresh_device_page();
+            });
+        }
+        return;
+    }
     static constexpr const char* kPrefix = "CP_MOUSE_SCHEME=";
     if (msg.rfind(kPrefix, 0) == 0) { 
         int scheme = 0;
@@ -11113,3 +11625,90 @@ void GUI_App::on_interinstance_message(const std::string& msg)
 
 } // GUI
 } //Slic3r
+void GUI_App::OpenEshopRecommendedGoods(const std::string& materialColor, const std::string& materialType, const std::string& materialName)
+{
+    using nlohmann::json;
+    // Region code (used for site and CN shortcut)
+    std::string country_code;
+    // try {
+    //     country_code = wxGetApp().app_config->get_country_code();
+    //     // CN: open Tmall directly
+    //     if (country_code == "CN") {
+    //         wxLaunchDefaultBrowser(wxString::FromUTF8("https://creality3d.tmall.com/"));
+    //         return;
+    //     }
+    // } catch (...) {
+    //     // If region detection fails, continue with normal flow
+    //     country_code.clear();
+    // }
+
+    // if (materialColor.empty()) {
+    //     wxLogError("OpenEshopRecommendedGoods: materialColor is required by protocol");
+    //     return;
+    // }
+    country_code = wxGetApp().app_config->get_country_code();
+    // API endpoint from protocol document
+    std::string base_url = get_cloud_api_url();
+    std::string endpoint = "/api/rest/lottery/eshop/dtc/filaments/getRecommendedGoods";
+    std::string api_url  = base_url + endpoint;
+    // Build request body: array of item objects per protocol
+    json body = json::array();
+    json data = json::object();
+    if (!materialType.empty())
+        data["materialType"] = materialType;
+    if (!materialName.empty())
+        data["materialName"] = materialName;
+    data["materialColor"] = materialColor;
+    data["site"] = country_code;
+    // Required tracking fields
+    data["utm_source"] = "creality_cloud";
+    data["utm_medium"] = "creality_print";
+    body.push_back(data);
+    // Set required headers and post request
+    Http::set_extra_headers(this->get_extra_header());
+    Http http = Http::post(api_url);
+    http.header("Content-Type", "application/json");
+    http.set_post_body(body.dump());
+
+    http.on_complete([this](std::string resp_body, unsigned http_status) {
+        try {
+            auto j    = json::parse(resp_body);
+            int  code = j.value("code", -1);
+            if (http_status >= 200 && http_status < 300 && code == 0) {
+                if (!j.contains("result")) {
+                    wxLogWarning("OpenEshopRecommendedGoods: result missing in response");
+                    return;
+                }
+                const auto& result = j.at("result");
+                std::string goodsUrl;
+                if (result.is_array()) {
+                    for (const auto& item : result) {
+                        if (item.is_object()) {
+                            auto url = item.value("goodsUrl", std::string());
+                            if (!url.empty()) { goodsUrl = url; break; }
+                        }
+                    }
+                } else if (result.is_object()) {
+                    goodsUrl = result.value("goodsUrl", std::string());
+                }
+
+                if (!goodsUrl.empty()) {
+                    wxString url = wxString::FromUTF8(goodsUrl);
+                    wxLaunchDefaultBrowser(url);
+                    return;
+                }
+                wxLogWarning("OpenEshopRecommendedGoods: goodsUrl missing in result");
+            } else {
+                wxLogWarning("OpenEshopRecommendedGoods: http=%u code=%d body=%s", http_status, code, wxString::FromUTF8(resp_body));
+            }
+        } catch (std::exception& e) {
+            wxLogError("OpenEshopRecommendedGoods: parse error: %s", e.what());
+        }
+    })
+        .on_error([this](std::string body, std::string error, unsigned http_status) {
+            wxLogError("OpenEshopRecommendedGoods: request failed http=%u error=%s", http_status, error);
+        })
+        .timeout_connect(TIMEOUT_CONNECT)
+        .timeout_max(TIMEOUT_RESPONSE)
+        .perform();
+}

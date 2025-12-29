@@ -1,6 +1,7 @@
 #include "BedShapeDialog.hpp"
 #include "GUI_App.hpp"
 #include "OptionsGroup.hpp"
+#include "Tab.hpp"
 
 #include <wx/wx.h> 
 #include <wx/numformatter.h>
@@ -63,6 +64,8 @@ void BedShape::append_option_line(ConfigOptionsGroupShp optgroup, Parameter para
     case Parameter::Diameter:
         def.type = coFloat;
         def.set_default_value(new ConfigOptionFloat(200));
+        def.min = 1;
+        def.max = 2000; // clamp to sane range to avoid runaway geometry
         def.sidetext = L("mm");
         def.label = get_option_label(param);
         def.tooltip = L("Diameter of the print bed. It is assumed that origin (0,0) is located in the center.");
@@ -153,6 +156,26 @@ void BedShapeDialog::build_dialog(const ConfigOptionPoints& default_pt, const Co
     }));
 }
 
+void BedShapeDialog::EndModal(int ret)
+{
+    if (ret == wxID_OK) {
+        auto preset = wxGetApp().preset_bundle;
+        if (preset) {
+            double& width  = preset->prints.get_edited_preset().config.opt_float("prime_tower_width");
+            double  x_size = m_panel->m_shape[2].x() - m_panel->m_shape[0].x();
+            double  y_size = m_panel->m_shape[2].y() - m_panel->m_shape[0].y();
+
+            if (width > std::max(x_size, y_size)) {
+                width = std::max(x_size, y_size);
+                Tab* print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT);
+                if (print_tab)
+                    print_tab->reload_config();
+            }
+        }
+    }
+    wxDialog::EndModal(ret);
+}
+
 void BedShapeDialog::on_dpi_changed(const wxRect &suggested_rect)
 {
     const int& em = em_unit();
@@ -161,12 +184,21 @@ void BedShapeDialog::on_dpi_changed(const wxRect &suggested_rect)
     for (auto og : m_panel->m_optgroups)
         og->msw_rescale();
 
-    const wxSize& size = wxSize(50 * em, -1);
+    // Avoid passing negative height to GTK. Use current or a sensible default.
+    int desired_width  = 50 * em;
+    int current_height = GetSize().GetHeight();
+    if (current_height <= 0) {
+        // Fallback to a DPI-aware default height.
+        current_height = std::max(FromDIP(500), em * 40);
+    }
+    const wxSize size(desired_width, current_height);
 
     SetMinSize(size);
     SetSize(size);
-
+    // Re-layout to avoid excessive paint storms on GTK; prefer Layout over pure Refresh.
+    Layout();
     Refresh();
+    Update();
 }
 
 const std::string BedShapePanel::NONE = "None";
@@ -227,7 +259,8 @@ void BedShapePanel::build_panel(const ConfigOptionPoints& default_pt, const std:
 	// right pane with preview canvas
 	m_canvas = new Bed_2D(this);
     m_canvas->Bind(wxEVT_PAINT, [this](wxPaintEvent& e) { m_canvas->repaint(m_shape); });
-    m_canvas->Bind(wxEVT_SIZE, [this](wxSizeEvent& e) { m_canvas->Refresh(); });
+    // On GTK, not skipping size events can block default handling and cause UI stalls.
+    m_canvas->Bind(wxEVT_SIZE, [this](wxSizeEvent& e) { m_canvas->Refresh(); e.Skip(); });
 
     wxSizer* left_sizer = new wxBoxSizer(wxVERTICAL);
     left_sizer->Add(sbsizer, 0, wxEXPAND);

@@ -10,7 +10,7 @@
 #include "GCodeProcessor.hpp"
 #include "BoundingBox.hpp"
 #include "LocalesUtils.hpp"
-
+#include "Triangulation.hpp"
 
 namespace Slic3r
 {
@@ -1743,5 +1743,99 @@ bool WipeTower::need_thick_bridge_flow(float pos_y) const {
     }
     return false;
 }
+
+float WipeTower::get_auto_brim_by_height(float max_height)
+{
+    if (max_height < 100)
+        return max_height / 100.f * 8.f;
+    return 8.f;
+}
+
+float WipeTower::get_limit_depth_by_height(float max_height)
+{
+    float min_wipe_tower_depth = 0.f;
+    auto  iter                 = WipeTower::min_depth_per_height.begin();
+    while (iter != WipeTower::min_depth_per_height.end()) {
+        auto curr_height_to_depth = *iter;
+
+        // This is the case that wipe tower height is lower than the first min_depth_to_height member.
+        if (curr_height_to_depth.first >= max_height) {
+            min_wipe_tower_depth = curr_height_to_depth.second;
+            break;
+        }
+
+        iter++;
+
+        // If curr_height_to_depth is the last member, use its min_depth.
+        if (iter == WipeTower::min_depth_per_height.end()) {
+            min_wipe_tower_depth = curr_height_to_depth.second;
+            break;
+        }
+
+        // If wipe tower height is between the current and next member, set the min_depth as linear interpolation between them
+        auto next_height_to_depth = *iter;
+        if (next_height_to_depth.first > max_height) {
+            float height_base    = curr_height_to_depth.first;
+            float height_diff    = next_height_to_depth.first - curr_height_to_depth.first;
+            float min_depth_base = curr_height_to_depth.second;
+            float depth_diff     = next_height_to_depth.second - curr_height_to_depth.second;
+
+            min_wipe_tower_depth = min_depth_base + (max_height - curr_height_to_depth.first) / height_diff * depth_diff;
+            break;
+        }
+    }
+    return min_wipe_tower_depth;
+}
+
+Vec2f WipeTower::move_box_inside_box(const BoundingBox& box1, const BoundingBox& box2, int scaled_offset)
+{
+    Vec2f res{0, 0};
+    if (box1.size()[0] >= box2.size()[0] - 2 * scaled_offset || box1.size()[1] >= box2.size()[1] - 2 * scaled_offset)
+        return res;
+
+    if (box1.max[0] > box2.max[0] - scaled_offset) {
+        res[0] = unscaled<float>((box2.max[0] - scaled_offset) - box1.max[0]);
+    } else if (box1.min[0] < box2.min[0] + scaled_offset) {
+        res[0] = unscaled<float>((box2.min[0] + scaled_offset) - box1.min[0]);
+    }
+
+    if (box1.max[1] > box2.max[1] - scaled_offset) {
+        res[1] = unscaled<float>((box2.max[1] - scaled_offset) - box1.max[1]);
+    } else if (box1.min[1] < box2.min[1] + scaled_offset) {
+        res[1] = unscaled<float>((box2.min[1] + scaled_offset) - box1.min[1]);
+    }
+    return res;
+}
+
+
+
+TriangleMesh WipeTower::its_make_cone_brim(const Polygon& brim, float layer_height)
+{
+    TriangleMesh res;
+    int          offset = brim.size();
+    res.its.vertices.reserve(brim.size() * 2);
+    auto faces = Triangulation::triangulate(brim);
+    res.its.indices.reserve(brim.size() * 2 + 2 * faces.size());
+    for (auto& t : faces)
+        res.its.indices.push_back({t[1], t[0], t[2]});
+    for (auto& t : faces)
+        res.its.indices.push_back({t[0] + offset, t[1] + offset, t[2] + offset});
+
+    for (int i = 0; i < brim.size(); i++)
+        res.its.vertices.push_back({unscaled<float>(brim[i][0]), unscaled<float>(brim[i][1]), 0});
+    for (int i = 0; i < brim.size(); i++)
+        res.its.vertices.push_back({unscaled<float>(brim[i][0]), unscaled<float>(brim[i][1]), layer_height});
+
+    for (int i = 0; i < offset; i++) {
+        int a = i;
+        int b = (i + 1) % offset;
+        int c = i + offset;
+        int d = b + offset;
+        res.its.indices.push_back({a, b, c});
+        res.its.indices.push_back({d, c, b});
+    }
+    return res;
+}
+
 
 } // namespace Slic3r

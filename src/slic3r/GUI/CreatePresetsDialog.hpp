@@ -319,6 +319,7 @@ public:
         wxBoxSizer*                sizer    = nullptr;
         HoveableCheckbox*          checkbox = nullptr;
         wxString                   name     = "";
+        wxString                   name_ascii = "";
         std::list<ExportCheckbox*> lstPrinterPresetParam;
         std::list<ExportCheckbox*> lstFilamentPresetParam;
         std::list<ExportCheckbox*> lstProcessPresetParam;

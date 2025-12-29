@@ -70,6 +70,13 @@ public:
     void set_analytics_project_info_valid(bool valid);
     void clear_analytics_project_info();
 
+    // slice822 click event logging
+    // Parameters:
+    //  - module: module name (function_module)
+    //  - id: module id (module_id)
+    // Builds payload: { slice822: { event_type, function_module, module_id, app_version, operating_system, timestamp } }
+    static void uploadSlice822ClickEvent(const std::string& module, int id=1);
+
 private:
     AnalyticsDataUploadManager();
 

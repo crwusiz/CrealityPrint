@@ -111,7 +111,7 @@ wxMenuItem* append_menu_item(wxMenu* menu, int id, const wxString& string, const
 }
 
 wxMenuItem* append_submenu(wxMenu* menu, wxMenu* sub_menu, int id, const wxString& string, const wxString& description, const std::string& icon,
-    std::function<bool()> const cb_condition, wxWindow* parent)
+    std::function<bool()> const cb_condition, wxWindow* parent, int insert_pos/*= wxNOT_FOUND*/)
 {
     if (id == wxID_ANY)
         id = wxNewId();
@@ -125,7 +125,10 @@ wxMenuItem* append_submenu(wxMenu* menu, wxMenu* sub_menu, int id, const wxStrin
 #endif /* __WXMSW__ */
     }
 
-    menu->Append(item);
+    if (insert_pos == wxNOT_FOUND || insert_pos >= (int)menu->GetMenuItemCount())
+        menu->Append(item);
+    else
+        menu->Insert(insert_pos, item);
 
     if (parent) {
         parent->Bind(wxEVT_UPDATE_UI, [cb_condition, item, parent](wxUpdateUIEvent& evt) {

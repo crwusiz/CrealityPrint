@@ -133,6 +133,8 @@ struct PrintObjectTrafoAndInstances
 {
     Transform3d    	trafo;
     PrintInstances	instances;
+    Vec3d           trafo_offset;
+    Transform3d     belt_tranfo;
     bool operator<(const PrintObjectTrafoAndInstances &rhs) const { return transform3d_lower(this->trafo, rhs.trafo); }
 };
 
@@ -151,11 +153,13 @@ static std::vector<PrintObjectTrafoAndInstances> print_objects_from_model_object
             // Orca: Updated with XYZ filament shrinkage compensation
             Geometry::Transformation model_instance_transformation = model_instance->get_transformation();
             trafo.trafo = model_instance_transformation.get_matrix_with_applied_shrinkage_compensation(shrinkage_compensation);
+            trafo.trafo_offset = model_instance_transformation.get_offset();
 
             auto shift = Point::new_scale(trafo.trafo.data()[12], trafo.trafo.data()[13]);
             // Reset the XY axes of the transformation.
             trafo.trafo.data()[12] = 0;
             trafo.trafo.data()[13] = 0;
+            //trafo.trafo.data()[14] = 0;
             // Search or insert a trafo.
             auto it = trafos.emplace(trafo).first;
             const_cast<PrintObjectTrafoAndInstances&>(*it).instances.emplace_back(PrintInstance{ nullptr, model_instance, shift });
@@ -458,6 +462,7 @@ struct PrintObjectStatus {
         id(print_object->model_object()->id()),
         print_object(print_object),
         trafo(print_object->trafo()),
+        /*belt_offset(print_object->belt_offset()),*/
         status(status) {}
     PrintObjectStatus(ObjectID id) : id(id), print_object(nullptr), trafo(Transform3d::Identity()), status(Unknown) {}
 
@@ -467,6 +472,7 @@ struct PrintObjectStatus {
     PrintObject     *print_object;
     // Trafo generated with model_object->world_matrix(true)
     Transform3d      trafo;
+    //Vec3d            belt_offset;
     Status           status;
 
     // Search by id.
@@ -1181,6 +1187,35 @@ std::vector<unsigned int> get_used_extruders(const Model &model, DynamicPrintCon
 	return plate_extruders;
 
 }
+
+
+//Transform3d beltXForm(const Transform3d& offset, float angle) 
+//{
+//    float theta = angle * PI / 180.0f;
+//
+//    Transform3d xf0 = offset;
+//
+//    Transform3d xf1             = Transform3d::Identity();
+//    xf1(2, 2)           = 1.0f / sinf(theta);
+//    xf1(1, 2)           = -1.0f / tanf(theta);
+//
+//    Transform3d xf2     = Transform3d::Identity();
+//    xf2(2, 2)           = 0.0f;
+//    xf2(1, 1)           = 0.0f;
+//    xf2(2, 1)           = -1.0f;
+//    xf2(1, 2)           = 1.0f;
+//
+//    Vec3d                    xf3Data(0.0f, 0.0f, 0.0f);
+//    Geometry::Transformation _trans;
+//    _trans.set_offset(xf3Data);
+//    auto xf3 = _trans.get_offset_matrix();
+//
+//    Transform3d xf =xf3 * xf2 * xf1 * xf0;
+//    return xf;
+//}
+
+
+
 Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_config)
 {
 #if 1
@@ -1319,6 +1354,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     if (! full_config_diff.empty()) {
         //BBS: add more logs
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: found full_config_diff changed.")%__LINE__;
+        //update_apply_status(this->invalidate_steps({psWipeTower, psGCodeExport}));
         update_apply_status(this->invalidate_step(psGCodeExport));
         m_placeholder_parser.clear_config();
         // Set the profile aliases for the PrintBase::output_filename()
@@ -1581,9 +1617,66 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         print_objects_new.reserve(std::max(m_objects.size(), m_model.objects.size()));
         bool new_objects = false;
         // Walk over all new model objects and check, whether there are matching PrintObjects.
-        for (ModelObject *model_object : m_model.objects) {
+        for (ModelObject *model_object : m_model.objects) 
+        {
             ModelObjectStatus &model_object_status = const_cast<ModelObjectStatus&>(model_object_status_db.reuse(*model_object));
             model_object_status.print_instances    = print_objects_from_model_object(*model_object, this->shrinkage_compensation());
+
+            //creality belt
+            //old_printable_area = config.option<ConfigOptionPoints>("printable_area", true)->values;
+            //old_exclude_area   = config.option<ConfigOptionPoints>("bed_exclude_area", true)->values;
+            //if (old_printable_area.size() >= 4) {
+            //    old_printable_width = (int) (old_printable_area[2].x() - old_printable_area[0].x());
+            //    old_printable_depth = (int) (old_printable_area[2].y() - old_printable_area[0].y());
+            //}
+
+            auto   _area = new_full_config.option<ConfigOptionPoints>("printable_area")->values;
+            double w     = (int) (_area[2].x() - _area[0].x());
+            double d     = (int) (_area[2].y() - _area[0].y());
+
+            
+            //if (new_full_config.option<ConfigOptionBool>("machine_is_belt")->getBool()==true)
+            //{
+            //    for (int n = 0; n < model_object_status.print_instances.size(); n++) {
+
+            //         Geometry::Transformation offset;
+            //        //offset.set_offset(Axis::Y, -model_object_status.print_instances[n].trafo_offset.y());
+            //         //offset.set_offset(Axis::Z, -model_object_status.print_instances[n].trafo_offset.z());
+            //        //auto offset = Transform3d::Identity();
+            //        model_object_status.print_instances[n].belt_tranfo = beltXForm(offset.get_matrix(), 45.0f) /** model_object_status.print_instances[n].trafo*/;
+            //        //model_object_status.print_instances[n].belt_tranfo.data()[14] += model_object_status.print_instances[n].trafo.data()[14];
+            //    }
+            //}
+            if (0/*new_full_config.option<ConfigOptionBool>("machine_is_belt")->getBool() == true*/) {
+                if (model_object->instances.size() == model_object->volumes.size()) 
+                {
+                    for (int n = 0; n < model_object->volumes.size(); n++) 
+                    {
+                        Geometry::Transformation model_instance_transformation = model_object->instances[n]->get_transformation();
+                        indexed_triangle_set     its                           = model_object->volumes[n]->mesh().its;
+
+                        its_transform(its, model_instance_transformation.get_matrix());
+                        //its_transform(its, beltXForm(Transform3d::Identity(), 45.0f));
+                        model_object->volumes[n]->set_world_mesh(std::move(its));
+                    }
+
+                    //// ��ȡ��ǰģ�͵ľ�ȷ��Χ��
+                    //const Slic3r::BoundingBoxf3& obj_box = model_object->belt_bounding_box_exact();
+                    //Vec3d                        offset(0.0, model_instance_transformation.data()[13] - obj_box.min.y(), -obj_box.min.z());
+                    //// ����ƽ�Ʊ任����
+                    //Geometry::Transformation _trafo2;
+                    //_trafo2.set_offset(offset);
+                    //for (int n = 0; n < model_object->volumes.size(); n++) 
+                    //{
+                    //    Geometry::Transformation model_instance_transformation = model_object->instances[n]->get_transformation();
+                    //    indexed_triangle_set     its                           = model_object->volumes[n]->world_mesh().its;
+                    //    its_transform(its, _trafo2.get_matrix());
+                    //    model_object->volumes[n]->set_world_mesh(std::move(its));
+                    //    its;
+                    //}
+                }
+            }
+
             std::vector<const PrintObjectStatus*> old;
             old.reserve(print_object_status_db.count(*model_object));
             for (const PrintObjectStatus &print_object_status : print_object_status_db.get_range(*model_object))
@@ -1598,10 +1691,12 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                     PrintObject::object_config_from_model_object(m_default_object_config, *model_object, num_extruders ));
                 print_object_last = print_object;
             };
+            double offset = model_object->current_min_y();
             if (old.empty()) {
                 // Simple case, just generate new instances.
                 for (PrintObjectTrafoAndInstances &print_instances : model_object_status.print_instances) {
                     PrintObject *print_object = new PrintObject(this, model_object, print_instances.trafo, std::move(print_instances.instances));
+                    //print_object->set_belt_trafo(print_instances.belt_tranfo);
                     print_object_apply_config(print_object);
                     print_objects_new.emplace_back(print_object);
                     // print_object_status.emplace(PrintObjectStatus(print_object, PrintObjectStatus::New));
@@ -1628,13 +1723,76 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 } else {
                     // The PrintObject already exists and the copies differ.
 					PrintBase::ApplyStatus status = (*it_old)->print_object->set_instances(std::move(new_instances.instances));
+                    //(*it_old)->print_object->set_offset_miny(model_object->current_min_y());
                     if (status != PrintBase::APPLY_STATUS_UNCHANGED)
 						update_apply_status(status == PrintBase::APPLY_STATUS_INVALIDATED);
 					print_objects_new.emplace_back((*it_old)->print_object);
 					const_cast<PrintObjectStatus*>(*it_old)->status = PrintObjectStatus::Reused;
 				}
             }
+
+
+           for (ModelObject* model_object : m_model.objects) 
+           {
+                for (PrintObject* print_object : m_objects) 
+                {
+                    //print_object->set_belt_trafo(print_instances.belt_tranfo);
+                    int a = 0;
+                }
+            }
+
+
+
+
         }
+
+        if (0/*new_full_config.option<ConfigOptionBool>("machine_is_belt")->getBool() == true*/) {
+            //if (model_object->instances.size() == model_object->volumes.size()) {
+            //    for (int n = 0; n < model_object->volumes.size(); n++) {
+            //        Geometry::Transformation model_instance_transformation = model_object->instances[n]->get_transformation();
+            //        indexed_triangle_set     its                           = model_object->volumes[n]->mesh().its;
+
+            //        its_transform(its, model_instance_transformation.get_matrix());
+            //        its_transform(its, beltXForm(Transform3d::Identity(), 45.0f));
+
+            //        model_object->volumes[n]->set_world_mesh(std::move(its));
+            //    }
+            //}
+
+            Slic3r::BoundingBoxf3 all_box;
+            bool                  is_first = true;
+            for (ModelObject* model_object : m_model.objects) 
+            {
+                // ��ȡ��ǰģ�͵ľ�ȷ��Χ��
+                const Slic3r::BoundingBoxf3& obj_box = model_object->belt_bounding_box_exact();
+                
+
+
+                if (model_object->instances.size() == model_object->volumes.size()) 
+                {
+                    for (int n = 0; n < model_object->volumes.size(); n++) {
+                        Geometry::Transformation model_instance_transformation = model_object->instances[n]->get_transformation();
+                        // ����ƽ�Ʊ任����
+                        Vec3d offset(0.0, -obj_box.min.y(), -obj_box.min.z()+ model_instance_transformation.get_offset().y());
+                        Geometry::Transformation _trafo2;
+                        _trafo2.set_offset(offset);
+
+
+                        indexed_triangle_set     its                           = model_object->volumes[n]->world_mesh().its;
+                        its_transform(its, _trafo2.get_matrix());
+                        model_object->volumes[n]->set_world_mesh(std::move(its));
+                        its;
+                    }
+                }
+            }
+
+
+            //for (PrintObject* object : m_objects) {
+            //    object->set_belt(true);
+            //    //object->reset_trafo();
+            //}
+        }
+
         if (m_objects != print_objects_new) {
             //BBS: add more logs
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: found print object changed.")%__LINE__;
@@ -1656,6 +1814,12 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
             print_regions_reshuffled = true;
         }
         print_object_status_db.clear();
+
+       if (new_full_config.option<ConfigOptionBool>("machine_is_belt")->getBool() == true) {
+            for (PrintObject* object : m_objects) {
+                object->set_belt(true);
+            }
+        }
 
         // BBS
         for (PrintObject* object : m_objects) {
@@ -1754,13 +1918,19 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                     if ((*it)->m_shared_regions != nullptr)
                         update_apply_status((*it)->invalidate_all_steps());
             };
-            if (print_object_regions && ! trafos_differ_in_rotation_by_z_and_mirroring_by_xy_only(print_object_regions->trafo_bboxes, model_object_status.print_instances.front().trafo)) {
-                invalidate();
-                print_object_regions->clear();
-                model_object_status.print_object_regions_status = ModelObjectStatus::PrintObjectRegionsStatus::Invalid;
-                print_regions_reshuffled = true;
-            } else if (print_object_regions &&
-                verify_update_print_object_regions(
+            if (print_object_regions) {
+                bool compatible = trafos_differ_in_rotation_by_z_and_mirroring_by_xy_only(print_object_regions->trafo_bboxes, model_object_status.print_instances.front().trafo);
+                if (!compatible && m_config.machine_is_belt) {
+                    // Belt/tilted: refresh cached trafo instead of invalidating everything.
+                    print_object_regions->trafo_bboxes = model_object_status.print_instances.front().trafo;
+                    compatible = trafos_differ_in_rotation_by_z_and_mirroring_by_xy_only(print_object_regions->trafo_bboxes, model_object_status.print_instances.front().trafo);
+                }
+                if (!compatible) {
+                    invalidate();
+                    print_object_regions->clear();
+                    model_object_status.print_object_regions_status = ModelObjectStatus::PrintObjectRegionsStatus::Invalid;
+                    print_regions_reshuffled = true;
+                } else if (verify_update_print_object_regions(
                     print_object.model_object()->volumes,
                     m_default_region_config,
                     num_extruders ,
@@ -1771,16 +1941,18 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                             if ((*it)->m_shared_regions != nullptr)
                                 update_apply_status((*it)->invalidate_state_by_config_options(old_config, new_config, diff_keys));
                     })) {
-                // Regions are valid, just keep them.
-            } else {
-                // Regions were reshuffled.
-                invalidate();
-                // At least reuse layer ranges and bounding boxes of ModelVolumes.
-                model_object_status.print_object_regions_status = ModelObjectStatus::PrintObjectRegionsStatus::PartiallyValid;
-                print_regions_reshuffled = true;
+                    // Regions are valid, just keep them.
+                } else {
+                    // Regions were reshuffled.
+                    invalidate();
+                    // At least reuse layer ranges and bounding boxes of ModelVolumes.
+                    model_object_status.print_object_regions_status = ModelObjectStatus::PrintObjectRegionsStatus::PartiallyValid;
+                    print_regions_reshuffled = true;
+                }
             }
         }
-        if (print_object_regions == nullptr || model_object_status.print_object_regions_status != ModelObjectStatus::PrintObjectRegionsStatus::Valid) {
+
+        if (print_object_regions == nullptr || model_object_status.print_object_regions_status != ModelObjectStatus::PrintObjectRegionsStatus::Valid || print_object_regions->layer_ranges.empty()) {
             // Layer ranges with their associated configurations. Remove overlaps between the ranges
             // and create the regions from scratch.
             print_object_regions = generate_print_object_regions(

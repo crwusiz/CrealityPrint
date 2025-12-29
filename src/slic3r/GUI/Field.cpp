@@ -1,4 +1,4 @@
-﻿#include "GUI.hpp"
+#include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 #include "Field.hpp"
@@ -12,6 +12,7 @@
 
 #include <regex>
 #include <wx/numformatter.h>
+#include <wx/valtext.h>
 #include <wx/tooltip.h>
 #include <wx/notebook.h>
 #include <wx/listbook.h>
@@ -736,7 +737,9 @@ void TextCtrl::BUILD() {
         : builder2.build(m_parent, "", "", "", wxDefaultPosition, size, wxTE_PROCESS_ENTER);
     temp->SetLabel(_L(m_opt.sidetext));
 	auto text_ctrl = m_opt.multiline ? ((TextInputCtrl *)temp)->text_ctrl : ((TextInput *) temp)->GetTextCtrl();
-    text_ctrl->SetLabel(text_value);
+            // Use SetValue to initialize the visible text of the input control.
+            // SetLabel does not reliably set the content for text-entry widgets.
+            text_ctrl->SetValue(text_value);
     temp->SetSize(size);
     m_combine_side_text = !m_opt.multiline;
     if (parent_is_custom_ctrl && m_opt.height < 0)
@@ -756,7 +759,7 @@ void TextCtrl::BUILD() {
     text_ctrl->OSXDisableAllSmartSubstitutions(); // BBS
 #endif // __WXOSX__
 
-	temp->SetToolTip(get_tooltip_text(text_value));
+    temp->SetToolTip(get_tooltip_text(text_value));
 
     if (!m_opt.multiline) {
         text_ctrl->Bind(wxEVT_TEXT_ENTER, ([this, temp](wxEvent &e)
@@ -812,6 +815,14 @@ void TextCtrl::BUILD() {
 
     // recast as a wxWindow to fit the calling convention
     window = dynamic_cast<wxWindow*>(temp);
+
+    // Initialize internal value from the default text without validation.
+    // This prevents an empty read (e.g. during page switch) from falling back to min
+    // and popping an error dialog.
+    {
+        wxString init_str = text_ctrl->GetValue();
+        get_value_by_opt_type(init_str, false);
+    }
 }
 
 bool TextCtrl::value_was_changed()
@@ -900,10 +911,11 @@ void TextCtrl::set_na_value()
 boost::any& TextCtrl::get_value()
 {
     wxString ret_str = text_ctrl()->GetValue(); // BBS
-	// update m_value
-	get_value_by_opt_type(ret_str);
+    // When the control is empty (e.g. freshly switched page), don't validate to avoid spurious errors.
+    // Keep the last meaningful/default value in m_value.
+    get_value_by_opt_type(ret_str, !ret_str.IsEmpty());
 
-	return m_value;
+    return m_value;
 }
 
 void TextCtrl::msw_rescale()
@@ -1122,7 +1134,8 @@ void SpinCtrl::BUILD() {
 		wxSP_ARROW_KEYS);
     temp->SetSize(size);
     temp->SetLabel(_L(m_opt.sidetext));
-    temp->GetTextCtrl()->SetLabel(text_value);
+        // Ensure the text control shows the default value using SetValue.
+        temp->GetTextCtrl()->SetValue(text_value);
     temp->SetRange(min_val, max_val);
     temp->SetValue(default_value);
     m_combine_side_text = true;
@@ -1582,8 +1595,9 @@ void Choice::set_value(const boost::any& value, bool change_event)
         if (m_opt_id.compare("host_type") == 0 && val != 0 &&
 			m_opt.enum_values.size() > field->GetCount()) // for case, when PrusaLink isn't used as a HostType
 			val--;
-        if (m_opt_id == "top_surface_pattern" || m_opt_id == "bottom_surface_pattern" || m_opt_id == "internal_solid_infill_pattern" || m_opt_id == "sparse_infill_pattern" || m_opt_id == "support_style" || m_opt_id == "curr_bed_type")
-		{
+        if (m_opt_id == "top_surface_pattern" || m_opt_id == "bottom_surface_pattern" || m_opt_id == "internal_solid_infill_pattern" ||
+            m_opt_id == "sparse_infill_pattern" || m_opt_id == "support_style" || m_opt_id == "curr_bed_type" ||
+            m_opt_id == "locked_skin_infill_pattern" || m_opt_id == "locked_skeleton_infill_pattern") {
 			std::string key;
 			const t_config_enum_values& map_names = *m_opt.enum_keys_map;
 			for (auto it : map_names)
@@ -1669,8 +1683,9 @@ boost::any& Choice::get_value()
 	{
         if (m_opt.nullable && field->GetSelection() == -1)
             m_value = ConfigOptionEnumsGenericNullable::nil_value();
-        else if (m_opt_id == "top_surface_pattern" || m_opt_id == "bottom_surface_pattern" || m_opt_id == "internal_solid_infill_pattern" || m_opt_id == "sparse_infill_pattern" ||
-                 m_opt_id == "support_style" || m_opt_id == "curr_bed_type") {
+        else if (m_opt_id == "top_surface_pattern" || m_opt_id == "bottom_surface_pattern" || m_opt_id == "internal_solid_infill_pattern" ||
+                 m_opt_id == "sparse_infill_pattern" || m_opt_id == "support_style" || m_opt_id == "curr_bed_type" ||
+                 m_opt_id == "locked_skin_infill_pattern" || m_opt_id == "locked_skeleton_infill_pattern") {
 			const std::string& key = m_opt.enum_values[field->GetSelection()];
 			m_value = int(m_opt.enum_keys_map->at(key));
 		}
@@ -1969,6 +1984,8 @@ void PointCtrl::BUILD()
     y_input = new ::TextInput(m_parent, Y, m_opt.sidetext, "inputbox_y", wxDefaultPosition, field_size, style);
     x_textctrl = x_input->GetTextCtrl();
     y_textctrl = y_input->GetTextCtrl();
+    x_textctrl->SetValidator(wxTextValidator(wxFILTER_NUMERIC));
+    y_textctrl->SetValidator(wxTextValidator(wxFILTER_NUMERIC));
     if (parent_is_custom_ctrl && m_opt.height < 0)
         opt_height = (double)x_textctrl->GetSize().GetHeight() / m_em_unit;
 
@@ -1999,6 +2016,8 @@ void PointCtrl::BUILD()
 
     x_textctrl->Bind(wxEVT_KILL_FOCUS, ([this](wxEvent& e) { e.Skip(); propagate_value(x_textctrl); }), x_textctrl->GetId());
     y_textctrl->Bind(wxEVT_KILL_FOCUS, ([this](wxEvent& e) { e.Skip(); propagate_value(y_textctrl); }), y_textctrl->GetId());
+    x_textctrl->Bind(wxEVT_TEXT, ([this](wxEvent& e) { e.Skip(); propagate_value(x_textctrl); }), x_textctrl->GetId());
+    y_textctrl->Bind(wxEVT_TEXT, ([this](wxEvent& e) { e.Skip(); propagate_value(y_textctrl); }), y_textctrl->GetId());
 
 	// 	// recast as a wxWindow to fit the calling convention
 	sizer = dynamic_cast<wxSizer*>(temp);
@@ -2059,9 +2078,14 @@ void PointCtrl::set_value(const Vec2d& value, bool change_event)
 	m_disable_change_event = !change_event;
 
 	double val = value(0);
-	x_textctrl->SetValue(val - int(val) == 0 ? wxString::Format(_T("%i"), int(val)) : wxNumberFormatter::ToString(val, 2, wxNumberFormatter::Style_None));
+    double x, y;
+    x_textctrl->GetValue().ToDouble(&x);
+    if(fabs(x - val) > 0.0001)
+	    x_textctrl->SetValue(val - int(val) == 0 ? wxString::Format(_T("%i"), int(val)) : wxNumberFormatter::ToString(val, 2, wxNumberFormatter::Style_None));
 	val = value(1);
-	y_textctrl->SetValue(val - int(val) == 0 ? wxString::Format(_T("%i"), int(val)) : wxNumberFormatter::ToString(val, 2, wxNumberFormatter::Style_None));
+    y_textctrl->GetValue().ToDouble(&y);
+    if(fabs(y - val) > 0.0001)
+	    y_textctrl->SetValue(val - int(val) == 0 ? wxString::Format(_T("%i"), int(val)) : wxNumberFormatter::ToString(val, 2, wxNumberFormatter::Style_None));
 
 	m_disable_change_event = false;
 }

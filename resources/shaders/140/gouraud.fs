@@ -66,7 +66,7 @@ out vec4 out_color;
 
 void main()
 {
-    if (any(lessThan(clipping_planes_dots, ZERO)))
+    if (any(lessThan(clipping_planes_dots, ZERO-vec3(0.002))))
         discard;
 
     vec4 color;

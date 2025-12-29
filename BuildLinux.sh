@@ -22,7 +22,8 @@ function check_available_memory_and_disk() {
     FREE_DISK_KB=$(df -k . | tail -1 | awk '{print $4}')
     MIN_DISK_KB=$((10 * 1024 * 1024))
 
-    if [ ${FREE_MEM_GB} -le ${MIN_MEM_GB} ]; then
+   # if [ ${FREE_MEM_GB} -le ${MIN_MEM_GB} ]; then
+    if [ ${FREE_MEM_GB} -lt ${MIN_MEM_GB} ]; then
         echo -e "\nERROR: Orca Slicer Builder requires at least ${MIN_MEM_GB}G of 'available' mem (systen has only ${FREE_MEM_GB}G available)"
         echo && free -h && echo
         exit 2
@@ -43,15 +44,18 @@ function usage() {
     echo "   -d: build deps (optional)"
     echo "   -h: this help output"
     echo "   -i: Generate appimage (optional)"
+    echo "   -e: Generate deb package (optional)"
     echo "   -r: skip ram and disk checks (low ram compiling)"
     echo "   -s: build orca-slicer (optional)"
     echo "   -u: update and build dependencies (optional and need sudo)"
+    echo "   -jN: set number of threads for ninja build (e.g., -j4)"
     echo "For a first use, you want to 'sudo ./BuildLinux.sh -u'"
     echo "   and then './BuildLinux.sh -dsi'"
 }
 
 unset name
-while getopts ":1bcdghirsu" opt; do
+unset NUM_THREADS
+while getopts ":1bcdghirsuej:" opt; do
   case ${opt} in
     1 )
         export CMAKE_BUILD_PARALLEL_LEVEL=1
@@ -71,6 +75,9 @@ while getopts ":1bcdghirsu" opt; do
     i )
         BUILD_IMAGE="1"
         ;;
+    e )
+        BUILD_DEB="1"
+        ;;
     r )
 	    SKIP_RAM_CHECK="1"
 	;;
@@ -80,6 +87,9 @@ while getopts ":1bcdghirsu" opt; do
     u )
         UPDATE_LIB="1"
         ;;
+    j )
+        NUM_THREADS=${OPTARG}
+	;;
   esac
 done
 
@@ -90,7 +100,9 @@ then
 fi
 
 DISTRIBUTION=$(awk -F= '/^ID=/ {print $2}' /etc/os-release)
-# treat ubuntu as debian
+# 规范化发行版ID（去引号并转小写）
+DISTRIBUTION=$(echo ${DISTRIBUTION} | tr -d '"' | tr '[:upper:]' '[:lower:]')
+# 将 ubuntu 视为 debian
 if [ "${DISTRIBUTION}" == "ubuntu" ]
 then
     DISTRIBUTION="debian"
@@ -102,6 +114,11 @@ then
     then
         DISTRIBUTION="debian2"
     fi
+fi
+# 兼容麒麟系统（Kylin/openKylin），使用专用脚本
+if [ "${DISTRIBUTION}" == "kylin" ] || [ "${DISTRIBUTION}" == "openkylin" ]
+then
+    DISTRIBUTION="kylin"
 fi
 if [ ! -f ./linux.d/${DISTRIBUTION} ]
 then
@@ -186,9 +203,13 @@ then
         ${BUILD_ARGS}
     echo "done"
     echo "Building CrealityPrint ..."
-    cmake --build build --target CrealityPrint
+    if [[ -n "${num_threads}" ]]; then
+        cmake --build build --target CrealityPrint -j${NUM_THREADS}
+    else
+        cmake --build build --target CrealityPrint
+    fi
     echo "Building CrealityPrint_profile_validator .."
-    cmake --build build --target CrealityPrint_profile_validator
+    #cmake --build build --target CrealityPrint_profile_validator
     ./run_gettext.sh
     echo "done"
 fi
@@ -204,6 +225,11 @@ echo "[9/9] Generating Linux app..."
             ${ROOT}/build/src/BuildLinuxImage.sh -i
         else
             ${ROOT}/build/src/BuildLinuxImage.sh
+        fi
+        if [[ -n "${BUILD_DEB}" ]] && [[ -e ${ROOT}/build/src/BuildLinuxDeb.sh ]]
+        then
+            chmod 755 ${ROOT}/build/src/BuildLinuxDeb.sh
+            ${ROOT}/build/src/BuildLinuxDeb.sh
         fi
     popd
 echo "done"

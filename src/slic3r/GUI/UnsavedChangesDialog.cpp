@@ -5,6 +5,7 @@
 #include <vector>
 #include <boost/algorithm/string.hpp>
 #include <boost/optional.hpp>
+#include <boost/log/trivial.hpp>
 
 #include <wx/tokenzr.h>
 
@@ -20,6 +21,7 @@
 #include "SavePresetDialog.hpp"
 #include "MainFrame.hpp"
 #include "MsgDialog.hpp"
+#include "TestHelper.hpp"
 
 #include "PresetComboBoxes.hpp"
 #include "Widgets/RoundedRectangle.hpp"
@@ -589,8 +591,6 @@ DiffViewCtrl::DiffViewCtrl(wxWindow* parent, wxSize size)
     ),
     m_em_unit(em_unit(parent))
 {
-    wxGetApp().UpdateDVCDarkUI(this);
-
     model = new DiffModel(parent);
     this->AssociateModel(model);
     model->SetAssociatedControl(this);
@@ -837,7 +837,10 @@ inline int UnsavedChangesDialog::ShowModal()
 #endif
 
 #endif // AUTOMATION_TOOL
-
+    if (Test::enable_test) {
+        if (Test::Visitor().call_cmd("is_ban_dialog", "") == "y")
+            return 0;
+    }
 
     int r = wxDialog::ShowModal();
     if (r != wxID_CANCEL && dynamic_cast<::CheckBox*>(FindWindowById(wxID_APPLY))->GetValue()) {
@@ -1212,10 +1215,24 @@ wxString get_string_from_enum(const std::string& opt_key, const DynamicPrintConf
         for (auto key_val : *def.enum_keys_map)
             if (int(key_val.second) == val) {
                 auto it = std::find(def.enum_values.begin(), def.enum_values.end(), key_val.first);
-                if (it == def.enum_values.end())
-                    return "";
-                return from_u8(_utf8(names[it - def.enum_values.begin()]));
+                if (it == def.enum_values.end()) {
+                    BOOST_LOG_TRIVIAL(error) << "get_string_from_enum: enum_values missing key for opt_key="
+                                             << opt_key << ", val=" << val;
+                    return _L("Undef");
+                }
+                size_t index = static_cast<size_t>(it - def.enum_values.begin());
+                if (index >= names.size()) {
+                    BOOST_LOG_TRIVIAL(error) << "get_string_from_enum: enum_labels index out of range for opt_key="
+                                             << opt_key << ", index=" << index << ", labels_size=" << names.size();
+                    return _L("Undef");
+                }
+                return from_u8(_utf8(names[index]));
             }
+        return _L("Undef");
+    }
+    if (val < 0 || static_cast<size_t>(val) >= names.size()) {
+        BOOST_LOG_TRIVIAL(error) << "get_string_from_enum: enum value out of range for opt_key="
+                                 << opt_key << ", val=" << val << ", labels_size=" << names.size();
         return _L("Undef");
     }
     return from_u8(_utf8(names[val]));
@@ -1958,6 +1975,7 @@ void DiffPresetDialog::create_tree()
     m_tree->AppendBmpTextColumn("Right Preset Value",DiffModel::colNewValue, 15);
     m_tree->Hide();
     m_tree->GetColumn(DiffModel::colToggle)->SetHidden(true);
+    wxGetApp().UpdateDVCDarkUI(m_tree);
 }
 
 std::array<Preset::Type, 3> DiffPresetDialog::types_list() const

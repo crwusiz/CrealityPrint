@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include <boost/format.hpp>
+#include <boost/log/core.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/filesystem.hpp>
 #if ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
@@ -346,10 +347,14 @@ ImGuiWrapper::ImGuiWrapper()
 {
     ImGui::CreateContext();
 
+    ImGuiIO& io = ImGui::GetIO();
+    m_glyph_ranges = io.Fonts->GetGlyphRangesEnglish();
+    m_glyph_basic_ranges = io.Fonts->GetGlyphRangesBasic();
+
     init_input();
     init_style();
 
-    ImGui::GetIO().IniFilename = nullptr;
+    io.IniFilename = nullptr;
 }
 
 ImGuiWrapper::~ImGuiWrapper()
@@ -438,6 +443,9 @@ void ImGuiWrapper::set_language(const std::string &language)
     }
 
     m_glyph_basic_ranges = ImGui::GetIO().Fonts->GetGlyphRangesBasic();
+    BOOST_LOG_TRIVIAL(warning) << "ImGui: set_language lang=" << lang
+                               << ", cjk=" << (m_font_cjk ? "true" : "false")
+                               << ", font_size=" << m_font_size;
 }
 
 void ImGuiWrapper::set_display_size(float w, float h)
@@ -2803,6 +2811,12 @@ void ImGuiWrapper::init_font(bool compress)
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
 
+    if (m_glyph_ranges == nullptr) {
+        m_glyph_ranges = io.Fonts->GetGlyphRangesEnglish();
+        BOOST_LOG_TRIVIAL(error) << "ImGui: init_font: m_glyph_ranges was null, fallback to English glyph ranges";
+        boost::log::core::get()->flush();
+    }
+
     // Create ranges of characters from m_glyph_ranges, possibly adding some OS specific special characters.
     ImVector<ImWchar> ranges;
     ImVector<ImWchar> basic_ranges;
@@ -2831,16 +2845,26 @@ void ImGuiWrapper::init_font(bool compress)
     }
     default_font = io.Fonts->AddFontFromFileTTF((Slic3r::resources_dir() + "/fonts/" + font_name_regular).c_str(), m_font_size, &cfg, ranges.Data);
     if (default_font == nullptr) {
+        BOOST_LOG_TRIVIAL(warning) << "ImGui: failed to load font file: " << font_name_regular << ", fallback AddFontDefault()";
+        boost::log::core::get()->flush();
         default_font = io.Fonts->AddFontDefault();
         if (default_font == nullptr) {
+            BOOST_LOG_TRIVIAL(warning) << "ImGui: AddFontDefault() returned null, about to throw";
+            boost::log::core::get()->flush();
             throw Slic3r::RuntimeError("ImGui: Could not load deafult font");
         }
     }
 
     bold_font        = io.Fonts->AddFontFromFileTTF((Slic3r::resources_dir() + "/fonts/" + font_name_bold).c_str(), m_font_size, &cfg, ranges.Data);
     if (bold_font == nullptr) {
+        BOOST_LOG_TRIVIAL(warning) << "ImGui: failed to load font file: " << font_name_bold << ", fallback AddFontDefault()";
+        boost::log::core::get()->flush();
         bold_font = io.Fonts->AddFontDefault();
-        if (bold_font == nullptr) { throw Slic3r::RuntimeError("ImGui: Could not load deafult font"); }
+        if (bold_font == nullptr) {
+            BOOST_LOG_TRIVIAL(warning) << "ImGui: AddFontDefault() returned null for bold_font, about to throw";
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError("ImGui: Could not load deafult font");
+        }
     }
 
 #ifdef _WIN32
@@ -2885,6 +2909,20 @@ void ImGuiWrapper::init_font(bool compress)
     }
 
     // Build texture atlas
+    unsigned char* alpha_pixels = nullptr;
+    int            alpha_w = 0, alpha_h = 0, alpha_bpp = 0;
+    io.Fonts->GetTexDataAsAlpha8(&alpha_pixels, &alpha_w, &alpha_h, &alpha_bpp);
+    const uint64_t alpha_bytes = static_cast<uint64_t>(alpha_w) * static_cast<uint64_t>(alpha_h) * static_cast<uint64_t>(alpha_bpp);
+    const uint64_t rgba_bytes  = static_cast<uint64_t>(alpha_w) * static_cast<uint64_t>(alpha_h) * 4ULL;
+    BOOST_LOG_TRIVIAL(warning) << "ImGui: font atlas built (pre-RGBA32). glyph_ranges=" << static_cast<const void*>(m_glyph_ranges)
+                               << ", cjk=" << (m_font_cjk ? "true" : "false")
+                               << ", font_size=" << m_font_size
+                               << ", w=" << alpha_w << ", h=" << alpha_h
+                               << ", alpha_bytes=" << alpha_bytes
+                               << ", rgba_bytes=" << rgba_bytes
+                               << ", total_est_bytes=" << (alpha_bytes + rgba_bytes);
+    boost::log::core::get()->flush();
+
     unsigned char* pixels;
     int width, height;
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);   // Load as RGBA 32-bits (75% of the memory is wasted, but default font is so small) because it is more likely to be compatible with user's existing shaders. If your ImTextureId represent a higher-level concept than just a GL texture id, consider calling GetTexDataAsAlpha8() instead to save on GPU memory.
@@ -2892,8 +2930,8 @@ void ImGuiWrapper::init_font(bool compress)
 
     auto load_icon_from_svg = [this, &io, pixels, width, &rect_id](const std::pair<const wchar_t, std::string> icon, int icon_sz) {
         if (const ImFontAtlas::CustomRect* rect = io.Fonts->GetCustomRectByIndex(rect_id)) {
-//            assert(rect->Width == icon_sz);
-//            assert(rect->Height == icon_sz);
+            //assert(rect->Width == icon_sz);
+            //assert(rect->Height == icon_sz);
             unsigned                   outwidth, outheight;
             std::vector<unsigned char> raw_data = load_svg(icon.second, icon_sz, icon_sz, &outwidth, &outheight);
             if (!raw_data.empty()) {
@@ -2954,6 +2992,12 @@ void ImGuiWrapper::init_font_all(bool compress)
 
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
+
+    if (m_glyph_ranges == nullptr) {
+        m_glyph_ranges = io.Fonts->GetGlyphRangesEnglish();
+        BOOST_LOG_TRIVIAL(error) << "ImGui: init_font_all: m_glyph_ranges was null, fallback to English glyph ranges";
+        boost::log::core::get()->flush();
+    }
 
     // Create ranges of characters from m_glyph_ranges, possibly adding some OS specific special characters.
     ImVector<ImWchar>               ranges;

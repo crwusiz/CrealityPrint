@@ -78,10 +78,9 @@ EnableLiteModeDialog::EnableLiteModeDialog(wxWindow* parent, wxWindowID id, cons
         
         wxString content2 = format_wxstr(_L("[Learn more]"));
                     
-        std::string color    = wxGetApp().app_config->get("dark_color_mode") == "1" ? " #FFFFFF " : " #000000";
-        int         fontSize = FromDIP(16);
+        const wxString color = wxGetApp().app_config->get("dark_color_mode") == "1" ? wxString("#FFFFFF") : wxString("#000000");
         const auto  text =
-            wxString::Format("<html> <body><font style=\"color: %s;font-size:20px;\">%s<a href=\"%s\">%s</a></font></body></html>", color, content1, url, content2);
+            wxString::Format("<html> <body><font style=\"color: %s;font-size:20px;\">%s<a href=\"%s\">%s</a></font></body></html>", color.c_str(), content1.c_str(), url.c_str(), content2.c_str());
                                                                  
         m_website_html->SetPage(text);
         m_website_html->Bind(wxEVT_HTML_LINK_CLICKED, &EnableLiteModeDialog::onLinkClicked, this);

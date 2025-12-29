@@ -656,29 +656,46 @@ std::shared_ptr<HttpServer::Response> HttpServer::creality_handle_request(const 
         Http http = Http::post(base_url + "/api/cxy/account/v2/oauthLogin");
         json        j;
         j["code"]  = code;
-        std::string type = std::string(PROJECT_VERSION_EXTRA);
-        if(type=="Alpha")
-        {   
-            if(region=="China")
-            {
-                j["clientId"]  = "b1b46c39fce85c7982563feebe0d3277";
-                j["redirecturi"]  = (boost::format("https://pre.crealitycloud.cn/oauth?back_url=http://localhost:%1%/login") % wxGetApp().get_server_port()).str();;
-            }else{
-                j["clientId"]  = "275d77a3cc5059089a6d39c9292de38b";
-                j["redirecturi"]  = (boost::format("https://pre.crealitycloud.com/oauth?back_url=http://localhost:%1%/login") % wxGetApp().get_server_port()).str();
+        // 当 PROJECT_VERSION_EXTRA 为 Dev 时，按 Dev 环境的 OAuth 配置处理
+        {
+            std::string extra = std::string(PROJECT_VERSION_EXTRA);
+            if (boost::algorithm::iequals(extra, std::string("Dev"))) {
+                j["clientId"]    = "e216beaa82e75f8f9d04b2ec822bcc48";
+                j["redirecturi"] = (boost::format("http://dev.crealitycloud.cn/oauth?back_url=http://localhost:%1%/login") %
+                                     wxGetApp().get_server_port())
+                                        .str();
             }
-        }else{
-            if(region=="China")
+            else if(boost::algorithm::iequals(extra, std::string("Alpha"))) {
+                if (region == "China") {
+                    j["clientId"] = "b1b46c39fce85c7982563feebe0d3277";
+                    j["redirecturi"] = (boost::format("https://pre.crealitycloud.cn/oauth?back_url=http://localhost:%1%/login") %
+                        wxGetApp().get_server_port())
+                        .str();
+                }
+                else
+                {
+                    j["clientId"] = "275d77a3cc5059089a6d39c9292de38b";
+                    j["redirecturi"] = (boost::format("https://pre.crealitycloud.com/oauth?back_url=http://localhost:%1%/login") %
+                        wxGetApp().get_server_port())
+                        .str();
+                }
+            }
+            else
             {
-                j["clientId"]  = "8ea5010984fa52a298f12110af8b05d0";
-                j["redirecturi"]  = (boost::format("https://www.crealitycloud.cn/oauth?back_url=http://localhost:%1%/login") % wxGetApp().get_server_port()).str();;
-            }else{
-                j["clientId"]  = "f9c302ecc29c59a0a6e921ff39a073ca";
-                j["redirecturi"]  = (boost::format("https://www.crealitycloud.com/oauth?back_url=http://localhost:%1%/login") % wxGetApp().get_server_port()).str();
+                if (region == "China") {
+                    j["clientId"]    = "8ea5010984fa52a298f12110af8b05d0";
+                    j["redirecturi"] = (boost::format("https://www.crealitycloud.cn/oauth?back_url=http://localhost:%1%/login") %
+                                        wxGetApp().get_server_port())
+                                           .str();
+                } else {
+                    j["clientId"]    = "f9c302ecc29c59a0a6e921ff39a073ca";
+                    j["redirecturi"] = (boost::format("https://www.crealitycloud.com/oauth?back_url=http://localhost:%1%/login") %
+                                        wxGetApp().get_server_port())
+                                           .str();
+                }
             }
         }
-        
-        
+
         
         if(code==""){
             location_str = (boost::format("%1%?result=fail?code=1000") % result_url).str();

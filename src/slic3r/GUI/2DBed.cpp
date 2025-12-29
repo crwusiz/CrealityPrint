@@ -21,31 +21,74 @@ wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(25 * wxGetApp().em_unit(), -
 #endif /*__APPLE__*/
 }
 
+void Bed_2D::update_cache(const std::vector<Vec2d>& shape)
+{
+    auto shapes_equal = [](const std::vector<Vec2d>& a, const std::vector<Vec2d>& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            if ((a[i] - b[i]).squaredNorm() > 1e-9) return false;
+        }
+        return true;
+    };
+    // Recompute cache only if shape changed or step changed.
+    if (shapes_equal(shape, m_cached_shape) && m_cached_step == 10)
+        return;
+
+    m_cached_shape = shape;
+
+    if (shape.empty()) {
+        m_cached_bed_polygon = Polygon();
+        m_cached_grid.clear();
+        m_cached_bb = BoundingBoxf(Vec2d::Zero(), Vec2d::Zero());
+        return;
+    }
+
+    m_cached_bed_polygon = Polygon::new_scale(shape);
+    m_cached_bb = BoundingBoxf(shape);
+    m_cached_bb.merge(Vec2d(0, 0));
+
+    // Build grid lines at fixed step in model coordinates
+    Polylines polylines;
+    const auto step = m_cached_step;
+    for (auto x = m_cached_bb.min(0) - fmod(m_cached_bb.min(0), step) + step; x < m_cached_bb.max(0); x += step) {
+        polylines.push_back(Polyline::new_scale({ Vec2d(x, m_cached_bb.min(1)), Vec2d(x, m_cached_bb.max(1)) }));
+    }
+    for (auto y = m_cached_bb.min(1) - fmod(m_cached_bb.min(1), step) + step; y < m_cached_bb.max(1); y += step) {
+        polylines.push_back(Polyline::new_scale({ Vec2d(m_cached_bb.min(0), y), Vec2d(m_cached_bb.max(0), y) }));
+    }
+    m_cached_grid = intersection_pl(polylines, m_cached_bed_polygon);
+}
+
 void Bed_2D::repaint(const std::vector<Vec2d>& shape)
 {
 	wxAutoBufferedPaintDC dc(this);
 	auto cw = GetSize().GetWidth();
 	auto ch = GetSize().GetHeight();
 	// when canvas is not rendered yet, size is 0, 0
-	if (cw == 0) return ; 
+	if (cw == 0 || ch == 0) return ; 
 
-	if (m_user_drawn_background) {
-		// On all systems the AutoBufferedPaintDC() achieves double buffering.
-		// On MacOS the background is erased, on Windows the background is not erased
-		// and on Linux / GTK the background is erased to gray color.
-		// Fill DC with the background on Windows & Linux / GTK.
-		wxColour color;
-		if (wxGetApp().dark_mode()) {// SetBackgroundColour
-			color = wxColour(45, 45, 49);
-		}
-		else {
-			color = *wxWHITE;
-		}
-		dc.SetPen(*new wxPen(color, 1, wxPENSTYLE_SOLID));
-		dc.SetBrush(*new wxBrush(color, wxBRUSHSTYLE_SOLID));
-		auto rect = GetUpdateRegion().GetBox();
-		dc.DrawRectangle(rect.GetLeft(), rect.GetTop(), rect.GetWidth(), rect.GetHeight());
-	}
+    // Ensure we have cached geometry for the current shape
+    update_cache(shape);
+
+    if (m_user_drawn_background) {
+        // On all systems the AutoBufferedPaintDC() achieves double buffering.
+        // On MacOS the background is erased, on Windows the background is not erased
+        // and on Linux / GTK the background is erased to gray color.
+        // Fill DC with the background on Windows & Linux / GTK.
+        wxColour color;
+        if (wxGetApp().dark_mode()) {// SetBackgroundColour
+            color = wxColour(45, 45, 49);
+        }
+        else {
+            color = *wxWHITE;
+        }
+        wxPen   bg_pen(color, 1, wxPENSTYLE_SOLID);
+        wxBrush bg_brush(color, wxBRUSHSTYLE_SOLID);
+        dc.SetPen(bg_pen);
+        dc.SetBrush(bg_brush);
+        auto rect = GetUpdateRegion().GetBox();
+        dc.DrawRectangle(rect.GetLeft(), rect.GetTop(), rect.GetWidth(), rect.GetHeight());
+    }
 
     if (shape.empty())
         return;
@@ -58,12 +101,15 @@ void Bed_2D::repaint(const std::vector<Vec2d>& shape)
 	auto ccenter = cbb.center();
 
 	// get bounding box of bed shape in G - code coordinates
-    auto bed_polygon = Polygon::new_scale(shape);
-    auto bb = BoundingBoxf(shape);
-    bb.merge(Vec2d(0, 0));  // origin needs to be in the visible area
-	auto bw = bb.size()(0);
-	auto bh = bb.size()(1);
-	auto bcenter = bb.center();
+    auto bed_polygon = m_cached_bed_polygon;
+    auto bb = m_cached_bb;
+    auto bw = bb.size()(0);
+    auto bh = bb.size()(1);
+    auto bcenter = bb.center();
+
+    // Guard against degenerate shapes to avoid division by zero
+    if (bw <= 0 || bh <= 0)
+        return;
 
 	// calculate the scaling factor for fitting bed shape in canvas area
 	auto sfactor = std::min(cw/bw, ch/bh);
@@ -75,26 +121,20 @@ void Bed_2D::repaint(const std::vector<Vec2d>& shape)
 	m_scale_factor = sfactor;
     m_shift = Vec2d(shift(0) + cbb.min(0), shift(1) - (cbb.max(1) - ch));
 
-	// draw bed fill
-	dc.SetBrush(wxBrush(wxColour(255, 255, 255), wxBRUSHSTYLE_SOLID));
-	wxPointList pt_list;
-    for (auto pt : shape)
-    {
+    // draw bed fill
+    dc.SetBrush(wxBrush(wxColour(255, 255, 255), wxBRUSHSTYLE_SOLID));
+    std::vector<wxPoint> polygon_pts;
+    polygon_pts.reserve(shape.size());
+    for (auto pt : shape) {
         Point pt_pix = to_pixels(pt, ch);
-        pt_list.push_back(new wxPoint(pt_pix(0), pt_pix(1)));
-	}
-	dc.DrawPolygon(&pt_list, 0, 0);
+        polygon_pts.emplace_back(pt_pix(0), pt_pix(1));
+    }
+    if (!polygon_pts.empty())
+        dc.DrawPolygon(static_cast<int>(polygon_pts.size()), polygon_pts.data(), 0, 0);
 
 	// draw grid
-	auto step = 10;  // 1cm grid
-	Polylines polylines;
-	for (auto x = bb.min(0) - fmod(bb.min(0), step) + step; x < bb.max(0); x += step) {
-		polylines.push_back(Polyline::new_scale({ Vec2d(x, bb.min(1)), Vec2d(x, bb.max(1)) }));
-	}
-	for (auto y = bb.min(1) - fmod(bb.min(1), step) + step; y < bb.max(1); y += step) {
-		polylines.push_back(Polyline::new_scale({ Vec2d(bb.min(0), y), Vec2d(bb.max(0), y) }));
-	}
-	polylines = intersection_pl(polylines, bed_polygon);
+    // Use cached grid intersection to avoid heavy work during repaint
+    const Polylines& polylines = m_cached_grid;
 
     dc.SetPen(wxPen(wxColour(230, 230, 230), 1, wxPENSTYLE_SOLID));
 	for (auto pl : polylines)
@@ -106,10 +146,11 @@ void Bed_2D::repaint(const std::vector<Vec2d>& shape)
 		}
 	}
 
-	// draw bed contour
+    // draw bed contour
     dc.SetPen(wxPen(wxColour(0, 0, 0), 1, wxPENSTYLE_SOLID));
-	dc.SetBrush(wxBrush(wxColour(0, 0, 0), wxBRUSHSTYLE_TRANSPARENT));
-	dc.DrawPolygon(&pt_list, 0, 0);
+    dc.SetBrush(wxBrush(wxColour(0, 0, 0), wxBRUSHSTYLE_TRANSPARENT));
+    if (!polygon_pts.empty())
+        dc.DrawPolygon(static_cast<int>(polygon_pts.size()), polygon_pts.data(), 0, 0);
 
     auto origin_px = to_pixels(Vec2d(0, 0), ch);
 

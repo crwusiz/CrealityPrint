@@ -1,5 +1,6 @@
 #include "SpiralVase.hpp"
 #include "GCode.hpp"
+#include <algorithm>
 #include <sstream>
 #include <cmath>
 #include <limits>
@@ -82,8 +83,8 @@ std::string SpiralVase::process_layer(const std::string &gcode, bool last_layer)
     
     // Get total XY length for this layer by summing all extrusion moves.
     float total_layer_length = 0;
-    float layer_height = 0;
-    float z = 0.f;
+    float layer_height       = 0;
+    float z                  = 0.f;
     
     {
         //FIXME Performance warning: This copies the GCodeConfig of the reader.
@@ -105,8 +106,21 @@ std::string SpiralVase::process_layer(const std::string &gcode, bool last_layer)
         });
     }
 
-    // Remove layer height from initial Z.
-    z -= layer_height;
+    // Derive the start Z for interpolation and keep the target Z for clamping.
+    const float target_z = z;
+    float       start_z  = target_z - layer_height;
+
+    // If vase mode starts from the very first layer, don't dip below the initial layer height.
+    if (m_previous_layer == nullptr && std::abs(m_reader.z() - (float)m_config.z_offset) < EPSILON) {
+        const float min_first_layer_z = (float)m_config.initial_layer_print_height.value + (float)m_config.z_offset;
+        if (start_z < min_first_layer_z) {
+            start_z     = std::min(min_first_layer_z, target_z);
+            layer_height = target_z - start_z;
+        }
+    }
+
+    // Start Z for interpolation (may be clamped for the first layer).
+    z = start_z;
 
     std::vector<SpiralVase::SpiralPoint>* current_layer = new std::vector<SpiralVase::SpiralPoint>();
     std::vector<SpiralVase::SpiralPoint>* previous_layer = m_previous_layer;

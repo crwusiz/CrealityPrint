@@ -55,7 +55,7 @@ namespace GUI {
          *      path/to/image/hover_name.png
          *      path/to/image/none_name.png
          */        
-        GLTexture* getTexture(TextureType, bool hover = false, bool sel = false);
+        GLTexture* getTexture(TextureType, bool hover = false, bool sel = false, int half_top = -1);
         void* getTextureId(TextureType, bool hover = false, bool sel = false);
 
         enum ColorType {
@@ -64,6 +64,7 @@ namespace GUI {
             e_ct_btnBg,
             e_ct_btnBgSelWhite,
             e_ct_btnBgSel,
+            e_ct_btnHover,
             e_ct_text,
             e_ct_hyperText,
             e_ct_errorText,
@@ -76,6 +77,8 @@ namespace GUI {
             e_ct_line,
             e_ct_lineSel,
             e_ct_normalTip,
+            e_ct_selectBox,
+            e_ct_modelOutline,
         };
         ImVec4 getColor(ColorType);
         ImU32 getColorImU32(ColorType);
@@ -102,7 +105,7 @@ namespace GUI {
         {
             WindowConfig() noexcept{};
             float round = 5.0;
-            float bgalpha = 0.1;
+            float bgalpha = 0;
             float border = 0.0;
             bool notitle = true;
             ColorType txt = e_ct_text;
@@ -117,6 +120,7 @@ namespace GUI {
             ButtonConfig() noexcept{};
             ColorType fg = DispConfig::e_ct_btnBgSel;
             ColorType bg = e_ct_none;
+            ColorType fg_hover = e_ct_none;
             ImVec2 size = {0,0};
             float border = 1;
             float boldScale = 1;

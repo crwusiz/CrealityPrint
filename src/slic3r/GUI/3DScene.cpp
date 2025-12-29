@@ -743,7 +743,7 @@ void GLVolume::simple_render(GLShaderProgram* shader, ModelObjectPtrs& model_obj
                 model.render();
             }
             
-            if (GUI::wxGetApp().plater()->is_show_wireframe() && GUI::wxGetApp().plater()->get_current_canvas3D()->get_canvas_type() == GUI::GLCanvas3D::ECanvasType::CanvasView3D)
+            if (GUI::wxGetApp().plater()->is_show_wireframe() && GUI::wxGetApp().plater()->get_current_canvas3D()->get_canvas_type() == GUI::GLCanvas3D::ECanvasType::CanvasView3D && !picking)
             {
                 const ColorRGBA color = model.get_color();
                 model.set_color(ColorRGBA::DARK_GRAY());
@@ -1153,6 +1153,59 @@ int GLVolumeCollection::load_wipe_tower_preview(
     return int(volumes.size() - 1);
 }
 
+int GLVolumeCollection::load_real_wipe_tower_preview(int                 obj_idx,
+                                                     float               pos_x,
+                                                     float               pos_y,
+                                                     const TriangleMesh& wt_mesh,
+                                                     const TriangleMesh& brim_mesh,
+                                                     bool                render_brim,
+                                                     float               rotation_angle,
+                                                     bool                size_unknown,
+                                                     bool                opengl_initialized)
+{
+    int plate_idx = obj_idx - 1000;
+    if (wt_mesh.its.vertices.empty())
+        return int(this->volumes.size() - 1);
+
+    std::vector<ColorRGBA> extruder_colors = get_extruders_colors();
+    GUI::PartPlateList&    ppl             = GUI::wxGetApp().plater()->get_partplate_list();
+    std::vector<int>       plate_extruders = ppl.get_plate(plate_idx)->get_extruders(true);
+    std::vector<ColorRGBA> colors;
+    if (!plate_extruders.empty()) {
+        if (plate_extruders.front() <= extruder_colors.size())
+            colors.push_back(extruder_colors[plate_extruders.front() - 1]);
+        else
+            colors.push_back(extruder_colors[0]);
+    }
+    if (colors.empty())
+        return int(this->volumes.size() - 1);
+    volumes.emplace_back(new GLWipeTowerVolume({colors}));
+    GLWipeTowerVolume& v    = *dynamic_cast<GLWipeTowerVolume*>(volumes.back());
+    auto               mesh = wt_mesh;
+    if (render_brim) {
+        mesh.merge(brim_mesh);
+    }
+    if (!colors.empty()) {
+        v.model_per_colors.resize(1);
+        v.model_per_colors[0].init_from(mesh);
+        // v.model_per_colors[0].finalize_geometry(opengl_initialized);
+    }
+    TriangleMesh wipe_tower_shell = mesh.convex_hull_3d();
+    v.model.init_from(wipe_tower_shell);
+    v.mesh_raycaster = std::make_unique<GUI::MeshRaycaster>(std::make_shared<const TriangleMesh>(wipe_tower_shell));
+    // v.indexed_vertex_array->finalize_geometry(opengl_initialized);
+    v.set_convex_hull(wipe_tower_shell);
+    v.set_volume_offset(Vec3d(pos_x, pos_y, 0.0));
+    v.set_volume_rotation(Vec3d(0., 0., (M_PI / 180.) * rotation_angle));
+    v.composite_id                             = GLVolume::CompositeID(obj_idx, 0, 0);
+    v.geometry_id.first                        = 0;
+    v.geometry_id.second                       = wipe_tower_instance_id().id + (obj_idx - 1000);
+    v.is_wipe_tower                            = true;
+    v.shader_outside_printer_detection_enabled = !size_unknown;
+    return int(volumes.size() - 1);
+}
+
+
 GLVolume* GLVolumeCollection::new_toolpath_volume(const ColorRGBA& rgba)
 {
     GLVolume* out = new_nontoolpath_volume(rgba);
@@ -1397,10 +1450,31 @@ bool GLVolumeCollection::check_outside_state(const BuildVolume &build_volume, Mo
     // Volume is partially below the print bed, thus a pre-calculated convex hull cannot be used.
     auto                volume_sinking     = [](GLVolume& volume) -> bool
         { return volume.object_idx() != -1 && volume.volume_idx() != -1 && volume.is_sinking(); };
+    const bool belt_machine = GUI::wxGetApp().preset_bundle->machine_is_belt();
     // Cached bounding box of a volume above the print bed.
-    auto                volume_bbox        = [volume_sinking](GLVolume& volume) -> BoundingBoxf3
-        { return volume_sinking(volume) ? volume.transformed_non_sinking_bounding_box() : volume.transformed_convex_hull_bounding_box(); };
-    // Cached 3D convex hull of a volume above the print bed.
+    auto volume_bbox = [volume_sinking, &model, belt_machine](GLVolume& volume) -> BoundingBoxf3 {
+        if (belt_machine &&
+            volume.object_idx() >= 0 && volume.volume_idx() >= 0 && volume.instance_idx() >= 0 &&
+            volume.object_idx() < int(model.objects.size()) &&
+            volume.instance_idx() < int(model.objects[volume.object_idx()]->instances.size())) {
+            const ModelInstance* instance = model.objects[volume.object_idx()]->instances[volume.instance_idx()];
+            if (instance != nullptr && instance->has_old_transformation()) {
+                Transform3d m = instance->get_old_transformation().get_matrix() * volume.get_volume_transformation().get_matrix();
+                Vec3d ofs2ass = volume.get_offset_to_assembly() * (GLVolume::explosion_ratio - 1.0);
+                Vec3d volofs2obj = volume.get_volume_transformation().get_offset() * (GLVolume::explosion_ratio - 1.0);
+                m.translation()(2) += volume.get_sla_shift_z();
+                m.translate(ofs2ass + volofs2obj);
+                return volume_sinking(volume) ?
+                    volume.transformed_non_sinking_bounding_box(m) :
+                    volume.transformed_convex_hull_bounding_box(m);
+            }
+        }
+        if (volume_sinking(volume))
+            return volume.transformed_non_sinking_bounding_box();
+        return volume.transformed_convex_hull_bounding_box();
+    };
+
+// Cached 3D convex hull of a volume above the print bed.
     auto                volume_convex_mesh = [volume_sinking, &model](GLVolume& volume) -> const TriangleMesh&
         { return volume_sinking(volume) ? model.objects[volume.object_idx()]->volumes[volume.volume_idx()]->mesh() : *volume.convex_hull(); };
 
@@ -1432,6 +1506,7 @@ bool GLVolumeCollection::check_outside_state(const BuildVolume &build_volume, Mo
                 state = BuildVolume::ObjectState::Below;
             else {
                 switch (plate_build_volume.type()) {
+                case BuildVolume_Type::Belt:
                 case BuildVolume_Type::Rectangle:
                 //FIXME this test does not evaluate collision of a build volume bounding box with non-convex objects.
                     if (!is_multi_color) state = plate_build_volume.volume_state_bbox(bb);

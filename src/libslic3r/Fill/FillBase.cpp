@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <numeric>
 
+#include <cmath>
 #include "../ClipperUtils.hpp"
 #include "../EdgeGrid.hpp"
 #include "../Geometry.hpp"
@@ -8,6 +9,7 @@
 #include "../Point.hpp"
 #include "../PrintConfig.hpp"
 #include "../Surface.hpp"
+#include "../libslic3r.h"
 #include "../VariableWidth.hpp"
 #include "../ShortestPath.hpp"
 
@@ -16,6 +18,8 @@
 #include "FillHoneycomb.hpp"
 #include "Fill3DHoneycomb.hpp"
 #include "FillGyroid.hpp"
+#include "FillTpmsD.hpp"
+#include "FillTpmsFK.hpp"
 #include "FillPlanePath.hpp"
 #include "FillLine.hpp"
 #include "FillRectilinear.hpp"
@@ -42,23 +46,29 @@ float Fill::infill_anchor = 400;
 //BBS: 20mm
 float Fill::infill_anchor_max = 20;
 
+
+
+
 Fill* Fill::new_from_type(const InfillPattern type)
 {
     switch (type) {
     case ipConcentric:          return new FillConcentric();
     case ipHoneycomb:           return new FillHoneycomb();
+    case ipLateralHoneycomb:         return new FillLateralHoneycomb();
     case ip3DHoneycomb:         return new Fill3DHoneycomb();
     case ipGyroid:              return new FillGyroid();
-    case ipTpmsD:               return new FillTpmsD();
+    case ipTpmsD:               return new FillTpmsD();//from creality print
     case ipGradualTpmsG:        return new FillTpmsGradual(0);
     case ipGradualTpmsD:        return new FillTpmsGradual(1);
-    case ipGradualTpmsFKS:      return new FillTpmsGradual(3);
+    case ipGradualTpmsFK:      return new FillTpmsGradual(3);
+    case ipTpmsFK:              return new FillTpmsFK();
     case ipRectilinear:         return new FillRectilinear();
     case ipAlignedRectilinear:  return new FillAlignedRectilinear();
     case ipCrossHatch:          return new FillCrossHatch();
     case ipMonotonic:           return new FillMonotonic();
     case ipLine:                return new FillLine();
     case ipGrid:                return new FillGrid();
+    case ipLateralLattice:           return new FillLateralLattice();
     case ipTriangles:           return new FillTriangles();
     case ipStars:               return new FillStars();
     case ipCubic:               return new FillCubic();
@@ -78,6 +88,9 @@ Fill* Fill::new_from_type(const InfillPattern type)
     case ipMonotonicLine:       return new FillMonotonicLines();
     case ipquarter_cubic:       
     case iptetrahedral:       return new FillQuarter();
+    case ipZigZag:              return new FillZigZag();
+    case ipCrossZag:            return new FillCrossZag();
+    case ipLockedZag:           return new FillLockedZag();
     default: throw Slic3r::InvalidArgument("unknown type");
     }
 }
@@ -2014,7 +2027,7 @@ outdoor:
         size_t idx   = eec->entities.size();
         if (params.use_arachne) {
             Flow new_flow = params.flow.with_spacing(float(this->spacing));
-            variable_width(thick_polylines, params.extrusion_role, new_flow, eec->entities);
+            variable_width(thick_polylines, params.extrusion_role, new_flow, 0 ,eec->entities);
             thick_polylines.clear();
         } else {
             extrusion_entities_append_paths(eec->entities, std::move(polylines), params.extrusion_role, flow_mm3_per_mm, float(flow_width),
@@ -2088,7 +2101,7 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
             }), polylines.end());
             
             ExtrusionEntityCollection gap_fill;
-            variable_width(polylines, erGapFill, params.flow, gap_fill.entities);
+            variable_width(polylines, erGapFill, params.flow, 0, gap_fill.entities);
             auto gap = std::move(gap_fill.entities);
             out->append(gap);
         }
@@ -2155,7 +2168,7 @@ std::pair<float, Point> Fill::_infill_direction(const Surface *surface) const
         out_angle = float(surface->bridge_angle);
     } else if (this->layer_id != size_t(-1)) {
         // alternate fill direction
-        out_angle += this->_layer_angle(this->layer_id / surface->thickness_layers);
+           out_angle += this->_layer_angle(this->layer_id / surface->thickness_layers);
     } else {
 //    	printf("Layer_ID undefined!\n");
     }
@@ -3410,6 +3423,18 @@ BoundaryInfillGraph create_boundary_infill_graph(const Polylines &infill_ordered
     return out;
 }
 
+// The extended bounding box of the whole object that covers any rotation of every layer.
+BoundingBox Fill::extended_object_bounding_box() const
+{
+    BoundingBox out = bounding_box;
+    out.merge(Point(out.min.y(), out.min.x()));
+    out.merge(Point(out.max.y(), out.max.x()));
+
+    // The bounding box is scaled by sqrt(2.) to ensure that the bounding box
+    // covers any possible rotations.
+    return out.scaled(sqrt(2.));
+}
+
 void Fill::connect_infill(Polylines &&infill_ordered, const std::vector<const Polygon*> &boundary_src, const BoundingBox &bbox, Polylines &polylines_out, const double spacing, const FillParams &params)
 {
 	assert(! infill_ordered.empty());
@@ -3642,6 +3667,18 @@ void Fill::connect_infill(Polylines &&infill_ordered, const std::vector<const Po
 	for (Polyline &pl : infill_ordered)
 		if (! pl.empty())
 			polylines_out.emplace_back(std::move(pl));
+}
+
+void Fill::chain_or_connect_infill(Polylines &&infill_ordered, const ExPolygon &boundary, Polylines &polylines_out, const double spacing, const FillParams &params)
+{
+    if (!infill_ordered.empty()) {
+        if (params.dont_connect()) {
+            if (infill_ordered.size() > 1)
+                infill_ordered = chain_polylines(std::move(infill_ordered));
+            append(polylines_out, std::move(infill_ordered));
+        } else
+            connect_infill(std::move(infill_ordered), boundary, polylines_out, spacing, params);
+    }
 }
 
 // Extend the infill lines along the perimeters, this is mainly useful for grid aligned support, where a perimeter line may be nearly
@@ -4521,6 +4558,57 @@ void Fill::connect_base_support(Polylines &&infill_ordered, const Polygons &boun
         polygons_src.emplace_back(&polygon);
 
     connect_base_support(std::move(infill_ordered), polygons_src, bbox, polylines_out, spacing, params);
+}
+
+//Fill  Multiline
+void multiline_fill(Polylines& polylines, const FillParams& params, float spacing)
+{
+    if (params.multiline > 1) {
+        const int n_lines = params.multiline;
+        const int n_polylines = static_cast<int>(polylines.size());
+        Polylines all_polylines;
+        all_polylines.reserve(n_lines * n_polylines);
+
+        const float center = (n_lines - 1) / 2.0f;
+
+        for (int line = 0; line < n_lines; ++line) {
+            float offset = (static_cast<float>(line) - center) * spacing;
+
+            for (const Polyline& pl : polylines) {
+                const size_t n = pl.points.size();
+                if (n < 2) {
+                    all_polylines.emplace_back(pl);
+                    continue;
+                }
+
+                Points new_points;
+                new_points.reserve(n);
+                for (size_t i = 0; i < n; ++i) {
+                    Vec2f tangent;
+                    if (i == 0)
+                        tangent = Vec2f(pl.points[1].x() - pl.points[0].x(), pl.points[1].y() - pl.points[0].y());
+                    else if (i == n - 1)
+                        tangent = Vec2f(pl.points[n - 1].x() - pl.points[n - 2].x(), pl.points[n - 1].y() - pl.points[n - 2].y());
+                    else
+                        tangent = Vec2f(pl.points[i + 1].x() - pl.points[i - 1].x(), pl.points[i + 1].y() - pl.points[i - 1].y());
+
+                    float len = std::hypot(tangent.x(), tangent.y());
+                    if (len == 0)
+                        len = 1.0f;
+                    tangent /= len;
+                    Vec2f normal(-tangent.y(), tangent.x());
+
+                    Point p = pl.points[i];
+                    p.x() += scale_(normal.x() * offset);
+                    p.y() += scale_(normal.y() * offset);
+                    new_points.push_back(p);
+                }
+
+                all_polylines.emplace_back(std::move(new_points));
+            }
+        }
+        polylines = std::move(all_polylines);
+    }
 }
 
 } // namespace Slic3r

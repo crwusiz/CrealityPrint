@@ -76,7 +76,8 @@ private:
     // X,Y,Z,E,F
     float                           m_current_pos[5];
     size_t                          m_current_extruder;
-    ExtrusionRole     m_current_extrusion_role;
+    ExtrusionRole                   m_current_extrusion_role;
+    std::optional<uint16_t>         m_current_perimeter_index;
     bool                            m_retracted;
     bool                            m_use_relative_e_distances;
 
@@ -154,6 +155,9 @@ private:
         size_t      extruder_id;
         // Extrusion role of this segment.
         ExtrusionRole extrusion_role;
+
+        // Set only for external and internal perimeters. The external perimeter has value 0, the first internal perimeter has 1, and so on.
+        std::optional<uint16_t> perimeter_index;
 
         // Current volumetric extrusion rate.
         float       volumetric_extrusion_rate;

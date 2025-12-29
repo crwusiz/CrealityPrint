@@ -85,12 +85,14 @@
 #include <shlobj.h>
 #endif // _WIN32
 #include <slic3r/GUI/CreatePresetsDialog.hpp>
+#include "slic3r/GUI/WebModelLibraryView.hpp"
 #include "print_manage/AppMgr.hpp"
 #define ALL_PLATFORM 1
 #include "UpdateParams.hpp"
 #include "libslic3r/common_header/common_header.h"
 #include "CommunicateWithCXCloud.hpp"
 #include "slic3r/Utils/TestHelper.hpp"
+#include "slic3r/GUI/AnalyticsDataUploadManager.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -195,11 +197,11 @@ static const wxString ctrl = ("Ctrl+");
 static const wxString ctrl = _L("Ctrl+");
 #endif
 
-MainFrame::MainFrame() :
-DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_STYLE, "mainframe")
+MainFrame::MainFrame()
+    : DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_STYLE, "mainframe")
     , m_printhost_queue_dlg(new PrintHostQueueDialog(this))
     // BBS
-    , m_recent_projects(18)
+    , m_recent_projects(30)
     , m_settings_dialog(this)
     , diff_dialog(this)
 {
@@ -216,7 +218,7 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     wxGetApp().app_config->set_bool("internal_developer_mode", false);
 
     wxString max_recent_count_str = wxGetApp().app_config->get("max_recent_count");
-    long max_recent_count = 18;
+    long     max_recent_count     = 30;
     if (max_recent_count_str.ToLong(&max_recent_count))
         set_max_recent_count((int)max_recent_count);
 
@@ -861,6 +863,11 @@ void MainFrame::update_layout()
     case ESettingsLayout::Old:
     {
         m_plater->Reparent(m_tabpanel);
+        if (m_webmodellibrary_view) {
+            m_tabpanel->InsertPage(tpOnlineModel, m_webmodellibrary_view, _L("Online Models"), std::string("tab_online_model_active"),
+                                   std::string("tab_online_model_active"), false);
+        }
+
         m_tabpanel->InsertPage(tp3DEditor, m_plater, _L("Prepare"), std::string("tab_3d_active"), std::string("tab_3d_active"), false);
         m_tabpanel->InsertPage(tpPreview, m_plater, _L("Preview"), std::string("tab_preview_active"), std::string("tab_preview_active"), false);
         m_main_sizer->Add(m_tabpanel, 1, wxEXPAND | wxTOP, 0);
@@ -877,6 +884,22 @@ void MainFrame::update_layout()
             else if (evt.GetId() == tpDeviceMgr){ 
                 if (m_printer_mgr_view) {
                     m_printer_mgr_view->on_switch_to_device_page();
+                }
+            } else if (evt.GetId() == tpOnlineModel) {
+                if (m_webmodellibrary_view) {
+                    //click online  models
+                    AnalyticsDataUploadManager::uploadSlice822ClickEvent("online_models");
+                    // 切换到在线模型时不刷新 UA；仅在登录状态变更时由 GUI_App 触发更新
+
+                    // 首次进入在线模型时加载默认页面；以视图实例状态为准，避免语言切换重建 GUI 后不加载的问题
+                    if (!m_webmodellibrary_view->IsInitialized()) {
+                        // 在首次加载模型库前，主动刷新 UA 与 Cookies，避免未授权请求导致首屏 401/403
+                        // m_webmodellibrary_view->UpdateUserAgent();
+                        wxString url = get_cloud_webaddress() + "model-category/3d-print-all";
+                        m_webmodellibrary_view->load_url(url);
+                    }
+
+                    m_webmodellibrary_view->Show();
                 }
             }
             evt.Skip();
@@ -1091,7 +1114,7 @@ void MainFrame::init_tabpanel() {
                 if (m_tab_event_enabled)
                     wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_3D));
                 m_param_panel->OnActivate();
-
+                m_plater->close_checked_3rd_filament_vendor_tip();
 
             }
             else if (sel == tpPreview) {
@@ -1111,9 +1134,7 @@ void MainFrame::init_tabpanel() {
         }
         //else if (panel == m_param_panel)
         //    m_param_panel->OnActivate();
-        else if (panel == m_monitor) {
-            //monitor
-        }
+        
 #ifndef __APPLE__
         if (sel == tp3DEditor) {
             //m_topbar->EnableUndoRedoItems();
@@ -1171,9 +1192,9 @@ void MainFrame::init_tabpanel() {
     create_preset_tabs();
 
         //BBS add pages
-    m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-    m_monitor->SetBackgroundColour(*wxWHITE);
-    m_tabpanel->AddPage(m_monitor, _L("Device"), std::string("tab_monitor_active"), std::string("tab_monitor_active"), false);
+    //m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    //m_monitor->SetBackgroundColour(*wxWHITE);
+    //m_tabpanel->AddPage(m_monitor, _L("Device"), std::string("tab_monitor_active"), std::string("tab_monitor_active"), false);
 
     m_printer_view = new PrinterWebView(m_tabpanel);
     Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent &evt) {
@@ -1184,7 +1205,10 @@ void MainFrame::init_tabpanel() {
     });
     m_printer_view->Hide();
     
-    //New device management object
+    m_webmodellibrary_view = new WebModelLibraryView(m_tabpanel);
+    m_webmodellibrary_view->SetId(MainFrame::tpOnlineModel);
+    m_webmodellibrary_view->Hide();
+    // New device management object
     m_printer_mgr_view = new PrinterMgrView(m_tabpanel);
     m_printer_mgr_view->SetId(MainFrame::tpDeviceMgr);
     m_tabpanel->AddPage(m_printer_mgr_view, _L("Device"), std::string("tab_monitor_active"), std::string("tab_monitor_active"), false);
@@ -1193,20 +1217,20 @@ void MainFrame::init_tabpanel() {
         m_plater->create_send_to_printer_dlg();  // BBS : pre create the send dialog on program startup
     }
 
-    if (wxGetApp().is_enable_multi_machine()) {
-        m_multi_machine = new MultiMachinePage(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-        m_multi_machine->SetBackgroundColour(*wxWHITE);
+    //if (wxGetApp().is_enable_multi_machine()) {
+    //    m_multi_machine = new MultiMachinePage(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    //    m_multi_machine->SetBackgroundColour(*wxWHITE);
         // TODO: change the bitmap
-        m_tabpanel->AddPage(m_multi_machine, _L("Multi-device"), std::string("tab_multi_active"), std::string("tab_multi_active"), false);
-    }
+    //    m_tabpanel->AddPage(m_multi_machine, _L("Multi-device"), std::string("tab_multi_active"), std::string("tab_multi_active"), false);
+    //}
 
-    m_project = new ProjectPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-    m_project->SetBackgroundColour(*wxWHITE);
-    m_tabpanel->AddPage(m_project, _L("Project"), std::string("tab_auxiliary_active"), std::string("tab_auxiliary_active"), false);
+    //m_project = new ProjectPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    //m_project->SetBackgroundColour(*wxWHITE);
+    //m_tabpanel->AddPage(m_project, _L("Project"), std::string("tab_auxiliary_active"), std::string("tab_auxiliary_active"), false);
 
-    m_calibration = new CalibrationPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-    m_calibration->SetBackgroundColour(*wxWHITE);
-    m_tabpanel->AddPage(m_calibration, _L("Calibration"), std::string("tab_calibration_active"), std::string("tab_calibration_active"), false);
+    //m_calibration = new CalibrationPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    //m_calibration->SetBackgroundColour(*wxWHITE);
+    //m_tabpanel->AddPage(m_calibration, _L("Calibration"), std::string("tab_calibration_active"), std::string("tab_calibration_active"), false);
 
     if (m_plater) {
         // load initial config
@@ -1226,8 +1250,8 @@ void MainFrame::init_tabpanel() {
 void MainFrame::show_device(bool bBBLPrinter) {
     auto idx = -1;
     if (bBBLPrinter) {
-        if (m_tabpanel->FindPage(m_monitor) != wxNOT_FOUND)
-            return;
+        //if (m_tabpanel->FindPage(m_monitor) != wxNOT_FOUND)
+        //    return;
         // Remove printer view
         if ((idx = m_tabpanel->FindPage(m_printer_view)) != wxNOT_FOUND) {
             m_printer_view->Show(false);
@@ -1235,14 +1259,15 @@ void MainFrame::show_device(bool bBBLPrinter) {
         }
 
         // Create/insert monitor page
-        if (!m_monitor) {
+        /*if (!m_monitor) {
             m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
             m_monitor->SetBackgroundColour(*wxWHITE);
         }
         m_monitor->Show(false);
+        
         m_tabpanel->InsertPage(tpMonitor, m_monitor, _L("Device"), std::string("tab_monitor_active"), std::string("tab_monitor_active"));
-
-        if (wxGetApp().is_enable_multi_machine()) {
+        */
+        /*if (wxGetApp().is_enable_multi_machine()) {
             if (!m_multi_machine) {
                 m_multi_machine = new MultiMachinePage(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
                 m_multi_machine->SetBackgroundColour(*wxWHITE);
@@ -1251,14 +1276,14 @@ void MainFrame::show_device(bool bBBLPrinter) {
             m_multi_machine->Show(false);
             m_tabpanel->InsertPage(tpMultiDevice, m_multi_machine, _L("Multi-device"), std::string("tab_multi_active"),
                                    std::string("tab_multi_active"), false);
-        }
-        if (!m_calibration) {
-            m_calibration = new CalibrationPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-            m_calibration->SetBackgroundColour(*wxWHITE);
-        }
-        m_calibration->Show(false);
-        m_tabpanel->InsertPage(tpCalibration, m_calibration, _L("Calibration"), std::string("tab_calibration_active"),
-                               std::string("tab_calibration_active"), false);
+        }*/
+        //if (!m_calibration) {
+        //    m_calibration = new CalibrationPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+        //    m_calibration->SetBackgroundColour(*wxWHITE);
+        //}
+        //m_calibration->Show(false);
+        //m_tabpanel->InsertPage(tpCalibration, m_calibration, _L("Calibration"), std::string("tab_calibration_active"),
+        //                       std::string("tab_calibration_active"), false);
 
 #ifdef _MSW_DARK_MODE
         wxGetApp().UpdateDarkUIWin(this);
@@ -1268,18 +1293,18 @@ void MainFrame::show_device(bool bBBLPrinter) {
         if (m_tabpanel->FindPage(m_printer_view) != wxNOT_FOUND)
             return;
 
-        if ((idx = m_tabpanel->FindPage(m_calibration)) != wxNOT_FOUND) {
-            m_calibration->Show(false);
-            m_tabpanel->RemovePage(idx);
-        }
-        if ((idx = m_tabpanel->FindPage(m_multi_machine)) != wxNOT_FOUND) {
+        //if ((idx = m_tabpanel->FindPage(m_calibration)) != wxNOT_FOUND) {
+        //    m_calibration->Show(false);
+        //    m_tabpanel->RemovePage(idx);
+        //}
+        /*if ((idx = m_tabpanel->FindPage(m_multi_machine)) != wxNOT_FOUND) {
             m_multi_machine->Show(false);
             m_tabpanel->RemovePage(idx);
-        }
-        if ((idx = m_tabpanel->FindPage(m_monitor)) != wxNOT_FOUND) {
+        }*/
+        /*if ((idx = m_tabpanel->FindPage(m_monitor)) != wxNOT_FOUND) {
             m_monitor->Show(false);
             m_tabpanel->RemovePage(idx);
-        }
+        }*/
         if (m_printer_view == nullptr) {
             m_printer_view = new PrinterWebView(m_tabpanel);
             Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent& evt) {
@@ -1334,7 +1359,7 @@ bool MainFrame::preview_only_hint()
         if (preview_only_to_editor) {
             m_plater->new_project();
             preview_only_to_editor = false;
-            
+
             return true;
         }
         else{//Event cannot be directly passed to TopBar object
@@ -1698,7 +1723,12 @@ void MainFrame::print_plate(PrintSelectType tp){
 
     m_print_select = tp;
 
+    if (wxGetApp().preset_bundle->machine_is_belt()) {
+        m_plater->restore_belt_trans();
+    }
+
     m_plater->apply_background_progress();
+        
     if (m_print_select == ePrintAll)
         wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_PRINT_ALL));
     else if (m_print_select == ePrintPlate)
@@ -2328,13 +2358,13 @@ void MainFrame::on_dpi_changed(const wxRect& suggested_rect)
     //BBS GUI refactor: remove unused layout new/dlg
     //if (m_layout != ESettingsLayout::Dlg) // Do not update tabs if the Settings are in the separated dialog
     m_param_panel->msw_rescale();
-    m_project->msw_rescale();
-    if(m_monitor)
-        m_monitor->msw_rescale();
-    if(m_multi_machine)
-        m_multi_machine->msw_rescale();
-    if(m_calibration)
-        m_calibration->msw_rescale();
+    //m_project->msw_rescale();
+    //if(m_monitor)
+    //    m_monitor->msw_rescale();
+    //if(m_multi_machine)
+    //    m_multi_machine->msw_rescale();
+    //if(m_calibration)
+    //    m_calibration->msw_rescale();
 
     // BBS
 #if 0
@@ -2359,8 +2389,10 @@ void MainFrame::on_dpi_changed(const wxRect& suggested_rect)
      */
     const wxSize& sz = this->GetSize();
     this->SetSize(sz.x + 1, sz.y + 1);
-    this->SetSize(sz);
-
+    //this->SetSize(sz);
+    const wxSize min_size = wxGetApp().get_min_size_ex(this);
+    SetMinSize(min_size);
+    this->SetSize(min_size);
     this->Maximize(is_maximized);
 }
 
@@ -2393,10 +2425,10 @@ void MainFrame::on_sys_color_changed()
 
     // update Plater
     wxGetApp().plater()->sys_color_changed();
-    if(m_monitor)
-        m_monitor->on_sys_color_changed();
-    if(m_calibration)
-        m_calibration->on_sys_color_changed();
+    //if(m_monitor)
+    //    m_monitor->on_sys_color_changed();
+    //if(m_calibration)
+    //    m_calibration->on_sys_color_changed();
     // update Tabs
     for (auto tab : wxGetApp().tabs_list)
         tab->sys_color_changed();
@@ -2756,6 +2788,13 @@ void MainFrame::init_menubar_as_editor()
             [this, &report_file_menu_event](wxCommandEvent&) { export_presets(); report_file_menu_event(16); }, "menu_export_config", nullptr, []() { return true; }, this);
 
         append_submenu(fileMenu, export_menu, wxID_ANY, _L("Export"), "");
+
+        append_menu_item(
+            fileMenu, wxID_ANY, _L("Upload (3mf) to CrealityCloud"), _L("Upload current project to cloud storage"),
+            [this](wxCommandEvent&) {
+                wxGetApp().open_upload_3mf();
+            }, "", nullptr,
+            [this]() { return m_plater != nullptr && !m_plater->model().objects.empty(); }, this);
 
         fileMenu->AppendSeparator();
 
@@ -3458,22 +3497,17 @@ void MainFrame::init_menubar_as_editor()
         m_topbar->AddDropDownSubMenu(editMenu, _L("Edit"));
     if (viewMenu)
         m_topbar->AddDropDownSubMenu(viewMenu, _L("View"));
-    //BBS add Preference
-
+    
+    auto preference_item1 = append_menu_item(
+        m_topbar->GetTopMenu(), wxID_ANY, _L("Preferences") + "\t" + ctrl + "P", "",
+        [this](wxCommandEvent&) {
+            wxGetApp().open_preferences();
+            plater()->get_current_canvas3D()->force_set_focus();
+        },
+        "", nullptr, []() { return true; }, this);
    
 	m_topbar->AddDropDownSubMenu(calibMenu, _L("Calibration"));
 
-    //// no need the preferences menu in dropdown menu as requested
-    // append_menu_item(
-    //     m_topbar->GetTopMenu(), wxID_ANY, _L("Preferences") + "\t" + ctrl + "P", "",
-    //     [this](wxCommandEvent &) {
-    //         // Orca: Use GUI_App::open_preferences instead of direct call so windows associations are updated on exit
-    //         wxGetApp().open_preferences();
-    //         plater()->get_current_canvas3D()->force_set_focus();
-    //     },
-    //     "", nullptr, []() { return true; }, this);
-
-    //m_topbar->AddDropDownMenuItem(preference_item);
     //m_topbar->AddDropDownMenuItem(printer_item);
     //m_topbar->AddDropDownMenuItem(language_item);
     //m_topbar->AddDropDownMenuItem(config_item);
@@ -4268,18 +4302,18 @@ void MainFrame::select_tab(wxPanel* panel)
 //BBS
 void MainFrame::jump_to_monitor(std::string dev_id)
 {
-    if(!m_monitor)
-        return;
-    m_tabpanel->SetSelection(tpMonitor);
-    ((MonitorPanel*)m_monitor)->select_machine(dev_id);
+    //if(!m_monitor)
+    //    return;
+    //m_tabpanel->SetSelection(tpMonitor);
+    //((MonitorPanel*)m_monitor)->select_machine(dev_id);
 }
 
 void MainFrame::jump_to_multipage()
 {
-    if(!m_multi_machine)
-        return;
-    m_tabpanel->SetSelection(tpMultiDevice);
-    ((MultiMachinePage*)m_multi_machine)->jump_to_send_page();
+    //if(!m_multi_machine)
+    //    return;
+    //m_tabpanel->SetSelection(tpMultiDevice);
+    //((MultiMachinePage*)m_multi_machine)->jump_to_send_page();
 }
 
 
@@ -4330,8 +4364,8 @@ void MainFrame::request_select_tab(TabPosition pos)
 }
 
 int MainFrame::get_calibration_curr_tab() {
-    if (m_calibration)
-        return m_calibration->get_tabpanel()->GetSelection();
+    //if (m_calibration)
+    //    return m_calibration->get_tabpanel()->GetSelection();
     return -1;
 }
 
@@ -4775,6 +4809,14 @@ void MainFrame::RunScript(wxString js)
         m_webview->RunScript(js);
 }
 
+// 刷新设备管理页（触发前端 refresh_all_device）
+void MainFrame::refresh_device_page()
+{
+    if (m_printer_mgr_view) {
+        m_printer_mgr_view->request_refresh_all_device();
+    }
+}
+
 void MainFrame::technology_changed()
 {
     // update menu titles
@@ -4835,7 +4877,7 @@ void MainFrame::update_side_preset_ui()
 
 
     //take off multi machine
-    if(m_multi_machine){m_multi_machine->clear_page();}
+    //if(m_multi_machine){m_multi_machine->clear_page();}
 }
 
 void MainFrame::on_select_default_preset(SimpleEvent& evt)

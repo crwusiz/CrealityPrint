@@ -422,13 +422,13 @@ UpdateJob::UpdateJob(DataUpdate&& input): m_input(std::move(input)){ assert(chec
 void UpdateJob::process(Ctl &ctl)
 {
     if (!check(m_input))
-        throw JobException("Bad input data for EmbossUpdateJob.");
+        throw JobException(_u8L("Bad input data for EmbossUpdateJob."));
 
     auto was_canceled = ::was_canceled(ctl, *m_input.base);
     m_result = ::try_create_mesh(*m_input.base, was_canceled);
     if (was_canceled()) return;
     if (m_result.its.empty())
-        throw JobException("Created text volume is empty. Change text or font.");
+        throw JobException(_u8L("Created text volume is empty. Change text or font."));
 }
 
 void UpdateJob::finalize(bool canceled, std::exception_ptr &eptr)

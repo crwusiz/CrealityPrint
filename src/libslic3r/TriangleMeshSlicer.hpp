@@ -33,6 +33,8 @@ struct MeshSlicingParams
     SlicingMode   mode_below { SlicingMode::Regular };
     // Transforming faces during the slicing.
     Transform3d   trafo { Transform3d::Identity() };
+    double         miny;
+    bool          is_belt{false};
 };
 
 struct MeshSlicingParamsEx : public MeshSlicingParams

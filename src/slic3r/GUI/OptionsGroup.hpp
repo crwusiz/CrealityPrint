@@ -61,6 +61,7 @@ public:
     bool        toggle_visible{true}; // BBS: hide some line
 
     size_t		full_width {0}; 
+    bool        subline{false};
     widget_t	widget {nullptr};
     std::function<wxWindow*(wxWindow*)>	near_label_widget{ nullptr };
 	wxWindow*	near_label_widget_win {nullptr};
@@ -149,9 +150,12 @@ public:
 	// delete all controls from the option group
 	void		clear(bool destroy_custom_ctrl = false);
 
-    Line		create_single_option_line(const Option& option, const std::string& path = std::string()) const;
-    void		append_single_option_line(const Option& option, const std::string& path = std::string()) { append_line(create_single_option_line(option, path)); }
-	void		append_separator();
+    Line create_single_option_line(const Option& option, const std::string& path = std::string(), bool subline = false) const;
+    void append_single_option_line(const Option& option, const std::string& path = std::string(), bool subline = false)
+    {
+        append_line(create_single_option_line(option, path, subline));
+    }
+    void append_separator();
 
     // return a non-owning pointer reference 
     inline Field*	get_field(const t_config_option_key& id) const{
@@ -266,22 +270,25 @@ public:
 	void 		set_config_category_and_type(const wxString &category, int type) { m_config_category = category; m_config_type = type; }
     void        set_config(DynamicPrintConfig* config) { 
 		m_config = config; m_modelconfig = nullptr; }
-	Option		get_option(const std::string& opt_key, int opt_index = -1);
-	Line		create_single_option_line(const std::string& title, const std::string& path = std::string(), int idx = -1) /*const*/{
-		Option option = get_option(title, idx);
-		return OptionsGroup::create_single_option_line(option, path);
-	}
-	Line		create_single_option_line(const Option& option, const std::string& path = std::string()) const {
-		return OptionsGroup::create_single_option_line(option, path);
-	}
-	void		append_single_option_line(const Option& option, const std::string& path = std::string())	{
-		OptionsGroup::append_single_option_line(option, path);
-	}
-	void		append_single_option_line(const std::string title, const std::string& path = std::string(), int idx = -1)
-	{
-		Option option = get_option(title, idx);
-		append_single_option_line(option, path);
-	}
+    Option get_option(const std::string& opt_key, int opt_index = -1);
+    Line   create_single_option_line(const std::string& title, const std::string& path = std::string(), int idx = -1) /*const*/
+    {
+        Option option = get_option(title, idx);
+        return OptionsGroup::create_single_option_line(option, path);
+    }
+    Line create_single_option_line(const Option& option, const std::string& path = std::string()) const
+    {
+        return OptionsGroup::create_single_option_line(option, path);
+    }
+    void append_single_option_line(const Option& option, const std::string& path = std::string(), bool subline = false)
+    {
+        OptionsGroup::append_single_option_line(option, path, subline);
+    }
+    void append_single_option_line(const std::string title, const std::string& path = std::string(), int idx = -1, bool subline = false)
+    {
+        Option option = get_option(title, idx);
+        append_single_option_line(option, path, subline);
+    }
 	
 	void		on_change_OG(const t_config_option_key& opt_id, const boost::any& value) override;
 	void		back_to_initial_value(const std::string& opt_key) override;

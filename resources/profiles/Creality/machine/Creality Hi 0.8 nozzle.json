@@ -34,7 +34,7 @@
     "layer_change_gcode": ";AFTER_LAYER_CHANGE\n;[layer_z]",
     "machine_LED_light_exist": "1",
     "machine_end_gcode": "G1 X0 Y180 F8000\nEND_PRINT",
-    "machine_load_filament_time": "0",
+    "machine_load_filament_time": "105",
     "machine_max_acceleration_e": "5000",
     "machine_max_acceleration_extruding": "12000",
     "machine_max_acceleration_retracting": "5000",
@@ -112,5 +112,5 @@
     "z_hop": "0.4",
     "z_hop_types": "Auto Lift",
     "name": "Creality Hi 0.8 nozzle",
-    "setting_id": "51643"
+    "setting_id": "29560"
 }

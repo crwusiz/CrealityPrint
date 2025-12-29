@@ -1,6 +1,6 @@
 set(_wx_toolkit "")
 set(_wx_private_font "-DwxUSE_PRIVATE_FONTS=1")
-
+set(_wx_link_extra "")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(_gtk_ver 2)
 
@@ -9,6 +9,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif ()
 
     set(_wx_toolkit "-DwxBUILD_TOOLKIT=gtk${_gtk_ver}")
+	#set(_wx_link_extra
+	#	"-DCMAKE_EXE_LINKER_FLAGS=-Wl,--no-as-needed"
+	#	"-DCMAKE_CXX_STANDARD_LIBRARIES=-lpng16 -lz"
+	#    )
 endif()
 
 if (MSVC)
@@ -55,6 +59,7 @@ orcaslicer_add_cmake_project(
         -DwxUSE_LIBTIFF=sys
         -DwxUSE_NANOSVG=OFF
         -DwxUSE_EXPAT=sys
+	#${_wx_link_extra}
 )
 
 if (MSVC)

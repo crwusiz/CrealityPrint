@@ -21,6 +21,10 @@
 #include <limits>
 #include <stdexcept>
 #include <iomanip>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <future>
 
 #include <boost/assign.hpp>
 #include <boost/bimap.hpp>
@@ -1663,19 +1667,18 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
             bool object_load_result = true;
             boost::mutex mutex;
-            tbb::parallel_for(
-                tbb::blocked_range<size_t>(0, m_object_importers.size()),
-                [this, &mutex, &object_load_result](const tbb::blocked_range<size_t>& importer_range) {
-                    CNumericLocalesSetter locales_setter;
-                    for (size_t object_index = importer_range.begin(); object_index < importer_range.end(); ++ object_index) {
-                        bool result = m_object_importers[object_index]->extract_object_model();
-                        {
-                            boost::unique_lock l(mutex);
-                            object_load_result &= result;
-                        }
-                    }
-                }
-            );
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, m_object_importers.size()),
+                                [this, &mutex, &object_load_result](const tbb::blocked_range<size_t>& importer_range) {
+                                    CNumericLocalesSetter locales_setter;
+                                    for (size_t object_index = importer_range.begin(); object_index < importer_range.end();
+                                        ++object_index) {
+                                        bool result = m_object_importers[object_index]->extract_object_model();
+                                        {
+                                            boost::unique_lock l(mutex);
+                                            object_load_result &= result;
+                                        }
+                                    }
+                                });
 
             if (!object_load_result) {
                 BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << boost::format(", loading sub-objects error\n");
@@ -5625,7 +5628,68 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             _BBS_3MF_Importer::ObjectImporter& importer;
             const mz_zip_archive_file_stat& stat;
 
-            CallbackData(XML_Parser& parser, _BBS_3MF_Importer::ObjectImporter& importer, const mz_zip_archive_file_stat& stat) : parser(parser), importer(importer), stat(stat) {}
+            // 生产者-消费者模式相关成员
+            std::queue<std::string> data_queue;           // 数据队列
+            std::mutex queue_mutex;                       // 队列互斥锁
+            std::condition_variable queue_cv;             // 队列条件变量
+            std::atomic<bool> parsing_finished{false};    // 解析完成标志
+            std::atomic<bool> parsing_error{false};       // 解析错误标志
+            std::string error_message;                    // 错误信息
+            std::thread parse_thread;                     // 解析线程
+
+            CallbackData(XML_Parser& parser, _BBS_3MF_Importer::ObjectImporter& importer, const mz_zip_archive_file_stat& stat) : parser(parser), importer(importer), stat(stat)
+            {
+                // 启动消费者线程
+                parse_thread = std::thread([this, parser, stat]() {
+                    while (true) {
+                        std::unique_lock<std::mutex> lock(queue_mutex);
+                        
+                        // 等待数据或解析完成信号
+                        queue_cv.wait(lock, [this]() {
+                            return !data_queue.empty() || parsing_finished;
+                        });
+                        
+                        // 检查是否应该退出
+                        if (parsing_finished && data_queue.empty()) {
+                            break;
+                        }
+                        
+                        // 处理队列中的所有数据
+                        while (!data_queue.empty()) {
+                            std::string data = std::move(data_queue.front());
+                            data_queue.pop();
+                            
+                            // 释放锁以允许生产者继续添加数据
+                            lock.unlock(); 
+                            
+                            // 执行XML解析
+                            if (XML_Parse(parser, data.c_str(), (int)data.size(), 0) == XML_STATUS_ERROR) {
+                                parsing_error = true;
+                                error_message = std::string("XML parsing error: ") + XML_ErrorString(XML_GetErrorCode(parser));
+                                parsing_finished = true;
+                                queue_cv.notify_all();
+                                return;
+                            }
+                            
+                            // 重新获取锁以检查队列
+                            lock.lock();
+                        }
+                    }
+                });
+            }
+
+            ~CallbackData()
+            {
+                // 确保线程安全退出
+                if (parse_thread.joinable()) {
+                    // 如果解析尚未完成，设置标志并通知
+                    if (!parsing_finished) {
+                        parsing_finished = true;
+                        queue_cv.notify_all();
+                    }
+                    parse_thread.join();
+                }
+            }
         };
 
         CallbackData data(object_xml_parser, *this, stat);
@@ -5636,10 +5700,12 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         {
             mz_file_write_func callback = [](void* pOpaque, mz_uint64 file_ofs, const void* pBuf, size_t n)->size_t {
                 CallbackData* data = (CallbackData*)pOpaque;
-                if (!XML_Parse(data->parser, (const char*)pBuf, (int)n, (file_ofs + n == data->stat.m_uncomp_size) ? 1 : 0) || data->importer.object_parse_error()) {
-                    char error_buf[1024];
-                    ::snprintf(error_buf, 1024, "Error (%s) while parsing '%s' at line %d", data->importer.object_parse_error_message(), data->stat.m_filename, (int)XML_GetCurrentLineNumber(data->parser));
-                    throw Slic3r::FileIOError(error_buf);
+
+                // 生产者模式：只负责接收和存储字符串数据
+                if (n > 0) {
+                    std::lock_guard<std::mutex> lock(data->queue_mutex);
+                    data->data_queue.emplace(std::string((const char*)pBuf, n));
+                    data->queue_cv.notify_one();
                 }
                 return n;
             };
@@ -5661,6 +5727,21 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         if (res == 0) {
             top_importer->add_error("Error while extracting model data from zip archive for "+object_path);
+            return false;
+        }
+
+        // 文件提取完成，设置解析完成标志
+        data.parsing_finished = true;
+        data.queue_cv.notify_all();
+
+        // 等待消费者线程完成解析
+        if (data.parse_thread.joinable()) {
+            data.parse_thread.join();
+        }
+
+        // 检查解析过程中是否有错误
+        if (data.parsing_error) {
+            top_importer->add_error(data.error_message + " for " + object_path);
             return false;
         }
 

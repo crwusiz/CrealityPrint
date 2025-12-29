@@ -48,7 +48,7 @@ class Plater;
 class MainFrame;
 class ParamsDialog;
 class PrinterDialog;
-
+class WebModelLibraryView;
 enum QuickSlice
 {
     qsUndef = 0,
@@ -206,15 +206,16 @@ public:
     enum TabPosition
     {
         tpHome          = 0,
-        tp3DEditor      = 1,
-        tpPreview       = 2,
-        tpMonitor       = 3,
-        tpMultiDevice   = 4,
-        tpProject       = 5,
-        tpCalibration   = 6,
-        tpAuxiliary     = 7,
-        toDebugTool     = 8,
-        tpDeviceMgr     = 9,
+        tpOnlineModel   = 1,
+        tp3DEditor      = 2,
+        tpPreview       = 3,
+        tpMonitor       = 4,
+        tpMultiDevice   = 5,
+        tpProject       = 6,
+        tpCalibration   = 7,
+        tpAuxiliary     = 8,
+        toDebugTool     = 9,
+        tpDeviceMgr     = 10,
     };
 
     //BBS: add slice&&print status update logic
@@ -366,9 +367,11 @@ public:
     void show_device(bool bBBLPrinter);
 
     void set_content_visible(bool visiable);
+    // 刷新设备管理页（触发前端 refresh_all_device）
+    void refresh_device_page();
 
     PrinterMgrView* get_printer_mgr_view() { return m_printer_mgr_view; }
-
+    WebModelLibraryView* get_modellibrary_view(){ return m_webmodellibrary_view; }
     PA_Calibration_Dlg* m_pa_calib_dlg{ nullptr };
     Temp_Calibration_Dlg* m_temp_calib_dlg{ nullptr };
     MaxVolumetricSpeed_Test_Dlg* m_vol_test_dlg { nullptr };
@@ -389,16 +392,17 @@ public:
     PrintHostQueueDialog* printhost_queue_dlg() { return m_printhost_queue_dlg; }
     Plater*               m_plater { nullptr };
     //BBS: GUI refactor
-    MonitorPanel*         m_monitor{ nullptr };
+    //MonitorPanel*         m_monitor{ nullptr };
 
     //AuxiliaryPanel*       m_auxiliary{ nullptr };
-    MultiMachinePage*     m_multi_machine{ nullptr };
-    ProjectPanel*         m_project{ nullptr };
+    //MultiMachinePage*     m_multi_machine{ nullptr };
+    //ProjectPanel*         m_project{ nullptr };
 
-    CalibrationPanel*     m_calibration{ nullptr };
+    //CalibrationPanel*     m_calibration{ nullptr };
     WebViewPanel*         m_webview { nullptr };
     PrinterWebView*       m_printer_view{nullptr};
     PrinterMgrView*       m_printer_mgr_view{nullptr};
+    WebModelLibraryView*  m_webmodellibrary_view{ nullptr };
     wxLogWindow*          m_log_window { nullptr };
     // BBS
     //wxBookCtrlBase*       m_tabpanel { nullptr };

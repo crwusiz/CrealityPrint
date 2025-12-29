@@ -12,6 +12,7 @@
 
 namespace Slic3r {
 
+extern bool compSecondMoment(const ExPolygons &expolys, double &smExpolysX, double &smExpolysY); // Brim.cpp
 void ExPolygon::scale(double factor)
 {
     contour.scale(factor);
@@ -145,6 +146,14 @@ Point ExPolygon::point_projection(const Point &point) const
         return closest_pt_min;
     }
 }
+
+void ExPolygon::symmetric_y(const coord_t& y_axis)
+{
+    this->contour.symmetric_y(y_axis);
+    for (Polygon& hole : holes)
+        hole.symmetric_y(y_axis);
+}
+
 
 bool ExPolygon::overlaps(const ExPolygon &other) const
 {
@@ -411,6 +420,24 @@ ExPolygons ExPolygon::split_expoly_with_holes(coord_t gap_width, const ExPolygon
     return sub_overhangs;
 }
 
+
+double ExPolygon::map_moment_to_expansion(double speed, double height) const
+{
+    if (height <= 0 || speed <= 0) return 0;
+    double Ixx = 0, Iyy = 0;
+    double props = compSecondMoment({ *this }, Ixx, Iyy);
+    Ixx = Ixx * pow(SCALING_FACTOR, 4);
+    Iyy = Iyy * pow(SCALING_FACTOR, 4);
+
+    auto bbox = get_extents(*this);
+    const double& bboxX = bbox.size()(0);
+    const double& bboxY = bbox.size()(1);
+    double        height_to_area = std::max(height / Ixx * (bboxY * SCALING_FACTOR), height / Iyy * (bboxX * SCALING_FACTOR)) * height / 1920;
+
+    double brim_width = height_to_area * speed;
+    return std::max(std::min(brim_width, 5.), 1.);
+}
+
 Lines ExPolygon::lines() const
 {
     Lines lines = this->contour.lines();
@@ -419,6 +446,18 @@ Lines ExPolygon::lines() const
         lines.insert(lines.end(), hole_lines.begin(), hole_lines.end());
     }
     return lines;
+}
+
+bool ExPolygon::remove_colinear_points() {
+    bool removed = this->contour.remove_colinear_points();
+    if (contour.size() < 3) {
+        contour.points.clear();
+        holes.clear();
+        return true;
+    }
+    for (Polygon& hole : this->holes)
+        removed |= hole.remove_colinear_points();
+    return removed;
 }
 
 // Do expolygons match? If they match, they must have the same topology,

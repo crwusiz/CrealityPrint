@@ -177,12 +177,20 @@ std::vector<std::string> PrinterPresetConfig::getFilament(const std::string& pri
     fs::path filamentPath = fs::path(resources_dir()).append("profiles").append("Creality.json");
     std::string filamentContent;
     LoadFile(filamentPath.string(), filamentContent);
-    json jFilament = json::parse(filamentContent);
+    json jFilament;
+    if (!filamentContent.empty())
+    {
+        jFilament = json::parse(filamentContent);
+    }
 
     fs::path printerPath = fs::path(resources_dir()).append("profiles").append("Creality").append("machine").append(printerName+".json");
     std::string printerContent;
     LoadFile(printerPath.string(), printerContent);
-    json jPrinter = json::parse(printerContent);
+    json jPrinter;
+    if (!printerContent.empty())
+    {
+        jPrinter = json::parse(printerContent);
+    }
     std::string ssDefaultFilament;
     if (jPrinter.contains("default_materials") && jPrinter["default_materials"].is_string()) {
         ssDefaultFilament = jPrinter["default_materials"];
@@ -209,6 +217,93 @@ std::vector<std::string> PrinterPresetConfig::getFilament(const std::string& pri
         }
     }
     return vtFileName; 
+}
+
+bool PrinterPresetConfig::getPrinterDefaultMaterials(const std::string& vendor, const std::string& printerName,  std::vector<std::string>& vtPrinterDefaultMaterials)
+{
+    vtPrinterDefaultMaterials.clear();
+    try {
+        fs::path printerPath = fs::path(resources_dir()).append("profiles").append(vendor).append("machine").append(printerName + ".json");
+        std::string printerContent;
+        LoadFile(printerPath.string(), printerContent);
+        json        jPrinter = json::parse(printerContent);
+        std::string ssDefaultFilament;
+        if (printerName.find("nozzle") != std::string::npos) {
+            if (jPrinter.contains("printer_model") && jPrinter["printer_model"].is_string()) {
+                std::string printer_model = jPrinter["printer_model"];
+                if (!printer_model.empty()) {
+                    printerPath =
+                        fs::path(resources_dir()).append("profiles").append(vendor).append("machine").append(printer_model + ".json");
+                    std::string printerContent;
+                    LoadFile(printerPath.string(), printerContent);
+                    jPrinter = json::parse(printerContent);
+                }
+            }
+        }
+        if (jPrinter.contains("default_materials") && jPrinter["default_materials"].is_string()) {
+            ssDefaultFilament = jPrinter["default_materials"];
+        }
+        // size_t count = ssDefaultFilament.size();
+        // size_t offset = 0;
+        // size_t sublen = 0;
+        // for (size_t i = 0; i < count; ++i) {
+        //    sublen++;
+        //    if (ssDefaultFilament.c_str()[i] == ';') {
+        //        vtPrinterDefaultMaterials.push_back(ssDefaultFilament.substr(offset, sublen-1));
+        //        offset = i + 1;
+        //        sublen = 0;
+        //    }
+        //}
+        boost::split(vtPrinterDefaultMaterials, ssDefaultFilament, boost::is_any_of(";"));
+    }
+    catch (...) {
+        return false;
+    }
+    return true;
+}
+
+bool PrinterPresetConfig::getPrinterDefaultMaterials(const std::string& vendor, const std::string& printerName,  std::vector<std::pair<std::string, std::string>>& vtPrinterDefaultMaterials)
+{
+    std::vector<std::string> tmpvtPrinterDefaultMaterials;
+    getPrinterDefaultMaterials(vendor, printerName, tmpvtPrinterDefaultMaterials);
+    vtPrinterDefaultMaterials.clear();
+    try {
+        std::string newPrinterName = printerName;
+        for (auto item : tmpvtPrinterDefaultMaterials) {
+            std::string filamentName;
+            fs::path filamentPath;
+            if (item.find("@") == std::string::npos) {
+                //filamentPath = fs::path(resources_dir()).append("profiles").append(vendor).append("filament").append(item + " @" + newPrinterName + ".json");
+                filamentPath = fs::path(resources_dir()).append("profiles").append(vendor).append("filament").append(item + ".json");
+                if (!fs::exists(filamentPath)) {
+                    filamentPath = fs::path(resources_dir()).append("profiles").append(vendor).append("filament").append(item + " @" + newPrinterName + ".json");
+                }
+            } else {
+                filamentPath = fs::path(resources_dir()).append("profiles").append(vendor).append("filament").append(item + ".json");
+            }
+            json jFilament = {};
+            do {
+                jFilament = {};
+                std::string filamentContent;
+                LoadFile(filamentPath.string(), filamentContent);
+                try {
+                    jFilament = json::parse(filamentContent);
+                } catch (...) {
+                    break;
+                }
+                if (jFilament.contains("filament_type")) {
+                    vtPrinterDefaultMaterials.push_back(std::make_pair(item, jFilament["filament_type"][0]));
+                    break;
+                } else if (jFilament.contains("inherits")) {
+                    filamentPath = fs::path(resources_dir()).append("profiles").append(vendor).append("filament").append(std::string(jFilament["inherits"]) + ".json");
+                }
+            } while (jFilament.contains("inherits"));
+        }
+    }
+    catch (...) {
+        return false;
+    }
+    return true;
 }
 
 int PrinterPresetConfig::LoadProfile() { 

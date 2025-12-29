@@ -83,7 +83,7 @@ using ItemGroup = std::vector<std::reference_wrapper<Item>>;
 const double BIG_ITEM_TRESHOLD = 0.02;
 #define VITRIFY_TEMP_DIFF_THRSH 15  // bed temp can be higher than vitrify temp, but not higher than this thresh
 
-void update_arrange_params(ArrangeParams& params, const DynamicPrintConfig* print_cfg, const ArrangePolygons& selected)
+void update_arrange_params(ArrangeParams& params, const DynamicPrintConfig* print_cfg, ArrangePolygons& selected)
 {
     double                             skirt_distance = get_real_skirt_dist(*print_cfg);
     // Note: skirt_distance is now defined between outermost brim and skirt, not the object and skirt.
@@ -93,8 +93,11 @@ void update_arrange_params(ArrangeParams& params, const DynamicPrintConfig* prin
     params.bed_shrink_y += params.brim_skirt_distance;
     // for sequential print, we need to inflate the bed because cleareance_radius is so large
     if (params.is_seq_print) {
-        params.bed_shrink_x -= params.cleareance_radius / 2;
-        params.bed_shrink_y -= params.cleareance_radius / 2;
+        bool all_objects_are_short = std::all_of(selected.begin(), selected.end(), [&](ArrangePolygon& ap) { return ap.height < params.nozzle_height; });
+        if(!all_objects_are_short) {
+            params.bed_shrink_x -= params.cleareance_radius / 2;
+            params.bed_shrink_y -= params.cleareance_radius / 2;
+        }
     }
 }
 
@@ -106,7 +109,7 @@ void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPri
     if (params.is_seq_print) {
         bool all_objects_are_short = std::all_of(selected.begin(), selected.end(), [&](ArrangePolygon& ap) { return ap.height < params.nozzle_height; });
         if (all_objects_are_short) {
-            params.min_obj_distance = std::max(params.min_obj_distance, scaled(double(MAX_OUTER_NOZZLE_DIAMETER)/2+0.001));
+            params.min_obj_distance = std::max(params.min_obj_distance, scaled(std::max(MAX_OUTER_NOZZLE_DIAMETER/2.f, params.object_skirt_offset*2)+0.001));
         }
         else
             params.min_obj_distance = std::max(params.min_obj_distance, scaled(params.cleareance_radius + 0.001)); // +0.001mm to avoid clearance check fail due to rounding error
@@ -1232,6 +1235,49 @@ void arrange(ArrangePolygons &      arrangables,
     //    
     //}
 
+}
+
+void cr30_arrange(ArrangePolygons& items, const ArrangePolygons& excludes, const Points& bed)
+{
+    BoundingBox fixed_box;
+    for (auto& fixed : excludes)
+    {
+        ExPolygon transform_ply = fixed.poly;
+        transform_ply.rotate(fixed.rotation);
+        BoundingBox box(transform_ply.contour.points);
+        box.translate(fixed.translation.cast<double>());
+        if (unscaled(fixed.inflation) > 1.0)
+        {
+            double half_inf = fixed.inflation / 2.0;
+            box.min -= {half_inf, half_inf};
+            box.max += {half_inf, half_inf};
+        }
+        fixed_box.merge(box);
+    }
+
+    const double gap     = scaled(50.0f);
+
+    for (auto& item : items) 
+    {
+        ExPolygon transform_ply = item.poly;
+        transform_ply.rotate(item.rotation);
+        BoundingBox box(transform_ply.contour.points);
+        if (unscaled(item.inflation) > 1.0)
+        {
+            double half_inf = item.inflation / 2.0;
+            box.min -= {half_inf, half_inf};
+            box.max += {half_inf, half_inf};
+        }
+        coord_t halfx = scaled((double)box.size().x()) / 2.0f;
+        coord_t halfy = scaled((double)box.size().y()) / 2.0f;
+        double  biasx       = unscaled(halfx) + box.min.x();
+        double  biasy       = unscaled(halfy) + box.min.y();
+        coord_t bed_with_half = scaled((double)bed[2].data()[0]) / 2.0f;
+        item.translation[0]   = unscaled(bed_with_half) - biasx;
+        item.translation[1] = fixed_box.max.y() + unscaled(halfy) + gap - biasy;
+        box.translate(item.translation.cast<double>());
+        fixed_box.merge(box);
+    }
 }
 
 template void arrange(ArrangePolygons &items, const ArrangePolygons &excludes, const BoundingBox &bed, const ArrangeParams &params);

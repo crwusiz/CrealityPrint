@@ -114,12 +114,29 @@ public:
     void set_creality_cfs(bool cfs) { m_isCrealityCFS = cfs; }
 
     bool enable_timelapse_print() const { return m_enable_timelapse_print; }
+    void set_wipe_tower_depth(float depth) { m_wipe_tower_depth = depth; }
+    void set_wipe_tower_bbx(const BoundingBoxf& bbx) { m_wipe_tower_bbx = bbx; }
 
 private:
     WipeTowerIntegration& operator=(const WipeTowerIntegration&);
     std::string append_tcr_creality(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
+    std::string append_tcr_creality_cfs(GCode& gcodegen, const WipeTower::ToolChangeResult& tcr, int new_extruder_id, double z = -1.) const;
     std::string append_tcr(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
     std::string append_tcr2(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
+
+    Polyline generate_path_to_wipe_tower(const Point&       start_pos,
+                                         const Point&       end_pos,
+                                         const BoundingBox& avoid_polygon,
+                                         const BoundingBox& printer_bbx) const;
+
+    std::string post_process_wipe_tower_moves_wipe_head(GCode&                             gcodegen,
+                                                        const WipeTower::ToolChangeResult& tcr,
+                                                        const Vec2f&                       translation,
+                                                        Vec2f&                             end_wipe_pos,
+                                                        std::string&                       wipe_head_path,
+                                                        int&                               wipe_block_type,
+                                                        float                              angle,
+                                                        float                              z) const;
 
     // Postprocesses gcode: rotates and moves G1 extrusions and returns result
     std::string post_process_wipe_tower_moves(const WipeTower::ToolChangeResult& tcr,
@@ -156,7 +173,8 @@ private:
     bool                                                         m_isCrealityCFS;
 
     Print*                                                       m_print;
-
+    BoundingBoxf                                                 m_wipe_tower_bbx;
+    float                                                        m_wipe_tower_depth;
 };
 
 class ColorPrintColors
@@ -173,11 +191,15 @@ struct LayerResult {
     bool        spiral_vase_enable { false };
     // Should the cooling buffer content be flushed at the end of this layer?
     bool        cooling_buffer_flush { false };
-	// Is indicating if this LayerResult should be processed, or it is just inserted artificial LayerResult.
+    // the layer store pos of gcode
+    size_t      gcode_store_pos = 0;
+    // store each layer_time
+    float       layer_time = 0;
+    // Is indicating if this LayerResult should be processed, or it is just inserted artificial LayerResult.
     // It is used for the pressure equalizer because it needs to buffer one layer back.
     bool        nop_layer_result { false };
 
-    static LayerResult make_nop_layer_result() { return {"", std::numeric_limits<coord_t>::max(), false, false, true}; }
+    static LayerResult make_nop_layer_result() { return {"", std::numeric_limits<coord_t>::max(), false, false, 0, 0, true}; }
 };
 
 struct FlushConfig
@@ -211,7 +233,8 @@ public:
         m_brim_done(false),
         m_second_layer_things_done(false),
         m_silent_time_estimator_enabled(false),
-        m_last_obj_copy(nullptr, Point(std::numeric_limits<coord_t>::max(), std::numeric_limits<coord_t>::max())),
+        m_last_obj_copy(nullptr, Point(std::numeric_limits<coord_t>::max(), std::numeric_limits<coord_t>::max())), 
+        m_belt(false),
         // BBS
         m_toolchange_count(0),
         m_nominal_z(0.),
@@ -229,8 +252,10 @@ public:
 
     // Exported for the helper classes (OozePrevention, Wipe) and for the Perl binding for unit tests.
     const Vec2d&    origin() const { return m_origin; }
-    void            set_origin(const Vec2d &pointf);
+    void                     set_origin(const Vec2d& pointf, const Transform3d& trafo = Transform3d());
     void            set_origin(const coordf_t x, const coordf_t y) { this->set_origin(Vec2d(x, y)); }
+    bool                     get_belt() const { return m_belt; };
+    void                     set_belt(bool _belt) { m_belt = _belt; }
     const Point&    last_pos() const { return m_last_pos; }
     Vec2d           point_to_gcode(const Point &point) const;
     Point           gcode_to_point(const Vec2d &point) const;
@@ -404,7 +429,7 @@ private:
     void            set_extruders(const std::vector<unsigned int> &extruder_ids);
     std::string     preamble();
     // BBS
-    std::string     change_layer(coordf_t print_z);
+    std::string     change_layer(coordf_t print_z, bool toolchange = false);
     // Orca: pass the complete collection of region perimeters to the extrude loop to check whether the wipe before external loop
     // should be executed
     std::string     extrude_entity(const ExtrusionEntity &entity, std::string description = "", double speed = -1., const ExtrusionEntitiesPtr& region_perimeters = ExtrusionEntitiesPtr());
@@ -502,6 +527,7 @@ private:
        This affects the input arguments supplied to the extrude*() and travel_to()
        methods. */
     Vec2d                               m_origin;
+    bool                                m_belt;
     Vec2d                               m_powerPos;
     FullPrintConfig                     m_config;
     DynamicConfig                       m_calib_config;
@@ -580,6 +606,7 @@ private:
     float                               m_last_layer_z{ 0.0f };
     float                               m_max_layer_z{ 0.0f };
     float                               m_last_width{ 0.0f };
+   
 #if ENABLE_GCODE_VIEWER_DATA_CHECKING
     double                              m_last_mm3_per_mm;
 #endif // ENABLE_GCODE_VIEWER_DATA_CHECKING
@@ -591,7 +618,7 @@ private:
     Point                               m_last_pos;
     bool                                m_last_pos_defined;
 
-    std::unique_ptr<CoolingBuffer>      m_cooling_buffer;
+    std::unique_ptr<GCodeEditor>        m_gcode_editor;
     std::unique_ptr<SpiralVase>         m_spiral_vase;
 
     std::unique_ptr<PressureEqualizer>  m_pressure_equalizer;

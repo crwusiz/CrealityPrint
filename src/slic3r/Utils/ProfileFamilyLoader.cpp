@@ -246,7 +246,7 @@ static void StringReplace(string& strBase, string strSrc, string strDes)
     }
 }
 
-static struct AreaInfo
+struct AreaInfo
 {
     std::string strModelName;
     std::string strAreaInfo;
@@ -349,7 +349,7 @@ static void GetPrinterArea(json& pm, std::map<string, AreaInfo>& mapInfo)
     mapInfo[strName] = areaInfo;
 }
 
-static struct PrinterInfo
+struct PrinterInfo
 {
     std::string name;
     std::string seriesNameList;
@@ -592,7 +592,7 @@ int ProfileFamilyLoader::LoadMachineJson(
         json pmodels = jLocal["printerList"];
         json series  = jLocal["series"];
 
-        std::map<std::string,std::vector<PrinterInfo>> mapPrinters;  //key = Ʒ��  Creality SparkX
+        std::map<std::string,std::vector<PrinterInfo>> mapPrinters;  //key = 品牌  Creality SparkX
 
          //wxString strJS = wxString::Format("handleStudioCmd(%s)", series.dump(-1, ' ', true));
         for (const auto& item : series) {
@@ -656,7 +656,7 @@ int ProfileFamilyLoader::LoadMachineJson(
                 json childList = json::object();
                 std::string fullName  = "";
                 if (brandName.find("Creality") == std::string::npos) {
-                    fullName = brandName + "|" + info.name;  // ����Ʒ�� ��:sparkX 
+                    fullName = brandName + "|" + info.name;  // 其他品牌 如:sparkX 
                 } else {
                     fullName = info.name;
                 }

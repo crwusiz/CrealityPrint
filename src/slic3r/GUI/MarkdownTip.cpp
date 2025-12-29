@@ -247,8 +247,8 @@ bool ProcessTip::ShowTip(wxString const& tip,
                           wxPoint            pos)
 { 
         processTip()->m_Content.CS_Title    = tooltip_title;
-        processTip()->m_Content.CS_Content  = ChineseWrap(tooltip_content,processTip()->FromDIP(275),processTip());
-        processTip()->m_Content.CS_URL      = HyperLinkWrap(tooltip_url,processTip()->FromDIP(275),processTip());
+        processTip()->m_Content.CS_Content  = ChineseWrap(tooltip_content,processTip()->FromDIP(298),processTip());
+        processTip()->m_Content.CS_URL      = HyperLinkWrap(tooltip_url,processTip()->FromDIP(298),processTip());
         processTip()->m_Content.CS_UrlText  = tooltip_url;
         processTip()->m_Content.CS_Key   = tooltip_key;
         processTip()->m_Content.CS_Image    = tooltip_img;
@@ -331,15 +331,14 @@ void ProcessTip::OnTimer(wxTimerEvent& event)
         }
     }
 }
-
+static ProcessTip* s_processTip = nullptr;
 ProcessTip* ProcessTip::processTip(bool create) 
 {
-    static ProcessTip * processTip = nullptr;
-    if (processTip == nullptr && create)
-        processTip = new ProcessTip;
+    if (s_processTip == nullptr && create)
+        s_processTip = new ProcessTip;
 
     //processTip->SetSize(242, -1);
-    return processTip;
+    return s_processTip;
 }
 void    ProcessTip::closeTip()
 {
@@ -348,10 +347,13 @@ void    ProcessTip::closeTip()
 }
  void ProcessTip::Recreate(wxWindow *parent)
 {
-    if (auto tip = processTip(false)) {
-        tip->Reparent(parent);
-    }
+     if (s_processTip != nullptr) {
+         delete s_processTip;
+         s_processTip = nullptr;
+     }
+     processTip(false);
 }
+
  // 重写鼠标事件处理
 void ProcessTip::OnMouseEvent(wxMouseEvent& event)
     {
@@ -393,11 +395,11 @@ ProcessTip::ProcessTip()
     mainSizer->Add(m_Title_text, 0, wxLEFT, FromDIP(8));
     mainSizer->AddSpacer(FromDIP(8));
 
-    m_Content_text = new wxStaticText(this, wxID_ANY, m_Content.CS_Content, wxDefaultPosition, wxDefaultSize);
-    m_Content_text->SetSize({226, -1});
-    m_Content_text->SetMinSize({226, -1});
-    m_Content_text->SetMaxSize({226, -1});
-    m_Content_text->Wrap(FromDIP(226));
+    m_Content_text = new wxStaticText(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize);
+    //m_Content_text->SetSize({226, -1});
+    //m_Content_text->SetMinSize({226, -1});
+    //m_Content_text->SetMaxSize({226, -1});
+    //m_Content_text->Wrap(FromDIP(226));
     m_Content_text->SetFont(Label::Body_13);
     m_Content_text->SetForegroundColour(fontColor);
 
@@ -456,13 +458,15 @@ ProcessTip::ProcessTip()
     m_Url_text->Wrap(FromDIP(226));
     m_Url_text->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event) {
         wxLaunchDefaultBrowser(m_Content.CS_UrlText);
-        event.Skip(); 
+        // 立即关闭弹窗，避免在 UOS 上跨窗口保留显示
+        this->Dismiss();
+        event.Skip(false);
     });
 
 
     mainSizer->Add(m_Url_text, 0, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(8));
     mainSizer->AddSpacer(FromDIP(8));
-    SetSize(FromDIP(242), FromDIP(334));
+    SetSize(FromDIP(316), FromDIP(334));
 }
 
 ProcessTip::~ProcessTip()
@@ -513,11 +517,11 @@ void ProcessTip::updateUI()
 
     };
     textHeight = calcLineCount(FromDIP(contentWidth), m_Content_text);
-    m_Content_text->Wrap(FromDIP(contentWidth));
+    //m_Content_text->Wrap(FromDIP(contentWidth));
     std::cout<<textHeight<<std::endl;
-    m_Content_text->SetSize(FromDIP(contentWidth), textHeight);
-    m_Content_text->SetMinSize({FromDIP(contentWidth), textHeight});
-    m_Content_text->SetMaxSize({FromDIP(contentWidth), textHeight});
+    //m_Content_text->SetSize(FromDIP(contentWidth), textHeight);
+    //m_Content_text->SetMinSize({FromDIP(contentWidth), textHeight});
+    //m_Content_text->SetMaxSize({FromDIP(contentWidth), textHeight});
 
     textHeight = calcLineCount(FromDIP(contentWidth), m_Url_text);
 
@@ -529,7 +533,6 @@ void ProcessTip::updateUI()
     std::function createBitMap = [](const wxString& bmp_name_in, wxWindow* win, const int px_cnt, const wxSize imgSize)
     {
         bool        is_dark = Slic3r::GUI::wxGetApp().dark_mode();
-        std::string lang    = wxGetApp().app_config->get("language");
         wxString    imgPath = bmp_name_in;
         return create_scaled_bitmap3(imgPath.ToStdString(), win, px_cnt, imgSize);
     };

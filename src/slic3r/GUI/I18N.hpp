@@ -1,6 +1,7 @@
 #ifndef _
 #define _(s)    	Slic3r::GUI::I18N::translate((s))
 #define _L(s)    	Slic3r::GUI::I18N::translate((s))
+#define _L_ZH(s)    Slic3r::GUI::I18N::translate_zh_only((s))
 #define _devL(s)	wxString((s))
 #define _omitL(s)   ("")
 #define _utf8(s)    Slic3r::GUI::I18N::translate_utf8((s))
@@ -40,11 +41,21 @@
 namespace Slic3r { namespace GUI { 
 
 namespace I18N {
+	// Check if current language is Chinese
+	bool is_chinese();
+
 	inline wxString translate(const char         *s) { return wxGetTranslation(wxString(s, wxConvUTF8)); }
 	inline wxString translate(const wchar_t      *s) { return wxGetTranslation(s); }
 	inline wxString translate(const std::string  &s) { return wxGetTranslation(wxString(s.c_str(), wxConvUTF8)); }
 	inline wxString translate(const std::wstring &s) { return wxGetTranslation(s.c_str()); }
 	inline wxString translate(const wxString     &s) { return wxGetTranslation(s); }
+
+	// Translate only for Chinese, return English for all other languages
+	inline wxString translate_zh_only(const char         *s) { return is_chinese() ? wxGetTranslation(wxString(s, wxConvUTF8)) : wxString(s, wxConvUTF8); }
+	inline wxString translate_zh_only(const wchar_t      *s) { return is_chinese() ? wxGetTranslation(s) : wxString(s); }
+	inline wxString translate_zh_only(const std::string  &s) { return is_chinese() ? wxGetTranslation(wxString(s.c_str(), wxConvUTF8)) : wxString(s.c_str(), wxConvUTF8); }
+	inline wxString translate_zh_only(const std::wstring &s) { return is_chinese() ? wxGetTranslation(s.c_str()) : wxString(s.c_str()); }
+	inline wxString translate_zh_only(const wxString     &s) { return is_chinese() ? wxGetTranslation(s) : s; }
 
 	inline wxString translate(const char         *s, const char 	    *plural, unsigned int n) { return wxGetTranslation(wxString(s, wxConvUTF8), wxString(plural, wxConvUTF8), n); }
 	inline wxString translate(const wchar_t      *s, const wchar_t	    *plural, unsigned int n) { return wxGetTranslation(s, plural, n); }

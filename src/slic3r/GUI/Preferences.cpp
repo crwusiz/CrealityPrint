@@ -22,6 +22,7 @@
 #include "Widgets/RadioBox.hpp"
 #include "Widgets/TextInput.hpp"
 #include "Widgets/TextDisplay.hpp"
+#include "WebModelLibraryView.hpp"
 #include <wx/listimpl.cpp>
 #include <map>
 #include <wx/string.h>
@@ -352,6 +353,7 @@ wxBoxSizer *PreferencesDialog::create_item_region_combobox(wxString title, wxWin
             this->notify_preferences_changed();
         #else
             wxGetApp().reload_homepage();
+            wxGetApp().reload_region_sensitive_views();
         #endif
         CallAfter([this,region] {
             wxGetApp().send_app_message("region|" + region.ToStdString(),true);
@@ -956,6 +958,28 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
             }
         }
 
+		if (param == "enable_preview_lod") {
+            
+            MessageDialog msg_wingow(nullptr,
+                                     _L("Please note that the Gcode show will undergo certain changes at small pixels case.\nEnabled LOD "
+                                        "requires application restart.") +
+                                         "\n" + _L("Do you want to continue?"),
+                                     _L("Enable LOD"), wxYES | wxYES_DEFAULT | wxCANCEL | wxCENTRE);
+            if (msg_wingow.ShowModal() == wxID_YES) {
+                Close();
+                GetParent()->RemoveChild(this);
+                wxGetApp().recreate_GUI(_L("Enable LOD"));
+
+            } else {
+                checkbox->SetValue(!checkbox->GetValue());
+                app_config->set_bool(param, checkbox->GetValue());
+                app_config->save();
+            }
+        }
+		
+
+
+
         e.Skip();
     });
 
@@ -1440,8 +1464,12 @@ wxWindow* PreferencesDialog::create_general_page()
                                                   "enable_step_mesh_setting");
     
     auto enable_lod_settings =
-        create_item_checkbox(_L("Improve rendering performance by lod"), page,
+        create_item_checkbox(_L("Improve preparation rendering performance by lod"), page,
                              _L("Improved rendering performance under the scene of multiple plates and many models."), 50, "enable_lod");
+
+	auto enable_preview_lod_settings =
+        create_item_checkbox(_L("Improve preview rendering performance by lod"), page,
+                             _L("Improved rendering performance under the scene of multiple plates and many models."), 50, "enable_preview_lod");
 
     //item_user_exp->
     auto item_save_presets = create_item_button(_L("Clear my choice on the unsaved presets."), _L("Clear"), page, L"", _L("Clear my choice on the unsaved presets."), []() {
@@ -1496,6 +1524,9 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->AddSpacer(FromDIP(5));
 #endif
     sizer_page->Add(enable_lod_settings, 0, wxTOP, FromDIP(3));
+    sizer_page->AddSpacer(FromDIP(5));
+
+	sizer_page->Add(enable_preview_lod_settings, 0, wxTOP, FromDIP(3));
     sizer_page->AddSpacer(FromDIP(5));
 
     sizer_page->Add(item_step_import_setting, 0, wxTOP, FromDIP(3));

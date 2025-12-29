@@ -28,6 +28,11 @@
 #include <boost/nowide/convert.hpp>
 #include <boost/nowide/cstdio.hpp>
 #include <boost/thread.hpp>
+// logging
+#include <boost/log/trivial.hpp>
+#include <boost/log/core.hpp>
+#include <boost/format.hpp>
+#include <cerrno>
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ModelVolume.hpp"
@@ -125,8 +130,21 @@ typedef std::function<void ()> ThrowOnCancelFn;
 template<typename T>
 static AsyncStatus winrt_async_await(const Microsoft::WRL::ComPtr<T> &asyncAction, ThrowOnCancelFn throw_on_cancel, int blocking_tick_ms = 100)
 {
+	if (!asyncAction) {
+		BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " asyncAction is null";
+		if (auto core = boost::log::core::get())
+			core->flush();
+		return AsyncStatus::Error;
+	}
+
 	Microsoft::WRL::ComPtr<ABI::Windows::Foundation::IAsyncInfo> asyncInfo;
-	asyncAction.As(&asyncInfo);
+	HRESULT hr = asyncAction.As(&asyncInfo);
+	if (FAILED(hr) || !asyncInfo) {
+		BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" asyncAction.As(IAsyncInfo) failed hr=0x%1$08x") % (unsigned)hr;
+		if (auto core = boost::log::core::get())
+			core->flush();
+		return AsyncStatus::Error;
+	}
 	AsyncStatus status;
 	// Ugly blocking loop until the RepairAsync call finishes.
 //FIXME replace with a callback.
@@ -213,105 +231,207 @@ typedef std::function<void (const char * /* message */, unsigned /* progress */)
 
 void fix_model_by_win10_sdk(const std::string &path_src, const std::string &path_dst, ProgressFn on_progress, ThrowOnCancelFn throw_on_cancel)
 {
+    const uint64_t trace_id = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count();
+    
 	if (! is_windows10())
 		throw Slic3r::RuntimeError(L("Only Windows 10 is supported."));
 
 	if (! winrt_load_runtime_object_library())
 		throw Slic3r::RuntimeError(L("Failed to initialize the WinRT library."));
 
-	HRESULT hr = (*s_RoInitialize)(RO_INIT_MULTITHREADED);
+HRESULT hr = (*s_RoInitialize)(RO_INIT_MULTITHREADED);
+    if (FAILED(hr)) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" RoInitialize failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+        boost::log::core::get()->flush();
+        throw Slic3r::RuntimeError(L("Repair failed."));
+    }
 	{
 		on_progress(L("Exporting objects"), 20);
 
 		Microsoft::WRL::ComPtr<ABI::Windows::Storage::Streams::IRandomAccessStream>       fileStream;
-		hr = winrt_open_file_stream(boost::nowide::widen(path_src), ABI::Windows::Storage::FileAccessMode::FileAccessMode_Read, fileStream.GetAddressOf(), throw_on_cancel);
+        hr = winrt_open_file_stream(boost::nowide::widen(path_src), ABI::Windows::Storage::FileAccessMode::FileAccessMode_Read, fileStream.GetAddressOf(), throw_on_cancel);
+        if (FAILED(hr) || !fileStream) { 
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" winrt_open_file_stream failed hr=0x%1$08x src='%2%'") % (unsigned)hr % path_src << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(L("Failed loading objects."));
+        }
 
 		Microsoft::WRL::ComPtr<ABI::Windows::Graphics::Printing3D::IPrinting3D3MFPackage> printing3d3mfpackage;
-		hr = winrt_activate_instance(L"Windows.Graphics.Printing3D.Printing3D3MFPackage", printing3d3mfpackage.GetAddressOf());
+        hr = winrt_activate_instance(L"Windows.Graphics.Printing3D.Printing3D3MFPackage", printing3d3mfpackage.GetAddressOf());
+        if (FAILED(hr) || !printing3d3mfpackage) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" winrt_activate_instance Printing3D3MFPackage failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(L("Repair failed."));
+        }
 
 		Microsoft::WRL::ComPtr<ABI::Windows::Foundation::IAsyncOperation<ABI::Windows::Graphics::Printing3D::Printing3DModel*>> modelAsync;
-		hr = printing3d3mfpackage->LoadModelFromPackageAsync(fileStream.Get(), modelAsync.GetAddressOf());
+        hr = printing3d3mfpackage->LoadModelFromPackageAsync(fileStream.Get(), modelAsync.GetAddressOf());
+        if (FAILED(hr) || !modelAsync) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" LoadModelFromPackageAsync failed hr=0x%1$08x src='%2%'") % (unsigned)hr % path_src << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(L("Failed loading objects."));
+        }
 
-		AsyncStatus status = winrt_async_await(modelAsync, throw_on_cancel);
+        AsyncStatus status = winrt_async_await(modelAsync, throw_on_cancel);
 		Microsoft::WRL::ComPtr<ABI::Windows::Graphics::Printing3D::IPrinting3DModel>	  model;
-		if (status == AsyncStatus::Completed)
-			hr = modelAsync->GetResults(model.GetAddressOf());
-		else
-			throw Slic3r::RuntimeError(L("Failed loading objects."));
+        if (status == AsyncStatus::Completed)
+            hr = modelAsync->GetResults(model.GetAddressOf());
+        else {
+            throw Slic3r::RuntimeError(L("Failed loading objects."));
+        }
 
 		Microsoft::WRL::ComPtr<ABI::Windows::Foundation::Collections::IVector<ABI::Windows::Graphics::Printing3D::Printing3DMesh*>> meshes;
 		hr = model->get_Meshes(meshes.GetAddressOf());
 		unsigned num_meshes = 0;
+        if (FAILED(hr) || !meshes) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" get_Meshes failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(L("Repair failed."));
+        }
 		hr = meshes->get_Size(&num_meshes);
+        if (FAILED(hr)) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" get_Size failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(L("Repair failed."));
+        }
+        
 		on_progress(L("Repairing object by Windows service"), 40);
 		Microsoft::WRL::ComPtr<ABI::Windows::Foundation::IAsyncAction>					  repairAsync;
-		hr = model->RepairAsync(repairAsync.GetAddressOf());
-		status = winrt_async_await(repairAsync, throw_on_cancel);
-		if (status != AsyncStatus::Completed)
-			throw Slic3r::RuntimeError(L("Repair failed."));
-		repairAsync->GetResults();
+        hr = model->RepairAsync(repairAsync.GetAddressOf());
+        if (FAILED(hr) || !repairAsync) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" RepairAsync failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(L("Repair failed."));
+        }
+        status = winrt_async_await(repairAsync, throw_on_cancel);
+        if (status != AsyncStatus::Completed) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " RepairAsync status is not Completed status=" << (int)status << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(L("Repair failed."));
+        }
+        repairAsync->GetResults();
 
 		on_progress(L("Loading repaired objects"), 60);
 
 		// Verify the number of meshes returned after the repair action.
 		meshes.Reset();
 		hr = model->get_Meshes(meshes.GetAddressOf());
-		hr = meshes->get_Size(&num_meshes);
+        if (FAILED(hr) || !meshes) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" get_Meshes (post-repair) failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(L("Repair failed."));
+        }
+        hr = meshes->get_Size(&num_meshes);
+        if (FAILED(hr)) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" get_Size (post-repair) failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(L("Repair failed."));
+        }
 
 		// Save model to this class' Printing3D3MFPackage.
 		Microsoft::WRL::ComPtr<ABI::Windows::Foundation::IAsyncAction>					  saveToPackageAsync;
 		hr = printing3d3mfpackage->SaveModelToPackageAsync(model.Get(), saveToPackageAsync.GetAddressOf());
-		status = winrt_async_await(saveToPackageAsync, throw_on_cancel);
-		if (status != AsyncStatus::Completed)
-			throw Slic3r::RuntimeError(saving_failed_str);
-		hr = saveToPackageAsync->GetResults();
+        if (FAILED(hr) || !saveToPackageAsync) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" SaveModelToPackageAsync failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(saving_failed_str);
+        }
+        status = winrt_async_await(saveToPackageAsync, throw_on_cancel);
+        if (status != AsyncStatus::Completed) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " SaveModelToPackageAsync status is not Completed status=" << (int)status << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(saving_failed_str);
+        }
+        hr = saveToPackageAsync->GetResults();
 
 		Microsoft::WRL::ComPtr<ABI::Windows::Foundation::IAsyncOperation<ABI::Windows::Storage::Streams::IRandomAccessStream*>> generatorStreamAsync;
 		hr = printing3d3mfpackage->SaveAsync(generatorStreamAsync.GetAddressOf());
-		status = winrt_async_await(generatorStreamAsync, throw_on_cancel);
-		if (status != AsyncStatus::Completed)
-			throw Slic3r::RuntimeError(saving_failed_str);
-		Microsoft::WRL::ComPtr<ABI::Windows::Storage::Streams::IRandomAccessStream> generatorStream;
-		hr = generatorStreamAsync->GetResults(generatorStream.GetAddressOf());
+        if (FAILED(hr) || !generatorStreamAsync) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" SaveAsync failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(saving_failed_str);
+        }
+        status = winrt_async_await(generatorStreamAsync, throw_on_cancel);
+        if (status != AsyncStatus::Completed) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " SaveAsync status is not Completed status=" << (int)status << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(saving_failed_str);
+        }
+        Microsoft::WRL::ComPtr<ABI::Windows::Storage::Streams::IRandomAccessStream> generatorStream;
+        hr = generatorStreamAsync->GetResults(generatorStream.GetAddressOf());
+        if (FAILED(hr) || !generatorStream) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" SaveAsync GetResults failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(saving_failed_str);
+        }
 
 		// Go to the beginning of the stream.
-		generatorStream->Seek(0);
-		Microsoft::WRL::ComPtr<ABI::Windows::Storage::Streams::IInputStream> inputStream;
-		hr = generatorStream.As(&inputStream);
+        generatorStream->Seek(0);
+        Microsoft::WRL::ComPtr<ABI::Windows::Storage::Streams::IInputStream> inputStream;
+        hr = generatorStream.As(&inputStream);
+        if (FAILED(hr) || !inputStream) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" generatorStream.As(IInputStream) failed hr=0x%1$08x") % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+            throw Slic3r::RuntimeError(saving_failed_str);
+        }
 
-		// Get the buffer factory.
-		Microsoft::WRL::ComPtr<ABI::Windows::Storage::Streams::IBufferFactory> bufferFactory;
-		hr = winrt_get_activation_factory(L"Windows.Storage.Streams.Buffer", bufferFactory.GetAddressOf());
+	// Get the buffer factory.
+    Microsoft::WRL::ComPtr<ABI::Windows::Storage::Streams::IBufferFactory> bufferFactory;
+    hr = winrt_get_activation_factory(L"Windows.Storage.Streams.Buffer", bufferFactory.GetAddressOf());
+    if (FAILED(hr) || !bufferFactory) {
+        throw Slic3r::RuntimeError(L("Failed to get buffer factory."));
+    }
 
-		// Open the destination file.
-		FILE *fout = boost::nowide::fopen(path_dst.c_str(), "wb");
+	// Open the destination file.
+    FILE *fout = boost::nowide::fopen(path_dst.c_str(), "wb");
+    if (!fout) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" fopen failed dst='%1%' errno=%2%") % path_dst % errno << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+        boost::log::core::get()->flush();
+        throw Slic3r::RuntimeError(L("Failed to open destination file."));
+    }
 
-		Microsoft::WRL::ComPtr<ABI::Windows::Storage::Streams::IBuffer> buffer;
-		byte														   *buffer_ptr;
-		bufferFactory->Create(65536 * 2048, buffer.GetAddressOf());
-		{
-			Microsoft::WRL::ComPtr<Windows::Storage::Streams::IBufferByteAccess> bufferByteAccess;
-			buffer.As(&bufferByteAccess);
-			hr = bufferByteAccess->Buffer(&buffer_ptr);
-		}
-		uint32_t length;
-		hr = buffer->get_Length(&length);
+	Microsoft::WRL::ComPtr<ABI::Windows::Storage::Streams::IBuffer> buffer;
+	byte														   *buffer_ptr;
+    hr = bufferFactory->Create(65536 * 2048, buffer.GetAddressOf());
+    if (FAILED(hr) || !buffer) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" CreateBuffer failed capacity=%1% hr=0x%2$08x") % (65536 * 2048) % (unsigned)hr << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+        boost::log::core::get()->flush();
+        throw Slic3r::RuntimeError(L("Failed to create buffer."));
+    }
+	{
+		Microsoft::WRL::ComPtr<Windows::Storage::Streams::IBufferByteAccess> bufferByteAccess;
+        hr = buffer.As(&bufferByteAccess);
+        if (FAILED(hr) || !bufferByteAccess) {
+            throw Slic3r::RuntimeError(L("Failed to access buffer memory."));
+        }
+        hr = bufferByteAccess->Buffer(&buffer_ptr);
+        if (FAILED(hr) || buffer_ptr == nullptr) {
+            throw Slic3r::RuntimeError(L("Failed to obtain buffer pointer."));
+        }
+	}
+	uint32_t length;
+    hr = buffer->get_Length(&length);
+    if (FAILED(hr)) {
+        throw Slic3r::RuntimeError(saving_failed_str);
+    }
 
 		Microsoft::WRL::ComPtr<ABI::Windows::Foundation::IAsyncOperationWithProgress<ABI::Windows::Storage::Streams::IBuffer*, UINT32>> asyncRead;
-		for (;;) {
-			hr = inputStream->ReadAsync(buffer.Get(), 65536 * 2048, ABI::Windows::Storage::Streams::InputStreamOptions_ReadAhead, asyncRead.GetAddressOf());
-			status = winrt_async_await(asyncRead, throw_on_cancel);
-			if (status != AsyncStatus::Completed)
-				throw Slic3r::RuntimeError(saving_failed_str);
-			hr = buffer->get_Length(&length);
-			if (length == 0)
-				break;
-			fwrite(buffer_ptr, length, 1, fout);
-		}
-		fclose(fout);
+        for (;;) {
+            hr = inputStream->ReadAsync(buffer.Get(), 65536 * 2048, ABI::Windows::Storage::Streams::InputStreamOptions_ReadAhead, asyncRead.GetAddressOf());
+            status = winrt_async_await(asyncRead, throw_on_cancel);
+            if (status != AsyncStatus::Completed)
+                throw Slic3r::RuntimeError(saving_failed_str);
+            hr = buffer->get_Length(&length);
+            if (FAILED(hr))
+                throw Slic3r::RuntimeError(saving_failed_str);
+            if (length == 0)
+                break;
+            size_t written = fwrite(buffer_ptr, length, 1, fout);
+        }
+        fclose(fout);
 		// Here all the COM objects will be released through the ComPtr destructors.
 	}
-	(*s_RoUninitialize)();
+    (*s_RoUninitialize)();
 }
 
 class RepairCanceledException : public std::exception {
@@ -324,6 +444,8 @@ public:
 // fix_result containes a message if fixing failed
 bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::ProgressDialog& progress_dialog, const wxString& msg_header, std::string& fix_result)
 {
+    const uint64_t trace_id = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count();
+    
     std::mutex mtx;
     std::condition_variable condition;
 	struct Progress {
@@ -351,11 +473,11 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 		progress.updated = true;
 	    condition.notify_all();
 	};
-	auto worker_thread = boost::thread([&model_object, &volumes, &ivolume, on_progress, &success, &canceled, &finished]() {
+auto worker_thread = boost::thread([&model_object, &volumes, &ivolume, on_progress, &success, &canceled, &finished, &trace_id]() {
 		try {
 			std::vector<TriangleMesh> meshes_repaired;
 			meshes_repaired.reserve(volumes.size());
-			for (; ivolume < volumes.size(); ++ ivolume) {
+            for (; ivolume < volumes.size(); ++ ivolume) {
 				on_progress(L("Exporting objects"), 0);
 				boost::filesystem::path path_src = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path();
 				path_src += ".3mf";
@@ -371,14 +493,15 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
                 mo->volumes.back()->set_transformation(Geometry::Transformation());
 
                 mo->add_instance();
-				if (!Slic3r::store_3mf(path_src.string().c_str(), &model, nullptr, false, nullptr, false)) {
-					boost::filesystem::remove(path_src);
-					throw Slic3r::RuntimeError(L("Exporting 3mf file failed"));
-				}
+                if (!Slic3r::store_3mf(path_src.string().c_str(), &model, nullptr, false, nullptr, false)) {
+                    boost::filesystem::remove(path_src);
+                    throw Slic3r::RuntimeError(L("Exporting 3mf file failed"));
+                }
 				model.clear_objects();
 				model.clear_materials();
 				boost::filesystem::path path_dst = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path();
 				path_dst += ".3mf";
+                
 				fix_model_by_win10_sdk(path_src.string().c_str(), path_dst.string(), on_progress,
 					[&canceled]() { if (canceled) throw RepairCanceledException(); });
 				boost::filesystem::remove(path_src);
@@ -386,19 +509,20 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 				on_progress(L("Loading repaired objects"), 80);
 				DynamicPrintConfig config;
 				ConfigSubstitutionContext config_substitutions{ ForwardCompatibilitySubstitutionRule::EnableSilent };
-				bool loaded = Slic3r::load_3mf(path_dst.string().c_str(), config, config_substitutions, &model, false);
-			    boost::filesystem::remove(path_dst);
-				if (! loaded)
-	 				throw Slic3r::RuntimeError(L("Import 3mf file failed"));
-	 			if (model.objects.size() == 0)
-	 				throw Slic3r::RuntimeError(L("Repaired 3mf file does not contain any object"));
-	 			if (model.objects.size() > 1)
-	 				throw Slic3r::RuntimeError(L("Repaired 3mf file contains more than one object"));
-	 			if (model.objects.front()->volumes.size() == 0)
-	 				throw Slic3r::RuntimeError(L("Repaired 3mf file does not contain any volume"));
-				if (model.objects.front()->volumes.size() > 1)
-	 				throw Slic3r::RuntimeError(L("Repaired 3mf file contains more than one volume"));
+                bool loaded = Slic3r::load_3mf(path_dst.string().c_str(), config, config_substitutions, &model, false);
+                boost::filesystem::remove(path_dst);
+                if (! loaded)
+                    throw Slic3r::RuntimeError(L("Import 3mf file failed"));
+                if (model.objects.size() == 0)
+                    throw Slic3r::RuntimeError(L("Repaired 3mf file does not contain any object"));
+                if (model.objects.size() > 1)
+                    throw Slic3r::RuntimeError(L("Repaired 3mf file contains more than one object"));
+                if (model.objects.front()->volumes.size() == 0)
+                    throw Slic3r::RuntimeError(L("Repaired 3mf file does not contain any volume"));
+                if (model.objects.front()->volumes.size() > 1)
+                    throw Slic3r::RuntimeError(L("Repaired 3mf file contains more than one volume"));
 	 			meshes_repaired.emplace_back(std::move(model.objects.front()->volumes.front()->mesh()));
+                
 			}
 			for (size_t i = 0; i < volumes.size(); ++ i) {
 				volumes[i]->set_mesh(std::move(meshes_repaired[i]));
@@ -411,15 +535,19 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 			on_progress(L("Repair finished"), 100);
 			success  = true;
 			finished = true;
+            
 		} catch (RepairCanceledException & /* ex */) {
 			canceled = true;
 			finished = true;
 			on_progress(L("Repair canceled"), 100);
-		} catch (std::exception &ex) {
-			success = false;
-			finished = true;
-			on_progress(ex.what(), 100);
-		}
+            
+        } catch (std::exception &ex) {
+            success = false;
+            finished = true;
+            on_progress(ex.what(), 100);
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" exception: %1%") % ex.what() << " tid=" << std::this_thread::get_id() << " rid=" << trace_id;
+            boost::log::core::get()->flush();
+}
 	});
     while (! finished) {
 		std::unique_lock<std::mutex> lock(mtx);

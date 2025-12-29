@@ -49,7 +49,13 @@ bool TabButton::Create(wxWindow *parent, wxString text, ScalableBitmap &bmp, lon
     //BBS set default font
     SetFont(Label::Body_14);
     wxWindow::SetLabel(text);
-    this->icon = bmp;
+    // 重建位图以绑定当前控件上下文，避免跨控件浅拷贝。
+    // 若传入的是空名称（用于清空图标），则保持空位图，避免 create_scaled_bitmap 抛异常。
+    if (bmp.name().empty()) {
+        this->icon = ScalableBitmap();
+    } else {
+        this->icon = ScalableBitmap(this, bmp.name(), bmp.px_cnt());
+    }
     messureSize();
     return true;
 }
@@ -101,7 +107,13 @@ void TabButton::SetBGColor(StateColor const &color)
 
 void TabButton::SetBitmap(ScalableBitmap &bitmap)
 {
-    this->icon = bitmap;
+    // 重建位图以绑定当前控件上下文，避免跨控件浅拷贝。
+    // 若为清空图标（空名称），则保持默认空位图，避免空名称导致资源加载异常。
+    if (bitmap.name().empty()) {
+        this->icon = ScalableBitmap();
+    } else {
+        this->icon = ScalableBitmap(this, bitmap.name(), bitmap.px_cnt());
+    }
 }
 
 bool TabButton::Enable(bool enable)

@@ -3,7 +3,10 @@
 #include <string>
 #include <functional>
 #include <exception>
+#include "nlohmann/json.hpp"
+
 #include "alibabacloud/oss/OssClient.h"
+using namespace nlohmann;
 namespace Slic3r {
 namespace GUI {
 class ErrorCodeException : public std::exception {
@@ -37,6 +40,7 @@ class ErrorCodeException : public std::exception {
 
         int getAliyunInfo();
         int getOssInfo();
+        json getCloudUploadInfo();
         int uploadGcodeToCXCloud(const std::string& name, const std::string&fileName, std::function<void(std::string)> onCompleteCallback=nullptr);
         void setProcessCallback(std::function<void(int,double)> funcProcessCb);
         void UploadProgressCallback(int partNumber, int totalParts, double percentage);
@@ -58,6 +62,8 @@ class ErrorCodeException : public std::exception {
         std::string m_secretAccessKey = "";
         std::string m_endPoint = "";
         std::string m_bucket = "";
+        std::string m_video_bucket = "";
+        std::string m_cdnHost = "";
         std::function<void(int,double)> m_funcProcessCb = nullptr;
         LastError m_lastError;
         bool m_cancel = false;

@@ -62,8 +62,22 @@ enum AuthorizationType {
 };
 
 enum InfillPattern : int {
-    ipConcentric, ipRectilinear, ipGrid, ipLine, ipCubic, ipTriangles, ipStars, ipGyroid, ipHoneycomb, ipAdaptiveCubic, ipMonotonic, ipMonotonicLine, ipAlignedRectilinear, ip3DHoneycomb,
-    ipHilbertCurve, ipArchimedeanChords, ipOctagramSpiral, ipSupportCubic, ipSupportBase, ipConcentricInternal,
+    ipConcentric, 
+	ipRectilinear, 
+	ipGrid, 
+	ipLine, 
+	ipCubic, 
+	ipTriangles, 
+	ipStars, 
+	ipGyroid, 
+	ipHoneycomb, 
+	ipAdaptiveCubic, 
+	ipAlignedRectilinear, 
+	ip3DHoneycomb,
+    ipHilbertCurve, 
+	ipArchimedeanChords, 
+	ipOctagramSpiral, 
+	ipSupportCubic, 
     ipLightning,
     ipCrossHatch,
     ipCross,
@@ -73,7 +87,18 @@ enum InfillPattern : int {
     ipTpmsD,
     ipGradualTpmsG,
     ipGradualTpmsD,
-    ipGradualTpmsFKS,
+    ipGradualTpmsFK,
+    ipTpmsFK,
+    ipZigZag,
+    ipCrossZag,
+    ipLockedZag,
+    ipLateralHoneycomb, 
+    ipLateralLattice,
+    //no use
+    ipMonotonic,
+    ipMonotonicLine,     
+	ipSupportBase,
+    ipConcentricInternal,
     ipCount
 };
 
@@ -107,6 +132,7 @@ enum class WallSequence {
     InnerOuter,
     OuterInner,
     InnerOuterInner,
+    AdaptiveOuterInner,
     Count,
 };
 
@@ -210,6 +236,14 @@ enum EnsureVerticalShellThickness {
     evstCriticalOnly,
     evstModerate,
     evstAll,
+};
+
+enum CoolingSlowdownLogicType {
+    UniformCooling,
+    ConsistentSurface,
+    NonSlowOuterWalls,
+    SmartCoolingZones,
+    Proportional,
 };
 
 //Orca
@@ -461,6 +495,7 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(CounterboreHoleBridgingOption)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(PrintHostType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(AuthorizationType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(PerimeterGeneratorType)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(CoolingSlowdownLogicType)
 #undef CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS
 
 class DynamicPrintConfig;
@@ -915,8 +950,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,              travel_acceleration))
     ((ConfigOptionFloatOrPercent,     sparse_infill_acceleration))
     ((ConfigOptionFloatOrPercent,     internal_solid_infill_acceleration))
-
-
+    ((ConfigOptionFloat,              travel_short_distance_acceleration))
+    ((ConfigOptionFloat,              travel_short_distance_threshold))
     //yy
     ((ConfigOptionBool, overhang_optimization))
     //((ConfigOptionFloatOrPercent, outer_wall_line_width))
@@ -964,7 +999,16 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionPercent,              tpms_start_infill_density)) 
     ((ConfigOptionPercent,              tpms_end_infill_density)) 
     ((ConfigOptionEnum<GradualDirection>, tpms_gradual_direction))
-    ((ConfigOptionEnum<InfillPattern>,  sparse_infill_pattern))
+    ((ConfigOptionBool,                 symmetric_infill_y_axis))
+    ((ConfigOptionFloat,                infill_shift_step))
+    ((ConfigOptionFloat,                infill_rotate_step))
+    ((ConfigOptionEnum<InfillPattern>,  sparse_infill_pattern)) 
+    ((ConfigOptionEnum<InfillPattern>,  locked_skin_infill_pattern)) 
+    ((ConfigOptionEnum<InfillPattern>,  locked_skeleton_infill_pattern))
+    ((ConfigOptionFloat,                lateral_lattice_angle_1))
+    ((ConfigOptionFloat,                lateral_lattice_angle_2))
+    ((ConfigOptionFloat,                infill_overhang_angle))
+    ((ConfigOptionBool,                 align_infill_direction_to_model))
     ((ConfigOptionEnum<FuzzySkinType>,  fuzzy_skin))
     ((ConfigOptionFloat,                fuzzy_skin_thickness))
     ((ConfigOptionFloat,                fuzzy_skin_point_distance))
@@ -975,11 +1019,17 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionPercent,              infill_wall_overlap))
     ((ConfigOptionPercent,              top_bottom_infill_wall_overlap))
     ((ConfigOptionFloat,                sparse_infill_speed))
+    ((ConfigOptionPercent, skeleton_infill_density))
+    ((ConfigOptionPercent, skin_infill_density))
+    ((ConfigOptionFloat, infill_lock_depth))
+    ((ConfigOptionFloat, skin_infill_depth))
+    ((ConfigOptionFloatOrPercent, skin_infill_line_width))
+    ((ConfigOptionFloatOrPercent, skeleton_infill_line_width))
     ((ConfigOptionFloatOrPercent,       external_infill_margin))
-    //BBS
     ((ConfigOptionBool, infill_combination))
-    //// Orca:
-    //((ConfigOptionFloatOrPercent,                infill_combination_max_layer_height))
+    // Orca:
+    ((ConfigOptionFloatOrPercent,                infill_combination_max_layer_height))
+    ((ConfigOptionInt,                  fill_multiline))
     // Ironing options
     ((ConfigOptionEnum<IroningType>, ironing_type))
     ((ConfigOptionEnum<InfillPattern>, ironing_pattern))
@@ -1123,6 +1173,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                fan_speedup_overhangs))
     ((ConfigOptionFloat,               fan_speedup_time))
     ((ConfigOptionFloats,              filament_diameter))
+    ((ConfigOptionInts,                filament_adhesiveness_category))
     ((ConfigOptionFloats,              filament_density))
     ((ConfigOptionStrings,             filament_type))
     ((ConfigOptionBools,               filament_soluble))
@@ -1141,7 +1192,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionEnum<GCodeFlavor>,   gcode_flavor)) 
     ((ConfigOptionEnum<GCodeFlavorText>, prime_tower_position_type))
 
-    ((ConfigOptionFloat,               time_cost)) 
+    ((ConfigOptionFloat, time_cost)) 
+    ((ConfigOptionBool, machine_is_belt))
+    ((ConfigOptionFloat, belt_Z_offset))
     ((ConfigOptionString,              layer_change_gcode))
     ((ConfigOptionString,              time_lapse_gcode))
 
@@ -1254,6 +1307,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloats,             cool_cds_fan_start_at_height))
     ((ConfigOptionInts,               additional_cooling_fan_speed))
     ((ConfigOptionBool,               reduce_crossing_wall))
+    ((ConfigOptionBool,               z_direction_outwall_speed_continuous))
     ((ConfigOptionFloatOrPercent,     max_travel_detour_distance))
     ((ConfigOptionEnum<PrinterTechnology>, printer_technology))
     ((ConfigOptionPoints,             printable_area))
@@ -1298,6 +1352,8 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionBools,              reduce_fan_stop_start_freq))
     ((ConfigOptionBools,              dont_slow_down_outer_wall))
     ((ConfigOptionBools,              smart_cooling_zones))
+    ((ConfigOptionEnumsGeneric,       cooling_slowdown_logic)) //Prusa
+    ((ConfigOptionFloats,             cooling_perimeter_transition_distance))//Prusa
     ((ConfigOptionFloats,             fan_cooling_layer_time))
     ((ConfigOptionStrings,            filament_colour))
     ((ConfigOptionBools,              activate_air_filtration))
@@ -1349,6 +1405,8 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloats,             wipe_distance))
     ((ConfigOptionBool,               enable_prime_tower))
     // BBS: change wipe_tower_x and wipe_tower_y data type to floats to add partplate logic
+    // Note: placeholder parser now binds scalar wipe_tower_x / wipe_tower_y to the current plate index
+    //       in GCode::do_export (rebind_plate_placeholders), to make {wipe_tower_x + prime_tower_width*0.5} usable in custom G-code.
     ((ConfigOptionFloats,             wipe_tower_x))
     ((ConfigOptionFloats,             wipe_tower_y))
     ((ConfigOptionFloat,              prime_tower_width))
@@ -1361,6 +1419,10 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionBool,               flush_volumes_changed))
     ((ConfigOptionFloats,             flush_volumes_vector))
     ((ConfigOptionEnum<PrimeTowerEnhanceType>,             prime_tower_enhance_type))
+    //square wipe tower
+    ((ConfigOptionBool,               prime_tower_rib_wall))
+    ((ConfigOptionBool,               prime_tower_enable_framework))
+    ((ConfigOptionBool,               prime_tower_skip_points))
 
     // Orca: mmu support
     ((ConfigOptionFloat,              wipe_tower_cone_angle))
@@ -1876,6 +1938,36 @@ private:
 
     static uint64_t             s_last_timestamp;
 };
+
+// const std::vector<double> &fv_matrix:  origin matrix from json
+// size_t extruder_id: -1 means single-nozzle for old file, 0 means the 1st extruder, 1 means the 2nd extruder
+template<class T>
+static std::vector<T> get_flush_volumes_matrix(const std::vector<T>& fv_matrix, size_t extruder_id = -1, size_t nozzle_nums = 1)
+{
+    if (extruder_id != -1 && nozzle_nums != 1) 
+    {
+        return std::vector<T>(fv_matrix.begin() + size_t(fv_matrix.size() / nozzle_nums * extruder_id + EPSILON),
+            fv_matrix.begin() + size_t(fv_matrix.size() / nozzle_nums * (extruder_id + 1) + EPSILON));
+    }
+    return fv_matrix;
+}
+
+// std::vector<double> &out_matrix:
+// const std::vector<double> &fv_matrix: the matrix of one nozzle
+// size_t extruder_id: -1 means single-nozzle for old file, 0 means the 1st extruder, 1 means the 2nd extruder
+template<class T>
+static void set_flush_volumes_matrix(std::vector<T>& out_matrix, const std::vector<T>& fv_matrix, size_t extruder_id = -1, size_t nozzle_nums = 1)
+{
+    bool is_multi_extruder = false;
+    if (extruder_id != -1 && nozzle_nums != 1) 
+    {
+        std::copy(fv_matrix.begin(), fv_matrix.end(), out_matrix.begin() + size_t(out_matrix.size() / nozzle_nums * extruder_id + EPSILON));
+    }
+    else
+    {
+        out_matrix = std::vector<T>(fv_matrix.begin(), fv_matrix.end());
+    }
+}
 
 } // namespace Slic3r
 

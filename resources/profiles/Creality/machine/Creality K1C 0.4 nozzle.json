@@ -35,7 +35,7 @@
     "layer_change_gcode": ";AFTER_LAYER_CHANGE\n;[layer_z]",
     "machine_LED_light_exist": "1",
     "machine_end_gcode": "END_PRINT",
-    "machine_load_filament_time": "0",
+    "machine_load_filament_time": "119",
     "machine_max_acceleration_e": "5000",
     "machine_max_acceleration_extruding": "20000",
     "machine_max_acceleration_retracting": "5000",
@@ -111,5 +111,5 @@
     "z_hop": "0.4",
     "z_hop_types": "Auto Lift",
     "name": "Creality K1C 0.4 nozzle",
-    "setting_id": "28758"
+    "setting_id": "73664"
 }

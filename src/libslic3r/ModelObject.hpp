@@ -8,7 +8,7 @@
 #include "Format/bbs_3mf.hpp"
 
 namespace Slic3r {
-    
+
 class Model;
 class ModelObject final : public ObjectBase
 {
@@ -46,7 +46,7 @@ public:
     // Connectors to be added into the object before cut and are used to create a solid/negative volumes during a cut perform
     CutConnectors           cut_connectors;
     CutObjectBase           cut_id;
-
+    std::vector<const ModelVolume*> const_volumes() const {return std::vector<const ModelVolume*>(volumes.begin(), volumes.end());}
     /* This vector accumulates the total translation applied to the object by the
         center_around_origin() method. Callers might want to apply the same translation
         to new volumes before adding them to this object in order to preserve alignment
@@ -101,10 +101,21 @@ public:
     const BoundingBoxf3&    bounding_box_approx() const;
     // Returns an exact bounding box of the transformed instances. The result it is being cached.
     const BoundingBoxf3&    bounding_box_exact() const;
+
+    const BoundingBoxf3& belt_bounding_box_exact() const;
+
+
+    Vec3d get_instances_min_offset() const;
     // Return minimum / maximum of a printable object transformed into the world coordinate system.
     // All instances share the same min / max Z.
     double                  min_z() const;
     double                  max_z() const;
+    double                  min_y() const;
+    double                  current_min_y() const;
+    double                  max_y() const;
+    double                  current_max_y() const;
+    double                  depth() const;
+    BoundingBoxf3           belt_box();
 
     void invalidate_bounding_box() {
         m_bounding_box_approx_valid     = false;
@@ -127,6 +138,8 @@ public:
     // A snug bounding box around the transformed non-modifier object volumes.
     BoundingBoxf3 instance_bounding_box(size_t instance_idx, bool dont_translate = false) const;
     BoundingBoxf3 instance_bounding_box(const ModelInstance& instance, bool dont_translate = false) const;
+    BoundingBoxf3 instance_belt_bounding_box(size_t instance_idx, bool dont_translate = false) const;
+    BoundingBoxf3 instance_belt_bounding_box(const ModelInstance& instance, bool dont_translate = false) const;
 
 	// A snug bounding box of non-transformed (non-rotated, non-scaled, non-translated) sum of non-modifier object volumes.
 	const BoundingBoxf3& raw_mesh_bounding_box() const;
@@ -348,8 +361,10 @@ private:
     mutable BoundingBoxf3 m_bounding_box_approx;
     mutable bool          m_bounding_box_approx_valid { false };
     mutable BoundingBoxf3 m_bounding_box_exact;
+    mutable BoundingBoxf3 m_belt_bounding_box_exact;
     mutable bool          m_bounding_box_exact_valid { false };
     mutable bool          m_min_max_z_valid { false };
+    mutable bool          m_min_max_y_valid{false};
     mutable BoundingBoxf3 m_raw_bounding_box;
     mutable bool          m_raw_bounding_box_valid { false };
     mutable BoundingBoxf3 m_raw_mesh_bounding_box;
@@ -362,6 +377,7 @@ private:
         m_bounding_box_exact              = src.m_bounding_box_exact;
         m_bounding_box_exact_valid        = src.m_bounding_box_exact_valid;
         m_min_max_z_valid                 = src.m_min_max_z_valid;
+        m_min_max_y_valid                 = src.m_min_max_y_valid;
         m_raw_bounding_box                = src.m_raw_bounding_box;
         m_raw_bounding_box_valid          = src.m_raw_bounding_box_valid;
         m_raw_mesh_bounding_box           = src.m_raw_mesh_bounding_box;
@@ -418,8 +434,10 @@ private:
 
     // Called by min_z(), max_z()
     void update_min_max_z();
+    void update_min_max_y();
 };
 
+extern Transform3d beltXForm(const Transform3d& offset, float angle);
 };
 
 #endif /* slic3r_ModelObject_hpp_ */

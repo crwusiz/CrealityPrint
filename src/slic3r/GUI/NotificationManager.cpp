@@ -186,7 +186,7 @@ void NotificationManager::ObjectInfoNotification::render(
 {
 	float sc = wxGetApp().plater()->get_current_canvas3D()->get_scale();
 	ImVec2 win_size = DispConfig().getWindowSize(DispConfig::e_wt_msg,sc);
-	m_window_width = win_size.x;
+	m_window_width = win_size.x + 10.0f * sc; // widen a bit
 
 	if (m_state == EState::Unknown)
 		init();
@@ -215,15 +215,23 @@ void NotificationManager::ObjectInfoNotification::render(
 	//imgui.push_bold_font();
 	std::string name = "!!Ntfctn" + std::to_string(m_id);
 	DispConfig().processWindows(name, [&]() {
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        ImVec2      wpos      = ImGui::GetWindowPos();
+        ImVec2      wsz       = ImGui::GetWindowSize();
+        ImU32       bg        = ImGui::ColorConvertFloat4ToU32(m_is_dark ? ImVec4(0.1f,0.1f,0.1f,0.4f) : ImVec4(1.0f, 1.0f, 1.0f, 0.4f));
+        float       rounding  = 18.0f * sc;
+        draw_list->AddRectFilled(ImVec2(wpos.x, wpos.y - 3.0f * sc), ImVec2(wpos.x + wsz.x, wpos.y + wsz.y + 3.0f * sc), bg, rounding);
         if (ImGui::IsMouseHoveringRect(win_pos, win_pos + win_size))
             set_hovered();
         bbl_render_left_sign(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
         render_left_sign(imgui);
+        ImGui::PushStyleColor(ImGuiCol_Text, m_is_dark ? ImVec4(1.0f,1.0f,1.0f,1.0f) : ImVec4(135/255.0f, 142/255.0f, 154/255.0f, 1.0f));
         render_text(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
-        render_close_button(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
+        ImGui::PopStyleColor();
         m_minimize_b_visible = false;
-        if (m_multiline && m_lines_count > 3)
+        if (m_lines_count > 3)
             render_minimize_button(imgui, win_pos.x, win_pos.y);
+        render_close_button(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
 	});
 	//imgui.pop_bold_font();
 }
@@ -472,7 +480,7 @@ void NotificationManager::PopNotification::bbl_render_block_notif_text(ImGuiWrap
 			if (i == 1 && m_endlines.size() > 2 && !m_multiline) {
 				// second line with "more" hypertext
 				line = m_text1.substr(m_endlines[0] + (m_text1[m_endlines[0]] == '\n' || m_text1[m_endlines[0]] == ' ' ? 1 : 0), m_endlines[1] - m_endlines[0] - (m_text1[m_endlines[0]] == '\n' || m_text1[m_endlines[0]] == ' ' ? 1 : 0));
-				while (ImGui::CalcTextSize(line.c_str()).x > m_window_width - m_window_width_offset - ImGui::CalcTextSize((".." + _u8L("More")).c_str()).x) {
+				while (ImGui::CalcTextSize(line.c_str()).x > m_window_width - m_window_width_offset - ImGui::CalcTextSize("").x) {
 					line = line.substr(0, line.length() - 1);
 				}
 				line += "..";
@@ -504,7 +512,7 @@ void NotificationManager::PopNotification::bbl_render_block_notif_text(ImGuiWrap
 	}
 	//hyperlink text
 	if (!m_multiline && m_lines_count > 2) {
-		render_hypertext(imgui, x_offset + ImGui::CalcTextSize((line + " ").c_str()).x, starting_y + shift_y, _u8L("More"), true);
+		//render_hypertext(imgui, x_offset + ImGui::CalcTextSize((line + " ").c_str()).x, starting_y + shift_y, _u8L("More"), true);
 	}
 	else if (!m_hypertext.empty()) {
 		const ImVec2 button_size = {52, 28};
@@ -541,7 +549,7 @@ void NotificationManager::PopNotification::render_text(ImGuiWrapper& imgui, cons
 			if (i == 1 && m_endlines.size() > 2 && !m_multiline) {
 				// second line with "more" hypertext
 				line = m_text1.substr(m_endlines[0] + (m_text1[m_endlines[0]] == '\n' || m_text1[m_endlines[0]] == ' ' ? 1 : 0), m_endlines[1] - m_endlines[0] - (m_text1[m_endlines[0]] == '\n' || m_text1[m_endlines[0]] == ' ' ? 1 : 0));
-				while (ImGui::CalcTextSize(line.c_str()).x > m_window_width - m_window_width_offset - ImGui::CalcTextSize((".." + _u8L("More")).c_str()).x) {
+				while (ImGui::CalcTextSize(line.c_str()).x > m_window_width - m_window_width_offset - ImGui::CalcTextSize("").x) {
 					line = line.substr(0, line.length() - 1);
 				}
 				line += "..";
@@ -569,7 +577,7 @@ void NotificationManager::PopNotification::render_text(ImGuiWrapper& imgui, cons
 	}
 	//hyperlink text
 	if (!m_multiline && m_lines_count > 2) {
-		render_hypertext(imgui, x_offset + ImGui::CalcTextSize((line + " ").c_str()).x, starting_y + shift_y, _u8L("More"), true);
+		//render_hypertext(imgui, x_offset + ImGui::CalcTextSize((line + " ").c_str()).x, starting_y + shift_y, _u8L("More"), true);
 	}
 	else if (!m_hypertext.empty()) {
 		render_hypertext(imgui, x_offset + ImGui::CalcTextSize((line + (line.empty() ? "" : " ")).c_str()).x, starting_y + (m_endlines.size() - 1) * shift_y, m_hypertext);
@@ -634,48 +642,48 @@ void NotificationManager::PopNotification::render_hypertext(ImGuiWrapper& imgui,
 void NotificationManager::PopNotification::render_close_button(ImGuiWrapper& imgui, const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
 {
     ensure_ui_inited();
-	ImVec2 win_size(win_size_x, win_size_y);
-	ImVec2 win_pos(win_pos_x, win_pos_y);
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.0f, .0f, .0f, .0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.0f, .0f, .0f, .0f));
-	push_style_color(ImGuiCol_Text, ImVec4(1.f, 1.f, 1.f, 1.f), m_state == EState::FadingOut, m_current_fade_opacity);
-	push_style_color(ImGuiCol_TextSelectedBg, ImVec4(0, .75f, .75f, 1.f), m_state == EState::FadingOut, m_current_fade_opacity);
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.0f, .0f, .0f, .0f));
+    float scale = wxGetApp().plater()->get_current_canvas3D()->get_scale();
 
+    ImVec2 win_size(win_size_x, win_size_y);
 
-	std::wstring button_text;
-	button_text = m_is_dark ? ImGui::CloseNotifDarkButton : ImGui::CloseNotifButton;
-    //button_text = ImGui::PreferencesButton;
+    float right_margin = 14.0f;
+    const float icon_px = 10.0f;
+    const float pad_px  = 3.0f;
 
-	//if (ImGui::IsMouseHoveringRect(ImVec2(win_pos.x - win_size.x / 10.f, win_pos.y),
-	//	                           ImVec2(win_pos.x, win_pos.y + win_size.y - ( m_minimize_b_visible ? 2 * m_line_height : 0)),
-	//	                           true))
-    if (ImGui::IsMouseHoveringRect(ImVec2(win_pos.x - win_size.x / 10.f, win_pos.y), ImVec2(win_pos.x, win_pos.y + 2 * m_line_height+10),true))
-	{
-		button_text = m_is_dark ? ImGui::CloseNotifHoverDarkButton : ImGui::CloseNotifHoverButton;
-	}
-	ImVec2 button_pic_size = ImGui::CalcTextSize(into_u8(button_text).c_str());
-	ImVec2 button_size(button_pic_size.x * 1.25f, button_pic_size.y * 1.25f);
-	ImGui::SetCursorPosX(win_size.x - m_line_height * 2.0f - 20);
-	//ImGui::SetCursorPosY(win_size.y / 2 - button_size.y);
-    if (m_minimize_b_visible)
-		ImGui::SetCursorPosY(0);
-    else
-        ImGui::SetCursorPosY(win_size.y / 2 - button_size.y);
-	if (imgui.button(button_text.c_str(), button_size.x, button_size.y))
-	{
-		close();
-	}
+    ImVec2 icon_size(icon_px * scale, icon_px * scale);
+    float  pad = pad_px * scale;
+    ImVec2 btn_size(icon_size.x + pad * 2.0f, icon_size.y + pad * 2.0f);
+    const float y_offset_px = 4.0f;
+    ImVec2 btn_pos(win_size.x - right_margin - btn_size.x, y_offset_px * scale);
 
-	//invisible large button
-	ImGui::SetCursorPosX(win_size.x - m_line_height * 2.35f);
-	ImGui::SetCursorPosY(0);
-	if (imgui.button(" ", m_line_height * 2.125, win_size.y - ( m_minimize_b_visible ? 2 * m_line_height : 0)))
-	{
-		close();
-	}
+    ImGui::SetCursorPos(btn_pos);
+    ImGui::PushID("close_btn");
+    ImGui::InvisibleButton("##close", btn_size);
+    bool hovered = ImGui::IsItemHovered();
+    bool clicked = ImGui::IsItemClicked();
 
-	ImGui::PopStyleColor(5);
+    ImVec2 pmin = ImGui::GetItemRectMin();
+    ImVec2 pmax = ImGui::GetItemRectMax();
+
+    // Colors
+    ImVec4 col_n = m_is_dark ? ImVec4(0.82f, 0.86f, 0.92f, 1.0f) : ImVec4(0.52f, 0.58f, 0.66f, 1.0f);
+    ImVec4 col_h = ImVec4(0.00f, 0.588f, 0.533f, 1.0f);
+    ImU32 col = ImGui::ColorConvertFloat4ToU32(hovered ? col_h : col_n);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    // draw X icon centered in btn rect
+    ImVec2 center((pmin.x + pmax.x) * 0.5f, (pmin.y + pmax.y) * 0.5f);
+    float half = icon_size.x * 0.5f;
+    float ext = half; // 45deg cross
+    float t = 2.2f * scale;
+    dl->AddLine(ImVec2(center.x - ext, center.y - ext), ImVec2(center.x + ext, center.y + ext), col, t);
+    dl->AddLine(ImVec2(center.x - ext, center.y + ext), ImVec2(center.x + ext, center.y - ext), col, t);
+
+    if (clicked) {
+        close();
+    }
+
+    ImGui::PopID();
 }
 
 void NotificationManager::PopNotification::bbl_render_block_notif_buttons(ImGuiWrapper& imgui, ImVec2 win_size, ImVec2 win_pos)
@@ -698,8 +706,9 @@ void NotificationManager::PopNotification::bbl_render_block_notif_buttons(ImGuiW
 		close();
 	*/
 
-    float  scale           = wxGetApp().plater()->get_current_canvas3D()->get_scale();
-    ImVec2 button_pic_size = ImVec2(30 * scale, 30 * scale);
+    float scale = wxGetApp().plater()->get_current_canvas3D()->get_scale();
+    float button_px = 27.0f;
+    ImVec2 button_pic_size = ImVec2(button_px * scale, button_px * scale);
     ImVec2 button_size     = button_pic_size;
     ImVec2 cursor_pos = {win_size.x - button_size.x * 1.5f, win_size.y / 2 - button_size.y / 2};
     ImGui::SetCursorPos(cursor_pos);
@@ -709,7 +718,7 @@ void NotificationManager::PopNotification::bbl_render_block_notif_buttons(ImGuiW
         normtx      = DispConfig().getTextureId(DispConfig::e_tt_normal_tip_block_notification_close, false, false);
         normHovertx = DispConfig().getTextureId(DispConfig::e_tt_normal_tip_block_notification_close_hover, false, false);
 	}
-    if (ImGui::ImageButton3(normtx, normHovertx, ImVec2(30 * scale, 30 * scale)))
+    if (ImGui::ImageButton3(normtx, normHovertx, ImVec2(button_px * scale, button_px * scale)))
         close();
 
 	ImGui::PopStyleColor(4);
@@ -791,33 +800,78 @@ void NotificationManager::PopNotification::render_left_sign(ImGuiWrapper& imgui)
 void NotificationManager::PopNotification::render_minimize_button(ImGuiWrapper& imgui, const float win_pos_x, const float win_pos_y)
 {
     ensure_ui_inited();
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.0f, .0f, .0f, .0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.0f, .0f, .0f, .0f));
-	push_style_color(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg), m_state == EState::FadingOut, m_current_fade_opacity);
-	push_style_color(ImGuiCol_Text, ImVec4(1.f, 1.f, 1.f, 1.f), m_state == EState::FadingOut, m_current_fade_opacity);
-	push_style_color(ImGuiCol_TextSelectedBg, ImVec4(0, .75f, .75f, 1.f), m_state == EState::FadingOut, m_current_fade_opacity);
+    float scale = wxGetApp().plater()->get_current_canvas3D()->get_scale();
+    float right_margin = 2.0f;
+    float spacing = 1.0f;
+    float close_x = m_window_width - m_line_height * 2.0f - right_margin;
 
+    const float icon_px = 13.0f;
+    const float pad_px  = 3.0f;
 
-	//button - if part if treggered
-	std::wstring button_text;
-	button_text = m_is_dark ? ImGui::MinimalizeDarkButton : ImGui::MinimalizeButton;
-	if (ImGui::IsMouseHoveringRect(ImVec2(win_pos_x - m_window_width / 10.f, win_pos_y + m_window_height - 2 * m_line_height + 1),
-		ImVec2(win_pos_x, win_pos_y + m_window_height),
-		true))
-	{
-		button_text = m_is_dark ? ImGui::MinimalizeHoverDarkButton : ImGui::MinimalizeHoverButton;
-	}
-	ImVec2 button_pic_size = ImGui::CalcTextSize(into_u8(button_text).c_str());
-	ImVec2 button_size(button_pic_size.x * 1.25f, button_pic_size.y * 1.25f);
-	ImGui::SetCursorPosX(m_window_width - m_line_height * 1.8f);
-	ImGui::SetCursorPosY(m_window_height - button_size.y - 5);
-	if (imgui.button(button_text.c_str(), button_size.x, button_size.y))
-	{
-		m_multiline = false;
-	}
+    ImVec2 icon_size(icon_px * scale, icon_px * scale);
+    float  pad = pad_px * scale;
+    ImVec2 btn_size(icon_size.x + pad * 2.0f, icon_size.y + pad * 2.0f);
+    const float y_offset_px = 2.0f;
+    ImVec2 btn_pos(close_x - spacing - btn_size.x, y_offset_px * scale);
 
-	ImGui::PopStyleColor(5);
-	m_minimize_b_visible = true;
+    ImGui::SetCursorPos(btn_pos);
+    ImGui::PushID("minimize_btn");
+    ImGui::InvisibleButton("##minimize", btn_size);
+    bool hovered = ImGui::IsItemHovered();
+    bool clicked = ImGui::IsItemClicked();
+
+    ImVec2 pmin = ImGui::GetItemRectMin();
+    ImVec2 pmax = ImGui::GetItemRectMax();
+
+    // Colors
+    ImVec4 col_n = m_is_dark ? ImVec4(0.82f, 0.86f, 0.92f, 1.0f) : ImVec4(0.52f, 0.58f, 0.66f, 1.0f);
+    ImVec4 col_h = ImVec4(0.00f, 0.588f, 0.533f, 1.0f);
+    ImU32 col = ImGui::ColorConvertFloat4ToU32(hovered ? col_h : col_n);
+    
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    ImVec2 icon_min(pmin.x + pad, pmin.y + pad);
+    ImVec2 icon_max(icon_min.x + icon_size.x, icon_min.y + icon_size.y);
+
+    if (m_multiline) {
+        // '-' minus sign
+        float t = 2.2f * scale;
+        float margin = 1.0f * scale;
+        ImVec2 a(icon_min.x + margin, (icon_min.y + icon_max.y) * 0.5f);
+        ImVec2 b(icon_max.x - margin, (icon_min.y + icon_max.y) * 0.5f);
+        dl->AddLine(a, b, col, t);
+    } else {
+                // expand glyph: two arrow heads (NE and SW)
+        float t = 2.2f * scale;
+        float margin = 1.0f * scale;
+        float inv_sqrt2 = 0.70710678f;
+        float L = icon_size.x * 0.28f; // arm length (short)
+        float W = icon_size.x * 0.18f; // head half-width
+
+        ImVec2 tip_ne(icon_max.x - margin, icon_min.y + margin);
+        ImVec2 nd_ne( inv_sqrt2, -inv_sqrt2);
+        ImVec2 perp_ne( inv_sqrt2,  inv_sqrt2);
+        ImVec2 base_ne = ImVec2(tip_ne.x - nd_ne.x * L, tip_ne.y - nd_ne.y * L);
+        ImVec2 p1_ne   = ImVec2(base_ne.x + perp_ne.x * W, base_ne.y + perp_ne.y * W);
+        ImVec2 p2_ne   = ImVec2(base_ne.x - perp_ne.x * W, base_ne.y - perp_ne.y * W);
+        dl->AddLine(tip_ne, p1_ne, col, t);
+        dl->AddLine(tip_ne, p2_ne, col, t);
+
+        ImVec2 tip_sw(icon_min.x + margin, icon_max.y - margin);
+        ImVec2 nd_sw( -inv_sqrt2,  inv_sqrt2);
+        ImVec2 perp_sw( -inv_sqrt2, -inv_sqrt2);
+        ImVec2 base_sw = ImVec2(tip_sw.x - nd_sw.x * L, tip_sw.y - nd_sw.y * L);
+        ImVec2 p1_sw   = ImVec2(base_sw.x + perp_sw.x * W, base_sw.y + perp_sw.y * W);
+        ImVec2 p2_sw   = ImVec2(base_sw.x - perp_sw.x * W, base_sw.y - perp_sw.y * W);
+        dl->AddLine(tip_sw, p1_sw, col, t);
+        dl->AddLine(tip_sw, p2_sw, col, t);    }
+    if (clicked) {
+        m_multiline = !m_multiline;
+    }
+
+    ImGui::PopID();
+    m_minimize_b_visible = true;
 }
 bool NotificationManager::PopNotification::on_text_click()
 {
@@ -1946,7 +2000,7 @@ void NotificationManager::push_support_manual_hint(const std::string& text, int 
         NotificationLevel::WarningNotificationLevel,
         duration_sec,                                     
         text,                               
-        into_u8("Ç°Íù»æÖÆÖ§³Å(L)"),
+        into_u8("å‰å¾€ç»˜åˆ¶æ”¯æ’‘(L)"),
 		[](wxEvtHandler*) {
         if (auto* canvas = wxGetApp().plater()->get_current_canvas3D()) {
             auto& gm = canvas->get_gizmos_manager();
@@ -2178,6 +2232,18 @@ void NotificationManager::push_update_params_tip(const std::string& tipInfo)
 
 void NotificationManager::close_update_params_tip(const std::string& tipInfo)
 {
+    for (std::unique_ptr<PopNotification>& notification : m_pop_notifications) {
+        if (notification->get_type() == NotificationType::SlicingSeriousWarning && notification->compare_text(tipInfo)) {
+            notification->close();
+        }
+    }
+}
+
+void NotificationManager::push_checked_3rd_filament_vendor_tip(const std::string& tipInfo) {
+    push_notification_data({NotificationType::SlicingSeriousWarning, NotificationLevel::NormalNotificationLevel, 0, tipInfo, "", nullptr}, 0);
+}
+
+void NotificationManager::close_checked_3rd_filament_vendor_tip(const std::string& tipInfo) {
     for (std::unique_ptr<PopNotification>& notification : m_pop_notifications) {
         if (notification->get_type() == NotificationType::SlicingSeriousWarning && notification->compare_text(tipInfo)) {
             notification->close();
@@ -2586,10 +2652,30 @@ void NotificationManager::render_notifications(GLCanvas3D &canvas, float overlay
 bool NotificationManager::update_notifications(GLCanvas3D& canvas)
 {
 	// no update if not top window
-	wxWindow* p = dynamic_cast<wxWindow*>(wxGetApp().plater());
+	auto* plater = wxGetApp().plater();
+	if (plater == nullptr) {
+		BOOST_LOG_TRIVIAL(error) << "NotificationManager::update_notifications: plater is null, skip update";
+		if (auto core = boost::log::core::get())
+			core->flush();
+		return false;
+	}
+
+	wxWindow* p = dynamic_cast<wxWindow*>(plater);
+	if (p == nullptr) {
+		BOOST_LOG_TRIVIAL(error) << "NotificationManager::update_notifications: plater is not a wxWindow, skip update";
+		if (auto core = boost::log::core::get())
+			core->flush();
+		return false;
+	}
 	while (p->GetParent() != nullptr)
 		p = p->GetParent();
 	wxTopLevelWindow* top_level_wnd = dynamic_cast<wxTopLevelWindow*>(p);
+	if (top_level_wnd == nullptr) {
+		BOOST_LOG_TRIVIAL(error) << "NotificationManager::update_notifications: top_level_wnd is null, skip update";
+		if (auto core = boost::log::core::get())
+			core->flush();
+		return false;
+	}
 	if (!top_level_wnd->IsActive())
 		return false;
 
@@ -3179,11 +3265,13 @@ void NotificationManager::PopNotification::render(GLCanvas3D& canvas, float& ini
             set_hovered();
         bbl_render_left_sign(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
         render_left_sign(imgui);
+        ImGui::PushStyleColor(ImGuiCol_Text, m_is_dark ? ImVec4(1.0f,1.0f,1.0f,1.0f) : ImVec4(135/255.0f, 142/255.0f, 154/255.0f, 1.0f));
         render_text(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
-        render_close_button(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
+        ImGui::PopStyleColor();
         m_minimize_b_visible = false;
-        if (m_multiline && m_lines_count > 3)
+        if (m_lines_count > 3)
             render_minimize_button(imgui, win_pos.x, win_pos.y);
+        render_close_button(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
 	
 	ImGui::EndChild();
 

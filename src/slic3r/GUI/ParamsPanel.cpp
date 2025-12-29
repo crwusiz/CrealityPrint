@@ -38,6 +38,9 @@
 #include <wx/dcgraph.h>
 #include "libslic3r/common_header/common_header.h"
 
+#include <boost/log/trivial.hpp>
+#include <boost/log/core.hpp>
+
 namespace Slic3r {
 namespace GUI {
 
@@ -454,8 +457,8 @@ ParamsPanel::ParamsPanel( wxWindow* parent, wxWindowID id, const wxPoint& pos, c
     if (dynamic_cast<Notebook*>(parent)) {
         // BBS: new layout
         m_top_panel = new StaticBox(this, wxID_ANY, wxDefaultPosition);
-        m_top_panel->SetBackgroundColor(0xFFFFFF);
-        m_top_panel->SetBackgroundColor2(0xFFFFFF);
+        m_top_panel->SetBackgroundColor(0xF7F8FA);
+        m_top_panel->SetBackgroundColor2(0xF7F8FA);
 
         m_process_icon = new ScalableButton(m_top_panel, wxID_ANY, is_dark?"process_dark_default":"process_light_default");
 
@@ -754,6 +757,8 @@ void ParamsPanel::create_layout_printerAndFilament()
                     return;
                 }
                 wxString        itemString = data->GetData();
+                const std::string item_u8 = into_u8(itemString);
+                const std::string cur_u8  = into_u8(m_curPreset);
 
                 if (itemString == _L("User presets") || itemString == _L("System presets") || itemString == _L("Project presets") 
                     || itemString == m_curPreset)
@@ -762,10 +767,46 @@ void ParamsPanel::create_layout_printerAndFilament()
                 }
 
                 bool optRes = false;
-                if (m_ws == WS_PRINTER)
-                    optRes = dynamic_cast<TabPrinter*>(m_tab_printer)->changedSelectPrint(into_u8(itemString));
-                else
-                    optRes = dynamic_cast<TabFilament*>(m_tab_filament)->changedSelectFilament(into_u8(itemString));
+                try {
+                    if (m_ws == WS_PRINTER) {
+                        auto* tab_printer = dynamic_cast<TabPrinter*>(m_tab_printer);
+                        if (!tab_printer) {
+                            BOOST_LOG_TRIVIAL(warning) << "ParamsPanel: preset tree selection tab_printer is null"
+                                                       << ", ws=" << static_cast<int>(m_ws)
+                                                       << ", item=" << item_u8
+                                                       << ", cur_preset=" << cur_u8
+                                                       << ", action=rollback_to_cur_preset";
+                            boost::log::core::get()->flush();
+                            SelectRowByString(m_curPreset);
+                            updateItemState();
+                            return;
+                        }
+                        optRes = tab_printer->changedSelectPrint(into_u8(itemString));
+                    } else {
+                        auto* tab_filament = dynamic_cast<TabFilament*>(m_tab_filament);
+                        if (!tab_filament) {
+                            BOOST_LOG_TRIVIAL(warning) << "ParamsPanel: preset tree selection tab_filament is null"
+                                                       << ", ws=" << static_cast<int>(m_ws)
+                                                       << ", item=" << item_u8
+                                                       << ", cur_preset=" << cur_u8
+                                                       << ", action=rollback_to_cur_preset";
+                            boost::log::core::get()->flush();
+                            SelectRowByString(m_curPreset);
+                            updateItemState();
+                            return;
+                        }
+                        optRes = tab_filament->changedSelectFilament(into_u8(itemString));
+                    }
+                } catch (const std::exception& ex) {
+                    BOOST_LOG_TRIVIAL(warning) << "ParamsPanel: preset tree selection exception"
+                                               << ", ex=" << ex.what();
+                    boost::log::core::get()->flush();
+                    optRes = false;
+                } catch (...) {
+                    BOOST_LOG_TRIVIAL(warning) << "ParamsPanel: preset tree selection unknown exception";
+                    boost::log::core::get()->flush();
+                    optRes = false;
+                }
 
                 if (optRes)
                 {

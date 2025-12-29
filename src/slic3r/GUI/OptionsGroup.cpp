@@ -593,24 +593,26 @@ void OptionsGroup::clear(bool destroy_custom_ctrl)
 	m_fields.clear();
 }
 
-Line OptionsGroup::create_single_option_line(const Option& option, const std::string& path/* = std::string()*/) const
+Line OptionsGroup::create_single_option_line(const Option& option, const std::string& path /* = std::string()*/, bool subline) const
 {
     OptionConfig::Option data = OptionConfig::Ins().get_option(option.opt.opt_key);
 
     wxString tooltip = _(option.opt.tooltip);
     edit_tooltip(tooltip);
-	Line retval{ _(option.opt.label), tooltip };
-	retval.label_path = path;
+    Line retval{_(option.opt.label), tooltip};
+    retval.label_path = path;
+    retval.subline    = subline;
     retval.append_option(option);
+
     if (data.is_valid())
     {
         if (!data.tooltip.empty())
             retval.label_tooltip = L(data.tooltip);
 
-        if(!data.tooltip_img.empty())
+        if (!data.tooltip_img.empty())
             retval.label_tooltip_img = data.tooltip_img;
 
-        if(!data.url.empty())
+        if (!data.url.empty())
             retval.label_hyperlink = data.url;
     }
 

@@ -327,7 +327,8 @@ public:
         { Transform3d t = this->trafo(); t.pretranslate(Vec3d(- unscale<double>(m_center_offset.x()), - unscale<double>(m_center_offset.y()), 0)); return t; }
     const PrintInstances&        instances() const      { return m_instances; }
     PrintInstances &instances() { return m_instances; }
-
+    bool                         belt()const { return is_belt;}
+    void                         set_belt(bool _belt) { is_belt = _belt; }
     // Whoever will get a non-const pointer to PrintObject will be able to modify its layers.
     LayerPtrs&                   layers()               { return m_layers; }
     SupportLayerPtrs&            support_layers()       { return m_support_layers; }
@@ -468,7 +469,7 @@ public:
   private:
     // to be called from Print only.
     friend class Print;
-
+    bool                                    is_belt      = false;
 	PrintObject(Print* print, ModelObject* model_object, const Transform3d& trafo, PrintInstances&& instances);
 	~PrintObject();
 
@@ -521,7 +522,7 @@ private:
 
     // BBS
     SupportNecessaryType is_support_necessary();
-
+    void merge_layer_node(const size_t layer_id, int& max_merged_id, std::map<int, std::vector<std::pair<int, int>>>& node_record);
     // XYZ in scaled coordinates
     Vec3crd									m_size;
     double                                  m_max_z;
@@ -623,6 +624,12 @@ struct FakeWipeTower
 
 struct WipeTowerData
 {
+    struct WipeTowerMeshData
+    {
+        Polygon      bottom;
+        TriangleMesh real_wipe_tower_mesh;
+        TriangleMesh real_brim_mesh;
+    };
     // Following section will be consumed by the GCodeGenerator.
     // Tool ordering of a non-sequential print has to be known to calculate the wipe tower.
     // Cache it here, so it does not need to be recalculated during the G-code generation.
@@ -639,6 +646,9 @@ struct WipeTowerData
     std::vector<std::pair<float, float>>                  z_and_depth_pairs;
     float                                                 brim_width;
     float                                                 height;
+    BoundingBoxf                                          bbx; // including brim
+    Polygon                                               stable_cone;
+    std::optional<WipeTowerMeshData>                      wipe_tower_mesh_data;
 
     void clear() {
         priming.reset(nullptr);
@@ -649,6 +659,8 @@ struct WipeTowerData
         depth = 0.f;
         brim_width = 0.f;
     }
+
+    void construct_mesh(float width, float depth, float height, float brim_width, bool is_stable_cone_wipe_tower, const Polygon& brim);
 
 private:
 	// Only allow the WipeTowerData to be instantiated internally by Print, 
@@ -891,6 +903,10 @@ public:
     Vec2d translate_to_print_space(const Vec2d &point) const;
     // scaled point
     Vec2d translate_to_print_space(const Point &point) const;
+
+    //move around wipe tower
+    float        get_wipe_tower_depth() const { return m_wipe_tower_data.depth; }
+    BoundingBoxf get_wipe_tower_bbx() const { return m_wipe_tower_data.bbx; }
 
     void setMultiColor(bool multiColor) { m_isMultiColor = multiColor; }
     bool getMultiColor() const { return m_isMultiColor; }

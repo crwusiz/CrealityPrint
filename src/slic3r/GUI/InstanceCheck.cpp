@@ -515,6 +515,7 @@ void OtherInstanceMessageHandler::handle_message(const std::string& message)
 		wxGetApp().request_user_logout();
 		//wxGetApp().mainframe->select_tab(size_t(0));
 		wxGetApp().reload_homepage();
+		wxGetApp().reload_region_sensitive_views();
 	}
 	if(message.find("dark_mode|") != std::string::npos) {
 		std::string dark_color_mode = wxGetApp().app_config->get("dark_color_mode");

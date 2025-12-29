@@ -99,6 +99,7 @@ public:
     bool write_binary(const char* output_file);
     float volume();
     void WriteOBJFile(const char* output_file) const;
+    void repair();
     void scale(float factor);
     void scale(const Vec3f &versor);
     void translate(float x, float y, float z);
@@ -126,6 +127,10 @@ public:
     BoundingBoxf3 bounding_box() const;
     // Returns the bbox of this TriangleMesh transformed by the given transformation
     BoundingBoxf3 transformed_bounding_box(const Transform3d &trafo) const;
+
+    //
+    BoundingBoxf3 transformed_bounding_box(const Transform3d& trafo, const Transform3d& belt_trafo) const;
+
     // Variant returning the bbox of the part of this TriangleMesh above the given world_min_z
     BoundingBoxf3 transformed_bounding_box(const Transform3d& trafo, double world_min_z) const;
     // Return the size of the mesh in coordinates.

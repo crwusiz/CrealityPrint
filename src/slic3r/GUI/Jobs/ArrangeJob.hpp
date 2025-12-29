@@ -30,6 +30,9 @@ class ArrangeJob : public Job
     std::vector<int> m_move_top_left_ids;
     std::map<int, ModelInstance*> m_instance_id_to_instance;
 
+    // the unprintable model need to move to top left of first plate
+    std::vector<ModelInstance*> m_unprintable_instances;  
+
     arrangement::ArrangeParams params;
     int current_plate_index = 0;
     Polygon bed_poly;

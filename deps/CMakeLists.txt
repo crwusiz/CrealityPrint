@@ -425,6 +425,13 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	list(APPEND _dep_list "dep_metartc")
 endif()
+
+if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "loongarch|loongarch64")
+    # TODO: Only the rules of uos/deepin under the Loongson architecture
+    list(REMOVE_ITEM _dep_list dep_BREAKPAD)
+endif()
+
+
 if (MSVC)
     # Experimental
     #list(APPEND _dep_list "dep_qhull")
@@ -440,7 +447,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     include(ZSTD/ZSTD.cmake)
     list(APPEND _dep_list_first "dep_zstd")
 endif()
+# Include LERC for UOS or LoongArch systems
+include(${CMAKE_SOURCE_DIR}/../cmake/modules/CheckUos.cmake)
+if(IS_UOS OR ${CMAKE_SYSTEM_PROCESSOR} MATCHES "loongarch")
+    include(LERC/lerc.cmake)
+    if(LERC_FOUND)
+        list(APPEND _dep_list_first "dep_Lerc")
+    endif()
+endif()
 add_custom_target(deps ALL DEPENDS ${_dep_list_first} ${_dep_list} ${_dep_cr_tpms}  )
+
+
 
 # Note: I'm not using any of the LOG_xxx options in ExternalProject_Add() commands
 # because they seem to generate bogus build files (possibly a bug in ExternalProject).

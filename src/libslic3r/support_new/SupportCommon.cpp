@@ -1641,8 +1641,22 @@ void generate_support_toolpaths(
         {
             SupportLayer &support_layer = *support_layers[support_layer_id];
             LayerCache   &layer_cache   = layer_caches[support_layer_id];
-            const float   support_interface_angle = ((support_params.support_style == smsGrid && config.support_interface_pattern != smipRectilinearInterlaced) || config.support_interface_pattern == smipRectilinear) ?
-                support_params.interface_angle : support_params.raft_interface_angle(support_layer.interface_id());
+//             const float   support_interface_angle = ((support_params.support_style == smsGrid && config.support_interface_pattern != smipRectilinearInterlaced) || config.support_interface_pattern == smipRectilinear) ?
+//                 support_params.interface_angle : support_params.raft_interface_angle(support_layer.interface_id());
+
+            float   support_interface_angle = 0.0;
+            if ((support_params.support_style == smsGrid && config.support_interface_pattern != smipRectilinearInterlaced && config.support_interface_pattern != smipAuto))
+            {
+                support_interface_angle = support_params.interface_angle;
+            }
+            else if (config.support_interface_pattern == smipRectilinear)
+            {
+                support_interface_angle = support_params.interface_angle;
+            }
+            else
+            {
+                support_interface_angle = support_params.raft_interface_angle(support_layer.interface_id());
+            }
 
             // Find polygons with the same print_z.
             SupportGeneratorLayerExtruded &bottom_contact_layer = layer_cache.bottom_contact_layer;

@@ -55,7 +55,7 @@ static constexpr size_t MAXIMUM_EXTRUDER_NUMBER = 64;
 
 extern double SCALING_FACTOR;
 // for creating circles (for brim_ear)
-#define POLY_SIDES 24
+#define POLY_SIDE_COUNT 24
 static constexpr double PI = 3.141592653589793238;
 // When extruding a closed loop, the loop is interrupted and shortened a bit to reduce the seam.
 // SoftFever: replaced by seam_gap now

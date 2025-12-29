@@ -26,6 +26,7 @@
 #include "print_manage/data/DataCenter.hpp"
 #include "slic3r/Utils/ProfileFamilyLoader.hpp"
 #include "LoginTip.hpp"
+#include <boost/log/trivial.hpp>
 #include <wx/event.h>
 wxDEFINE_EVENT(EVT_MENU_HOVER_ENTER, wxCommandEvent);
 wxDEFINE_EVENT(EVT_MENU_HOVER_LEAVE, wxCommandEvent);
@@ -130,9 +131,11 @@ FilamentButton::FilamentButton(wxWindow* parent,
     int childButtonX = size.GetWidth() / 2;
     int childButtonY = (size.GetHeight() - childButtonHeight) / 2;
 
-    m_child_button = new wxButton(this, wxID_ANY, "", wxPoint(childButtonX, childButtonY), wxSize(childButtonWidth, childButtonHeight));
+    // Use wxPanel instead of wxButton for reliable owner-draw on GTK/Linux
+    m_child_button = new wxPanel(this, wxID_ANY, wxPoint(childButtonX, childButtonY), wxSize(childButtonWidth, childButtonHeight),
+                                 wxBORDER_NONE);
     m_child_button->Bind(wxEVT_PAINT, &FilamentButton::OnChildButtonPaint, this);
-	m_child_button->Bind(wxEVT_LEFT_DOWN, &FilamentButton::OnChildButtonClick, this);
+    m_child_button->Bind(wxEVT_LEFT_DOWN, &FilamentButton::OnChildButtonClick, this);
     m_child_button->Bind(wxEVT_RIGHT_UP, [&](wxMouseEvent& event) {
         FilamentItem* parentItem = dynamic_cast<FilamentItem*>(GetParent());
         int           filament_item_index = -1;
@@ -857,7 +860,32 @@ FilamentItem::FilamentItem(wxWindow* parent, const Data& data, const wxSize& siz
 
     m_preset_bundle = Slic3r::GUI::wxGetApp().preset_bundle;
     std::string filament_type;
-    m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[m_data.index])->get_filament_type(filament_type);
+    // Defensive: determine a safe preset name before lookup.
+    std::string preset_name;
+    const size_t preset_count = m_preset_bundle->filament_presets.size();
+    if (m_data.index < preset_count) {
+        preset_name = m_preset_bundle->filament_presets[m_data.index];
+    } else {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+            << ": index " << m_data.index
+            << " out of bounds (size " << preset_count
+            << "), falling back to selected filament '"
+            << m_preset_bundle->filaments.get_selected_preset_name() << "'";
+        preset_name = m_preset_bundle->filaments.get_selected_preset_name();
+    }
+
+    Slic3r::Preset* preset = m_preset_bundle->filaments.find_preset(preset_name);
+    if (!preset) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+            << ": preset '" << preset_name << "' not found; using 'Default Filament'";
+        preset = m_preset_bundle->filaments.find_preset("Default Filament");
+    }
+    if (preset) {
+        preset->get_filament_type(filament_type);
+    } else {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": 'Default Filament' preset not found; using generic label";
+        filament_type = "Filament"; // final fallback label
+    }
 
     std::string filament_color = m_preset_bundle->project_config.opt_string("filament_colour", (unsigned int) m_data.index);
     m_bk_color                 = wxColour(filament_color);
@@ -1149,14 +1177,21 @@ void FilamentItem::set_filament_selection(const wxString& filament_name)
 
 void FilamentItem::update()
 {
-    if(m_preset_bundle->filament_presets.size() <= m_data.index)
+    if(m_preset_bundle->filament_presets.size() <= m_data.index) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+            << ": index " << m_data.index
+            << " out of bounds (size " << m_preset_bundle->filament_presets.size()
+            << "), skipping update";
         return;
+    }
 
     auto filament_color = m_preset_bundle->project_config.opt_string("filament_colour", (unsigned int)m_data.index);
     if (filament_color == "\"\"")
         filament_color = "#000000";
     Slic3r::DynamicPrintConfig* cfg    = &Slic3r::GUI::wxGetApp().preset_bundle->project_config;
     auto                        colors = static_cast<Slic3r::ConfigOptionStrings*>(cfg->option("filament_colour")->clone());
+    if(colors->values.size() <= m_data.index)
+        colors->values.resize(m_data.index + 1, "#000000");
     colors->values[m_data.index]       = filament_color;
     Slic3r::DynamicPrintConfig cfg_new = *cfg;
     cfg_new.set_key_value("filament_colour", colors);
@@ -1172,13 +1207,22 @@ void FilamentItem::update()
 	m_popPanel->m_filamentCombox->update(); 
 
 	std::string filament_type;
-	Slic3r::Preset* preset = m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[m_data.index]);
+    Slic3r::Preset* preset = m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[m_data.index]);
     if (preset)
         preset->get_filament_type(filament_type);
-    else
-        return;
+    else {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+            << ": preset '" << m_preset_bundle->filament_presets[m_data.index]
+            << "' not found; using 'Default Filament'";
+        preset = m_preset_bundle->filaments.find_preset("Default Filament");
+        if (preset == nullptr) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": 'Default Filament' preset not found; update aborted";
+            return;
+        }
+    }
 
     wxString current_selection = m_popPanel->m_filamentCombox->GetStringSelection();
+    m_preset_name              = preset->name;
 
 	// Get the button width
     int btn_width = m_btn_param_list->GetSize().GetWidth();
@@ -1205,7 +1249,7 @@ void FilamentItem::update()
     m_btn_param_list->SetToolTip(current_selection);
     m_btn_param_list->Refresh();
 
-	auto filament_config = m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[m_data.index])->config;
+	auto filament_config = preset->config; // m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[m_data.index])->config;
     const Slic3r::ConfigOptionInts* nozzle_temp_opt = filament_config.option<Slic3r::ConfigOptionInts>("nozzle_temperature");
 	if (nullptr != nozzle_temp_opt)
 	{
@@ -1307,6 +1351,9 @@ wxString FilamentItem::boxname()
 wxColour FilamentItem::color() 
 { 
     return m_bk_color;
+}
+wxString FilamentItem::preset_name() {
+    return m_preset_name;
 }
     /*
 * FilamentPanel
@@ -1749,8 +1796,9 @@ void FilamentPanel::on_re_sync_all_filaments(const std::string& selected_device_
 		{
 			Slic3r::GUI::wxGetApp().preset_bundle->set_num_filaments(filament_count);
 		}
-        
+        wxGetApp().preset_bundle->update_filament_presets = false;
         Slic3r::GUI::wxGetApp().plater()->on_filaments_change(filament_count);
+        wxGetApp().preset_bundle->update_filament_presets = true;
         Slic3r::GUI::wxGetApp().get_tab(Slic3r::Preset::TYPE_PRINT)->update();
         Slic3r::GUI::wxGetApp().preset_bundle->export_selections(*Slic3r::GUI::wxGetApp().app_config);
 
@@ -1856,6 +1904,15 @@ void FilamentPanel::update(int index /*=-1*/)
 	{
         for (auto& item : m_vt_filament) {
             item->update();
+        }
+        if (wxGetApp().preset_bundle->update_filament_presets) {
+            wxGetApp().preset_bundle->filament_presets.resize(m_vt_filament.size());
+            for (size_t i = 0; i < m_vt_filament.size(); ++i) {
+                wxString name = m_vt_filament[i]->preset_name();
+                if (name.empty())
+                    continue;
+                wxGetApp().preset_bundle->filament_presets[i] = name.ToStdString();
+            }
         }
 	}
 	else
@@ -2086,6 +2143,17 @@ void BoxColorPopPanel::OnFirstColumnButtonClicked(wxCommandEvent& event)
                     tmp_material.material_id = material_id;
                     tmp_material.color      = "#808080"; // grey
                     tmp_material.type       = "?";
+                    int state = 0;
+                    const DM::MaterialBox* src_box = is_ext_material ? ext_material_box_info : material_box_info;
+                    if (src_box) {
+                        for (const auto& m : src_box->materials) {
+                            if (m.material_id == material_id) {
+                                state = m.state;
+                                break;
+                            }
+                        }
+                    }
+                    tmp_material.state = state;
                     filament_item->set_sync_state(false);
                     filament_item->set_is_ext(is_ext_material);
                     filament_item->update_item_info_by_material(box_id, tmp_material);
@@ -2282,7 +2350,6 @@ wxString FilamentColorSelectionItem::get_material_index_info()
 void FilamentColorSelectionItem::update_item_info_by_material(int box_id, const DM::Material& material_info, int box_type)
 {
     m_box_id  = box_id;
-	m_filament_type_label = material_info.type;
 	m_filament_name = material_info.name;
     m_userMaterial = material_info.userMaterial;
     m_bk_color = RemotePrint::Utils::hex_string_to_wxcolour(material_info.color);
@@ -2294,18 +2361,24 @@ void FilamentColorSelectionItem::update_item_info_by_material(int box_id, const 
     }
     else 
     {
-        if(m_sync)
-        {
-            m_material_index_info = wxString::Format("%d%c", m_box_id, index_char);
-            if (box_type == 2) {
-                m_material_index_info = "CFS";
-            }
+        m_material_index_info = wxString::Format("%d%c", m_box_id, index_char);
+        if (box_type == 2) {
+            m_material_index_info = "CFS";
         }
-        else 
-        {
-            m_material_index_info = "/";
+    }
+    // 右侧类型：分三种情况
+    if (m_sync) {
+        // 已同步：正常显示真实类型
+        m_filament_type_label = material_info.type;
+    } else {
+        // 未同步：根据 state 决定显示 "/" 还是 "?"
+        // state == 0  → 槽位真的空 => 显示 "/"
+        // state != 0 → 槽位有东西但不可用/未知 => 显示 "?"
+        if (material_info.state == 0) {
+            m_filament_type_label = "/";
+        } else {
+            m_filament_type_label = "?";
         }
-        
     }
 
 	SetLabel(m_material_index_info);
@@ -2678,6 +2751,49 @@ MaterialContextMenu::MaterialContextMenu(wxWindow* parent, int index) : ManagedP
         m_isExpended = false;
         m_mergeBtn->SetExpendStates(false);
         });
+
+    m_checkTimer = new wxTimer(this);
+    m_checkTimer->Start(1000);
+    Bind(wxEVT_TIMER, &MaterialContextMenu::onCheckTimer, this);
+}
+
+MaterialContextMenu::~MaterialContextMenu()
+{
+    if (m_checkTimer != nullptr) {
+        m_checkTimer->Stop();
+        delete m_checkTimer;
+        m_checkTimer = nullptr;
+    }
+}
+
+void MaterialContextMenu::onCheckTimer(wxTimerEvent& event)
+{
+    if (!isMouseInWindow()) {
+        this->Dismiss();
+        PopupWindowManager::Get().CloseAll();
+    }
+}
+
+bool MaterialContextMenu::isMouseInWindow()
+{
+    // 检查鼠标是否在主窗口内
+    wxPoint mousePos = wxGetMousePosition();
+    wxPoint clientPos = ScreenToClient(mousePos);
+    wxSize winSize = GetSize();
+    bool isInMainWindow = !(clientPos.x < 0 || clientPos.x >= winSize.x || clientPos.y < 0 || clientPos.y >= winSize.y);
+
+    // 检查鼠标是否在子菜单内
+    bool isInSubMenu = false;
+    if (m_isExpended && m_submenu != nullptr && m_submenu->IsShown())
+    {
+        wxPoint submenuClientPos = m_submenu->ScreenToClient(mousePos);
+        wxSize submenuSize = m_submenu->GetSize();
+        isInSubMenu = !(submenuClientPos.x < 0 || submenuClientPos.x >= submenuSize.x ||
+            submenuClientPos.y < 0 || submenuClientPos.y >= submenuSize.y);
+    }
+
+    // 鼠标在主窗口或子菜单内都返回true
+    return isInMainWindow || isInSubMenu;
 }
 
 void MaterialContextMenu::OnShowSubmenu(wxCommandEvent&e)
@@ -2689,13 +2805,13 @@ void MaterialContextMenu::OnShowSubmenu(wxCommandEvent&e)
     m_isExpended = true;
     m_mergeBtn->SetExpendStates(true);
     // 创建并显示子菜单
-    auto    submenu = new MaterialSubMenu(this, m_index);
-    submenu->init();
+    m_submenu = new MaterialSubMenu(this, m_index);
+    m_submenu->init();
     wxPoint pos = m_mergeBtn->GetScreenPosition();
     pos.y += m_mergeBtn->GetSize().y + FromDIP(8);
     pos.x -= FromDIP(4);
-    submenu->Position(pos, wxSize(0, 0));
-    submenu->Cus_Popup(true, this);
+    m_submenu->Position(pos, wxSize(0, 0));
+    m_submenu->Cus_Popup(true, this);
 }
 void MaterialContextMenu::OnDelete(wxCommandEvent&) 
 {

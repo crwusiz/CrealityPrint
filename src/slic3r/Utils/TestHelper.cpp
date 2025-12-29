@@ -11,6 +11,10 @@
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
+#include "slic3r/GUI/Widgets/WebView.hpp"
+#include "slic3r/GUI/print_manage/AppMgr.hpp"
+#include "slic3r/GUI/Tab.hpp"
+#include "slic3r/GUI/OptionsGroup.hpp"
 
 using boost::asio::ip::tcp;
 using namespace Slic3r;
@@ -131,7 +135,14 @@ public:
         if (thd.joinable())
             thd.join();
     }
-    void cmd_respone(std::string respone) { server->client_->do_write(respone); }
+    void cmd_respone(std::string respone) 
+    { 
+        if (!server->client_) {
+            BOOST_LOG_TRIVIAL(warning) << "No client connected to test socket";
+            return;
+        }
+        server->client_->do_write(respone); 
+    }
 
 private:
     void parse_string_to_cmd(std::string& info)
@@ -200,7 +211,8 @@ std::string TestHelper::call_cmd_inner(std::string cmd, std::string json_str)
         nlohmann::json arg;
         try
         {
-            arg = json::parse(json_str);
+            if (!json_str.empty())
+                arg = json::parse(json_str);
             std::string err;
             std::string payload;
             inner_it->second(arg, payload, err);
@@ -247,6 +259,21 @@ void call_when_target_eventloop_exec(std::string cmd, nlohmann::json& arg, ASync
     wxPostEvent(&wxGetApp(), e); // Ͷ�ݵ��¼�����ֻ��Ϊ�˴���async_callback_list[cmd]�Ļص���������������
 }
 
+void respone_on_next_eventloop(std::string command, int code, std::string error = "", nlohmann::json ret = {})
+{
+    call_when_target_eventloop_exec(
+        command, 
+        ret,
+        [code, error](nlohmann::json ret) 
+        {
+            ret["ret"] = code;
+            if (!error.empty())
+                ret["error"] = error;
+            Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
+        }
+    );
+}
+
 void call_when_event_spread(std::string event, nlohmann::json& arg, ASync_Callback_Type callback)
 {
     if (event_async_callback_list.find(event) == event_async_callback_list.end())
@@ -266,6 +293,9 @@ static int event_spread(nlohmann::json arg, std::string& payload, std::string& e
         //    support event:
         //    "canvas_render_finished"
         //    "slice_compete"
+        //    "slice_started"
+        //    "sendToPrint_loaded"
+        //    "test_exec_js_respone"
         //
         for (auto& pair : it->second)
         {
@@ -296,6 +326,7 @@ public:
     std::string                        app_id;
     std::map<std::string, AsyncCmdStatus> cmd_status;
     bool                                  capture_mode = false;
+    bool                                  ban_dialog   = true;
 
     Status()
     {
@@ -526,44 +557,81 @@ static void PostButtonClick(wxWindow* btn)
 
 static int click_button_cmd(nlohmann::json arg, std::string& payload, std::string& error)
 {
-    // �ɷ��� GUI �߳����������
     call_when_target_eventloop_exec("click_button", arg, [](nlohmann::json j) {
         nlohmann::json out;
 
-        // ��������
         int      id    = j.contains("id") ? j["id"].get<int>() : wxID_ANY;
         wxString name  = j.contains("name") ? wxString::FromUTF8(j["name"].get<std::string>()) : "";
         wxString label = j.contains("label") ? wxString::FromUTF8(j["label"].get<std::string>()) : "";
 
-        wxWindow* top = wxTheApp->GetTopWindow();
-        wxWindow* btn = FindButton(top, id, name, label);
+        int timeout_ms  = j.contains("timeout_ms") ? j["timeout_ms"].get<int>() : 5000;
+        int interval_ms = j.contains("interval_ms") ? j["interval_ms"].get<int>() : 100;
 
+        wxWindow* top = wxTheApp->GetTopWindow();
+        if (!top) {
+            out["ret"]   = 1;
+            out["error"] = "no top window";
+            Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+            return;
+        }
+
+        wxWindow* btn = FindButton(top, id, name, label);
         if (!btn) {
             out["ret"]   = 1;
             out["error"] = "button not found (id/name/label unmatched)";
             Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
             return;
         }
-        if (!btn->IsEnabled() || !btn->IsShown()) {
-            out["ret"]   = 1;
-            out["error"] = "button disabled or hidden";
+
+        auto try_click = [&](wxWindow* found_btn) -> bool {
+            if (!found_btn)
+                return false;
+            if (!found_btn->IsEnabled() || !found_btn->IsShown())
+                return false;
+            try {
+                PostButtonClick(found_btn);
+                out["ret"]   = 0;
+                out["info"]  = "wxEVT_BUTTON posted";
+                out["id"]    = found_btn->GetId();
+                out["name"]  = std::string(found_btn->GetName().ToUTF8());
+                out["label"] = std::string(wxDynamicCast(found_btn, wxButton) ? wxDynamicCast(found_btn, wxButton)->GetLabel().ToUTF8() :
+                                                                                "");
+            } catch (const std::exception& ex) {
+                out["ret"]   = 1;
+                out["error"] = std::string("exception: ") + ex.what();
+            }
             Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+            return true;
+        };
+
+        if (try_click(btn))
             return;
-        }
 
-        try {
-            PostButtonClick(btn);
-            out["ret"]   = 0;
-            out["info"]  = "wxEVT_BUTTON posted";
-            out["id"]    = btn->GetId();
-            out["name"]  = std::string(btn->GetName().ToUTF8());
-            out["label"] = std::string(wxDynamicCast(btn, wxButton) ? wxDynamicCast(btn, wxButton)->GetLabel().ToUTF8() : "");
-        } catch (const std::exception& ex) {
-            out["ret"]   = 1;
-            out["error"] = std::string("exception: ") + ex.what();
-        }
+        // Start timer polling: Button exists but is currently unavailable/invisible
+        wxTimer*   timer    = new wxTimer(top);
+        wxLongLong start_ll = wxGetUTCTimeMillis(); 
 
-        Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+        timer->Bind(wxEVT_TIMER, [=](wxTimerEvent&) mutable {
+            wxWindow* cur_btn = FindButton(top, id, name, label);
+            if (try_click(cur_btn)) {
+                timer->Stop();
+                delete timer; 
+                return;
+            }
+
+            wxLongLong diff       = wxGetUTCTimeMillis() - start_ll;
+            long       elapsed_ms = diff.ToLong(); 
+
+            if (elapsed_ms >= timeout_ms) {
+                timer->Stop();
+                out["ret"]   = 1;
+                out["error"] = "timeout waiting for button to become enabled/visible";
+                Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
+                delete timer;
+            }
+        });
+
+        timer->Start(interval_ms, wxTIMER_CONTINUOUS);
     });
 
     return -1;
@@ -745,11 +813,309 @@ static int trigger_slice(nlohmann::json arg, std::string& payload, std::string& 
     return -1;
 }
 
+static int select_printer(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    SidebarPrinter& bar = wxGetApp().plater()->sidebar_printer();
+    std::vector<std::string> items = bar.texts_of_combo_printer();
+    auto printer_name = arg["printer_name"].get<std::string>();
+    int                     index        = -1;
+
+    auto cur_preset_name = wxGetApp().preset_bundle->printers.get_selected_preset_name();
+    if (cur_preset_name.find(printer_name) != std::string::npos)
+    {
+        return 0;
+    }
+
+    for (int i = 0; i < items.size(); ++i)
+    {
+        const auto& name = items[i];
+        
+        if (name == printer_name)
+        {
+            index = i;
+            break;
+        }
+    }
+    if (index == -1)
+    {
+        error = "no found printer";
+        return 1;
+    }
+
+    bar.select_printer_preset(items[index], index);
+    // Pending 
+    respone_on_next_eventloop("select_printer", 0);
+    return -1;
+}
+
+static int binding_phy_printer(nlohmann::json arg, std::string& payload, std::string& error)
+{ 
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    call_when_target_eventloop_exec("binding_phy_printer", arg, 
+        [](nlohmann::json arg) 
+        {
+            auto ip_address = arg["ip_or_name"].get<std::string>();
+            if (wxGetApp().obj_list()->bind_phy_printer_by_ip_or_name(ip_address)) {
+                wxGetApp().plater()->set_current_canvas_as_dirty();
+                wxGetApp().plater()->get_current_canvas3D()->render();
+
+                call_when_event_spread("canvas_render_finished", arg, [](nlohmann::json arg) {
+                    // Pending
+                    respone_on_next_eventloop("binding_phy_printer11", 0);
+                });
+            } 
+            else
+                respone_on_next_eventloop("binding_phy_printer22", 1, "not ip found");
+        });
+    return -1;
+} 
+
+static int trigger_send_to_print(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    auto type = arg["type"].get<std::string>();
+    if (type == "single") {
+        wxCommandEvent e(EVT_GLTOOLBAR_SEND_TO_LOCAL_NET_PRINTER);
+        wxPostEvent(wxGetApp().plater(), e);
+    } else {
+        wxCommandEvent e(EVT_GLTOOLBAR_PRINT_MULTI_MACHINE);
+        wxPostEvent(wxGetApp().plater(), e);
+    }
+    call_when_event_spread("sendToPrint_loaded", arg, [](nlohmann::json arg) {
+        nlohmann::json ret;
+        ret["ret"] = 0;
+        Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
+    });    
+    return -1;
+}
+
+static int close_send_to_print(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    call_when_target_eventloop_exec("close_send_to_print", arg, [](nlohmann::json arg) {
+        std::string web_name = "SentToPrinter";
+        DM::Apps    apps;
+        DM::AppMgr::Ins().GetAppsByName(web_name, apps);
+        if (apps.empty()) {
+            nlohmann::json ret;
+            ret["ret"]   = 1;
+            ret["error"] = "no found webview";
+            Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
+        } else {
+            apps[0].browser->GetParent()->Close();
+            nlohmann::json ret;
+            ret["ret"]   = 0;
+            Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
+        }
+    });
+    return -1;
+}
+
+static int exec_js_in_webview(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    call_when_target_eventloop_exec("exec_js_in_webview", arg, [](nlohmann::json arg) {
+        auto which_webview = arg["which_webview"].get<std::string>();
+        std::string js_script;
+        if (arg.find("js_script_localtion") != arg.end())
+        {
+            auto js_script_localtion = arg["js_script_localtion"].get<std::string>();
+            fstream fs(js_script_localtion, std::ios::in);
+            if (!fs.is_open())
+            {
+                nlohmann::json ret;
+                ret["ret"]   = 1;
+                ret["error"] = "cannot open js script file";
+                Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
+                return;
+            }
+            std::stringstream ssbuffer;
+            ssbuffer << fs.rdbuf();
+            js_script = std::move(ssbuffer.str());
+            fs.close();
+        }
+        else
+        {
+            js_script = arg["js_script"].get<std::string>();
+        }
+
+        DM::Apps apps;
+        DM::AppMgr::Ins().GetAppsByName(which_webview, apps);
+        if (apps.empty()) {
+            nlohmann::json ret;
+            ret["ret"] = 1;
+            ret["error"] = "no found webview";
+            Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
+        } 
+        else
+        {
+            WebView::RunScript(apps[0].browser, js_script);
+        }
+            
+    });
+    // pending
+    call_when_event_spread("test_exec_js_respone", arg, [](nlohmann::json arg) {
+        nlohmann::json ret;
+        ret["ret"] = 0;
+        auto paramstr = arg["param"].get<std::string>();
+        nlohmann::json param     = nlohmann::json::parse(arg["param"].get<std::string>());
+        ret["arg"] = param["arg"];
+        Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
+    });
+    return -1;
+}
+
+static int is_ban_dialog(nlohmann::json arg, std::string& payload, std::string& error) 
+{ 
+    payload = status.ban_dialog ? "y" : "n";
+    return 0; 
+}
+
+static int ban_dialog(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    status.ban_dialog = true;
+    return 0;
+}
+
+static int allow_dialog(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    status.ban_dialog = false;
+    return 0;
+}
+
+static int set_process_paramter(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    auto callback = [](nlohmann::json arg)
+    {
+        std::string error;
+        TabPrint* process_tab = nullptr;
+        for (auto tab : wxGetApp().tabs_list) {
+            if (tab->title() == _(L("Process"))) {
+                process_tab = dynamic_cast<TabPrint*>(tab);
+                break;
+            }
+        }
+        if (process_tab == nullptr) {
+            error = "not found process tab, checked it";
+            respone_on_next_eventloop("set_process_paramter", 1, error);
+            return;
+        }
+
+        auto which_page       = arg["which_page"].get<std::string>();
+        auto paramter_kv_list = arg["paramter_list"];
+
+        if (paramter_kv_list.empty()) {
+            error = "empty paramters list";
+            respone_on_next_eventloop("set_process_paramter", 1, error);
+            return;
+        }
+
+        std::unordered_map<std::string, std::string> kv_hash;
+        for (auto paramter_kv_pair : paramter_kv_list) {
+            auto key   = paramter_kv_pair["key"].get<std::string>();
+            auto value = paramter_kv_pair["value"].get<std::string>();
+            kv_hash.insert({key, value});
+        }
+
+        const auto&                                        pages = process_tab->get_pages();
+        std::unordered_map<std::string, std::string> invaild_kv;
+        for (auto& page : pages) {
+            if (!which_page.empty()) {
+                if (page->title() != which_page)
+                    continue;
+            }
+            process_tab->select_item(page->title());
+            for (auto& optgroup : page->m_optgroups) {
+                for (auto opt : optgroup->opt_map()) {
+                    auto key = opt.second.first;
+                    if (kv_hash.find(key) == kv_hash.end())
+                        continue;
+
+                    auto field = optgroup->get_field(key);
+                    if (dynamic_cast<TextCtrl*>(field)) {
+                        auto v = wxString(kv_hash[key]);
+                        optgroup->set_value(key, v);
+                        field->m_on_change(key, field->get_value());
+                    } else if (dynamic_cast<GUI::ColourPicker*>(field) || dynamic_cast<GUI::StaticText*>(field)) {
+                        optgroup->set_value(key, kv_hash[key]);
+                        field->m_on_change(key, field->get_value());
+                    } else if (dynamic_cast<GUI::SliderCtrl*>(field) || dynamic_cast<GUI::SpinCtrl*>(field) ||
+                               dynamic_cast<GUI::Choice*>(field)) {
+                        int v = std::stoi(kv_hash[key]);
+                        optgroup->set_value(key, v);
+                        field->m_on_change(key, field->get_value());
+                    } else if (dynamic_cast<GUI::PointCtrl*>(field)) {
+                        auto point_inx = kv_hash[key].find(',');
+                        int  x         = std::stoi(kv_hash[key].substr(point_inx));
+                        int  y         = std::stoi(kv_hash[key].substr(point_inx, kv_hash[key].size() - point_inx));
+                        auto v         = Vec2d{x, y};
+                        optgroup->set_value(key, v);
+                        field->m_on_change(key, field->get_value());
+                    } else if (dynamic_cast<GUI::CheckBox*>(field)) {
+                        bool v = kv_hash[key] == "true" ? true : false;
+                        optgroup->set_value(key, v);
+                        field->m_on_change(key, field->get_value());
+                    } else {
+                        invaild_kv.insert({key, kv_hash[key]});
+                    }
+
+                    kv_hash.erase(key);
+                    if (kv_hash.empty()) {
+                        // finished
+                        goto end;
+                    }
+                }
+            }
+        }
+
+    end:
+        if (!invaild_kv.empty()) {
+            std::string invaild_kv_msg = "had invaild type paramter: ";
+            for (auto kv : invaild_kv) {
+                invaild_kv_msg.append("  ");
+                invaild_kv_msg.append(kv.first);
+                invaild_kv_msg.append("=>");
+                invaild_kv_msg.append(kv.second);
+            }
+            error = invaild_kv_msg;
+        }
+        if (!kv_hash.empty()) {
+            std::string remain_kv_msg = "had not found paramter: ";
+            for (auto kv : kv_hash) {
+                remain_kv_msg.append("  ");
+                remain_kv_msg.append(kv.first);
+                remain_kv_msg.append("=>");
+                remain_kv_msg.append(kv.second);
+            }
+            error.append(remain_kv_msg);
+        }
+
+        nlohmann::json ret;
+        if (!error.empty())
+        {
+            ret["ret"]   = 1;
+            ret["error"] = error;
+            Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
+            //respone_on_next_eventloop("set_process_paramter", 1, error);
+        }
+        else
+        {
+            ret["ret"] = 0;
+            Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
+            //respone_on_next_eventloop("set_process_paramter", 0);
+        }
+    };
+
+    call_when_target_eventloop_exec("set_process_paramter", arg, callback);
+
+    return -1;
+}
+
 void TestHelper::register_cmd() 
 { 
     // cp �ڲ�ģ��ʹ�õ�cmd�������Ǵ�std::string����ֵ���������̷���
     m_inner_cmd2func["is_capture_mode"] = is_capture_mode;
-    m_inner_cmd2func["event_spread"]    = event_spread;
+    m_inner_cmd2func["event_spread"]   = event_spread;
+    m_inner_cmd2func["is_ban_dialog"]     = is_ban_dialog;
+    m_inner_cmd2func["ban_dialog"]        = ban_dialog;
+    m_inner_cmd2func["allow_dialog"]      = allow_dialog;
     // socket��¶��cmd�������ǲ���������ֵ
     m_cmd2func["cmd_respone"]          = cmd_respone_wrapper;
     m_cmd2func["handle_app_cmd"]       = handle_app_cmd;
@@ -762,6 +1128,12 @@ void TestHelper::register_cmd()
     m_cmd2func["get_widget_geometry"]  = get_widget_geometry;
     m_cmd2func["new_project"]          = new_project;
     m_cmd2func["trigger_slice"]        = trigger_slice;
+    m_cmd2func["select_printer"]       = select_printer;
+    m_cmd2func["binding_phy_printer"]  = binding_phy_printer;
+    m_cmd2func["trigger_send_to_print"] = trigger_send_to_print;
+    m_cmd2func["close_send_to_print"]   = close_send_to_print;
+    m_cmd2func["exec_js_in_webview"]    = exec_js_in_webview;
+    m_cmd2func["set_process_paramter"]  = set_process_paramter;
 
     // LHX TODO������������ע��ĺ���
     m_cmd2func["trigger_load_project2"] = trigger_load_project2;

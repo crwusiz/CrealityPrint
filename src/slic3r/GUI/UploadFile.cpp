@@ -25,6 +25,20 @@ UploadFile::UploadFile() {
 UploadFile::~UploadFile(){
     AlibabaCloud::OSS::ShutdownSdk();
 }
+json UploadFile::getCloudUploadInfo()
+{
+    getAliyunInfo();
+    getOssInfo();
+    json j;
+    j["token"] = m_token;
+    j["accessKeyId"] = m_accessKeyId;
+    j["secretAccessKey"] = m_secretAccessKey;
+    j["endPoint"] = m_endPoint;
+    j["bucket"] = m_bucket;
+    j["video_bucket"]    = m_video_bucket;
+    j["cdnHost"] = m_cdnHost;
+    return j;
+}
 int UploadFile::getAliyunInfo()
 {
     int nRet = -1;
@@ -47,7 +61,14 @@ int UploadFile::getAliyunInfo()
         .header("__CXY_REQUESTID_", to_string(uuid))
         .set_post_body(body)
         .on_complete([&](std::string body, unsigned status) { 
-            json jBody = json::parse(body);
+            json jBody;
+            try {
+                jBody = json::parse(body);
+            } catch (const json::parse_error& e) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " getOssInfo json parse error: " << e.what();
+                nRet = -5;
+                return;
+            }
             if (jBody["code"].is_number_integer()) {
                 nRet = jBody["code"];
                 if (jBody["code"].get<int>() == 4) {
@@ -106,7 +127,14 @@ int UploadFile::getOssInfo()
         .header("__CXY_REQUESTID_", to_string(uuid))
         .set_post_body(body)
         .on_complete([&](std::string body, unsigned status) {
-            json jBody = json::parse(body);
+            json jBody;
+            try {
+                jBody = json::parse(body);
+            } catch (const json::parse_error& e) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " getOssInfo json parse error: " << e.what();
+                nRet = -5;
+                return;
+            }
             if (jBody["code"].is_number_integer()) {
                 nRet = jBody["code"];
                 if (jBody["code"].get<int>() == 4) {
@@ -129,8 +157,17 @@ int UploadFile::getOssInfo()
                 return;
             }
             m_endPoint           = jBody["result"]["info"]["endpoint"];
-            m_bucket     = jBody["result"]["info"]["file"]["bucket"];
-
+            m_bucket             = jBody["result"]["info"]["file"]["bucket"];
+            m_video_bucket       = jBody["result"]["info"]["video"]["bucket"];
+            const auto& info     = jBody["result"]["info"];
+            m_cdnHost.clear();
+            auto videoIt = info.find("video");
+            if (videoIt != info.end() && videoIt->is_object()) {
+                auto cdnHostIt = videoIt->find("cdnHost");
+                if (cdnHostIt != videoIt->end() && cdnHostIt->is_string()) {
+                    m_cdnHost = cdnHostIt->get<std::string>();
+                }
+            }
             nRet = 0;
         })
         .on_error([&](std::string body, std::string error, unsigned status) { nRet = -4;
@@ -358,6 +395,8 @@ int UploadFile::uploadFileToAliyun(const std::string& local_path, const std::str
     //AlibabaCloud::OSS::PutObjectRequest request(m_bucket, upload_path, content);
     string uploadId;
     AlibabaCloud::OSS::ClientConfiguration conf;
+    conf.connectTimeoutMs = 10 * 1000;
+    conf.requestTimeoutMs = 20 * 1000;
     AlibabaCloud::OSS::OssClient oss_client(m_endPoint, m_accessKeyId, m_secretAccessKey, m_token, conf);
     try{
     AlibabaCloud::OSS::ObjectMetaData metaData;

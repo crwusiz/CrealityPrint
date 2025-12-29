@@ -187,6 +187,12 @@ public:
             pngTexOnlineDevice,
             pngTexOnlineDeviceGray,
             pngTexOnlineDeviceDarkGray,
+            pngTexCollapseLight,
+            pngTexCollapseDark,
+            pngTexSettingLight,
+            pngTexSettingDark,
+            pngTexEditLight,
+            pngTexEditDark,
             pngTexRadioSel,
             pngTexRadioUnSel,
             pngTexDeviceListIItem,
@@ -380,6 +386,7 @@ private:
     void draw_device_list_popup();
     void draw_device_list_content();
     bool set_cur_device_by_cur_preset();
+    bool set_cur_device_by_mac(std::string mac_addr);
 
 public:
     ObjectList(wxWindow* parent);
@@ -645,15 +652,18 @@ public:
     void selected_object(ObjectDataViewModelNode* item);
     bool get_left_panel_fold() { return m_left_panel_fold; }
     void set_left_panel_fold(bool fold) { m_left_panel_fold = fold; }
-    void render_printer_preset_by_ImGui();
+    void render_printer_preset_by_ImGui(bool folded_view = false);
     void render_plate_tree_by_ImGui();
     void render_unfold_button();
+    bool get_collapse_icon(ImTextureID& id, ImVec2& uv0, ImVec2& uv1, bool mirror_x);
 
     bool get_object_list_window_focus();
     void set_object_list_window_focus(bool f);
     
     wxRect printComboRect() { return m_PrintCombo; };
     wxRect wifiBtn() { return m_WifiBtn; };
+    
+    bool bind_phy_printer_by_ip_or_name(std::string ip_or_name);
  private:
 #ifdef __WXOSX__
 //    void OnChar(wxKeyEvent& event);

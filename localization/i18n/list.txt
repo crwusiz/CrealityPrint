@@ -912,11 +912,13 @@ src/libslic3r/FDM/MachineVender.cpp
 src/libslic3r/FDM/PolysUlities.cpp
 src/libslic3r/FDM/Serialization.cpp
 src/libslic3r/FDM/WipeTowerCreality.cpp
+src/libslic3r/FDM/WipeTowerCrealityCFS.cpp
 src/libslic3r/FDM/Filament.hpp
 src/libslic3r/FDM/MachineVender.hpp
 src/libslic3r/FDM/PolysUlities.hpp
 src/libslic3r/FDM/Serialization.hpp
 src/libslic3r/FDM/WipeTowerCreality.hpp
+src/libslic3r/FDM/WipeTowerCrealityCFS.hpp
 src/libslic3r/Fill/Fill.cpp
 src/libslic3r/Fill/Fill3DHoneycomb.cpp
 src/libslic3r/Fill/FillAdaptive.cpp
@@ -934,6 +936,8 @@ src/libslic3r/Fill/FillQuarter.cpp
 src/libslic3r/Fill/FillRectilinear.cpp
 src/libslic3r/Fill/FillTetrahedral.cpp
 src/libslic3r/Fill/FillTpmsD.cpp
+src/libslic3r/Fill/FillTpmsFK.cpp
+src/libslic3r/Fill/FillTpmsGradual.cpp
 src/libslic3r/Fill/Fill.hpp
 src/libslic3r/Fill/Fill3DHoneycomb.hpp
 src/libslic3r/Fill/FillAdaptive.hpp
@@ -951,6 +955,8 @@ src/libslic3r/Fill/FillQuarter.hpp
 src/libslic3r/Fill/FillRectilinear.hpp
 src/libslic3r/Fill/FillTetrahedral.hpp
 src/libslic3r/Fill/FillTpmsD.hpp
+src/libslic3r/Fill/FillTpmsFK.hpp
+src/libslic3r/Fill/FillTpmsGradual.hpp
 src/libslic3r/Fill/Cross/ImageBasedDensityProvider.cpp
 src/libslic3r/Fill/Cross/SierpinskiFill.cpp
 src/libslic3r/Fill/Cross/SierpinskiFillProvider.cpp
@@ -984,6 +990,7 @@ src/libslic3r/Format/OBJ.hpp
 src/libslic3r/Format/objparser.hpp
 src/libslic3r/Format/SL1.hpp
 src/libslic3r/Format/STEP.hpp
+src/libslic3r/Format/step_func_def.hpp
 src/libslic3r/Format/STL.hpp
 src/libslic3r/Format/svg.hpp
 src/libslic3r/Format/ZipperArchiveImport.hpp
@@ -998,6 +1005,7 @@ src/libslic3r/GCode/PrintExtents.cpp
 src/libslic3r/GCode/RetractWhenCrossingPerimeters.cpp
 src/libslic3r/GCode/SeamPlacer.cpp
 src/libslic3r/GCode/SmallAreaInfillFlowCompensator.cpp
+src/libslic3r/GCode/Smoothing.cpp
 src/libslic3r/GCode/SmoothSpeedAndAcc.cpp
 src/libslic3r/GCode/SpiralVase.cpp
 src/libslic3r/GCode/ThumbnailData.cpp
@@ -1017,6 +1025,7 @@ src/libslic3r/GCode/PrintExtents.hpp
 src/libslic3r/GCode/RetractWhenCrossingPerimeters.hpp
 src/libslic3r/GCode/SeamPlacer.hpp
 src/libslic3r/GCode/SmallAreaInfillFlowCompensator.hpp
+src/libslic3r/GCode/Smoothing.hpp
 src/libslic3r/GCode/SmoothSpeedAndAcc.hpp
 src/libslic3r/GCode/SpiralVase.hpp
 src/libslic3r/GCode/ThumbnailData.hpp
@@ -1024,6 +1033,7 @@ src/libslic3r/GCode/Thumbnails.hpp
 src/libslic3r/GCode/ToolOrdering.hpp
 src/libslic3r/GCode/WipeTower.hpp
 src/libslic3r/GCode/WipeTower2.hpp
+src/libslic3r/Geometry/ArcWelder.cpp
 src/libslic3r/Geometry/Circle.cpp
 src/libslic3r/Geometry/ConvexHull.cpp
 src/libslic3r/Geometry/MedialAxis.cpp
@@ -1031,6 +1041,7 @@ src/libslic3r/Geometry/Voronoi.cpp
 src/libslic3r/Geometry/VoronoiOffset.cpp
 src/libslic3r/Geometry/VoronoiUtils.cpp
 src/libslic3r/Geometry/VoronoiUtilsCgal.cpp
+src/libslic3r/Geometry/ArcWelder.hpp
 src/libslic3r/Geometry/Bicubic.hpp
 src/libslic3r/Geometry/Circle.hpp
 src/libslic3r/Geometry/ConvexHull.hpp
@@ -1216,11 +1227,14 @@ src/slic3r/GUI/2DBed.cpp
 src/slic3r/GUI/3DBed.cpp
 src/slic3r/GUI/3DScene.cpp
 src/slic3r/GUI/AboutDialog.cpp
+src/slic3r/GUI/AccelerationAndSpeedLimitDialog.cpp
+src/slic3r/GUI/AICloudServiceDialog.cpp
 src/slic3r/GUI/AmsMappingPopup.cpp
 src/slic3r/GUI/AMSMaterialsSetting.cpp
 src/slic3r/GUI/AMSSetting.cpp
 src/slic3r/GUI/AmsWidgets.cpp
 src/slic3r/GUI/AnalyticsDataUploadManager.cpp
+src/slic3r/GUI/AutoConvert3mfMgr.cpp
 src/slic3r/GUI/Auxiliary.cpp
 src/slic3r/GUI/AuxiliaryDataViewModel.cpp
 src/slic3r/GUI/AuxiliaryDialog.cpp
@@ -1247,12 +1261,15 @@ src/slic3r/GUI/CaliHistoryDialog.cpp
 src/slic3r/GUI/Camera.cpp
 src/slic3r/GUI/CameraPopup.cpp
 src/slic3r/GUI/CameraUtils.cpp
+src/slic3r/GUI/Check3mfVendor.cpp
+src/slic3r/GUI/CloudDownloadProgressDialog.cpp
 src/slic3r/GUI/CommunicateWithCXCloud.cpp
 src/slic3r/GUI/ConfigManipulation.cpp
 src/slic3r/GUI/ConfigRelateDialog.cpp
 src/slic3r/GUI/ConfigWizard.cpp
 src/slic3r/GUI/ConnectPrinter.cpp
 src/slic3r/GUI/CreatePresetsDialog.cpp
+src/slic3r/GUI/CrProject.cpp
 src/slic3r/GUI/DailyTips.cpp
 src/slic3r/GUI/dark_mode.cpp
 src/slic3r/GUI/DesktopIntegrationDialog.cpp
@@ -1270,6 +1287,7 @@ src/slic3r/GUI/Field.cpp
 src/slic3r/GUI/FilamentPanel.cpp
 src/slic3r/GUI/FileArchiveDialog.cpp
 src/slic3r/GUI/FileDownloader.cpp
+src/slic3r/GUI/FileUploader.cpp
 src/slic3r/GUI/GCodeViewer.cpp
 src/slic3r/GUI/GLCanvas3D.cpp
 src/slic3r/GUI/GLModel.cpp
@@ -1309,6 +1327,7 @@ src/slic3r/GUI/InstanceCheck.cpp
 src/slic3r/GUI/KBShortcutsDialog.cpp
 src/slic3r/GUI/LoadOldPresets.cpp
 src/slic3r/GUI/LoadOldPresetsFromFolder.cpp
+src/slic3r/GUI/LoginDialog.cpp
 src/slic3r/GUI/LoginTip.cpp
 src/slic3r/GUI/MainFrame.cpp
 src/slic3r/GUI/MarkdownTip.cpp
@@ -1342,6 +1361,7 @@ src/slic3r/GUI/OptionsGroup.cpp
 src/slic3r/GUI/ParamsDialog.cpp
 src/slic3r/GUI/ParamsPanel.cpp
 src/slic3r/GUI/PartPlate.cpp
+src/slic3r/GUI/PhysicalPrinter.cpp
 src/slic3r/GUI/PhysicalPrinterDialog.cpp
 src/slic3r/GUI/Plater.cpp
 src/slic3r/GUI/PlateSettingsDialog.cpp
@@ -1375,6 +1395,8 @@ src/slic3r/GUI/SingleChoiceDialog.cpp
 src/slic3r/GUI/SliceInfoPanel.cpp
 src/slic3r/GUI/SlicingProgressNotification.cpp
 src/slic3r/GUI/StatusPanel.cpp
+src/slic3r/GUI/StepMeshDialog.cpp
+src/slic3r/GUI/SupportMeshCreator.cpp
 src/slic3r/GUI/SurfaceDrag.cpp
 src/slic3r/GUI/SyncUserPresets.cpp
 src/slic3r/GUI/SysInfoDialog.cpp
@@ -1394,6 +1416,7 @@ src/slic3r/GUI/UserManager.cpp
 src/slic3r/GUI/UserNotification.cpp
 src/slic3r/GUI/WebDownPluginDlg.cpp
 src/slic3r/GUI/WebGuideDialog.cpp
+src/slic3r/GUI/WebModelLibraryView.cpp
 src/slic3r/GUI/WebUpdatePlugin.cpp
 src/slic3r/GUI/WebUserLoginDialog.cpp
 src/slic3r/GUI/WebViewDialog.cpp
@@ -1404,11 +1427,14 @@ src/slic3r/GUI/2DBed.hpp
 src/slic3r/GUI/3DBed.hpp
 src/slic3r/GUI/3DScene.hpp
 src/slic3r/GUI/AboutDialog.hpp
+src/slic3r/GUI/AccelerationAndSpeedLimitDialog.hpp
+src/slic3r/GUI/AICloudServiceDialog.hpp
 src/slic3r/GUI/AmsMappingPopup.hpp
 src/slic3r/GUI/AMSMaterialsSetting.hpp
 src/slic3r/GUI/AMSSetting.hpp
 src/slic3r/GUI/AmsWidgets.hpp
 src/slic3r/GUI/AnalyticsDataUploadManager.hpp
+src/slic3r/GUI/AutoConvert3mfMgr.hpp
 src/slic3r/GUI/Auxiliary.hpp
 src/slic3r/GUI/AuxiliaryDataViewModel.hpp
 src/slic3r/GUI/AuxiliaryDialog.hpp
@@ -1435,6 +1461,8 @@ src/slic3r/GUI/CaliHistoryDialog.hpp
 src/slic3r/GUI/Camera.hpp
 src/slic3r/GUI/CameraPopup.hpp
 src/slic3r/GUI/CameraUtils.hpp
+src/slic3r/GUI/Check3mfVendor.hpp
+src/slic3r/GUI/CloudDownloadProgressDialog.hpp
 src/slic3r/GUI/CommunicateWithCXCloud.hpp
 src/slic3r/GUI/ConfigExceptions.hpp
 src/slic3r/GUI/ConfigManipulation.hpp
@@ -1443,6 +1471,7 @@ src/slic3r/GUI/ConfigWizard.hpp
 src/slic3r/GUI/ConfigWizard_private.hpp
 src/slic3r/GUI/ConnectPrinter.hpp
 src/slic3r/GUI/CreatePresetsDialog.hpp
+src/slic3r/GUI/CrProject.hpp
 src/slic3r/GUI/DailyTips.hpp
 src/slic3r/GUI/dark_mode.hpp
 src/slic3r/GUI/DesktopIntegrationDialog.hpp
@@ -1459,6 +1488,7 @@ src/slic3r/GUI/ExtrusionCalibration.hpp
 src/slic3r/GUI/Field.hpp
 src/slic3r/GUI/FileArchiveDialog.hpp
 src/slic3r/GUI/FileDownloader.hpp
+src/slic3r/GUI/FileUploader.hpp
 src/slic3r/GUI/format.hpp
 src/slic3r/GUI/GCodeViewer.hpp
 src/slic3r/GUI/GLCanvas3D.hpp
@@ -1496,6 +1526,7 @@ src/slic3r/GUI/InstanceCheck.hpp
 src/slic3r/GUI/KBShortcutsDialog.hpp
 src/slic3r/GUI/LoadOldPresets.hpp
 src/slic3r/GUI/LoadOldPresetsFromFolder.hpp
+src/slic3r/GUI/LoginDialog.hpp
 src/slic3r/GUI/LoginTip.hpp
 src/slic3r/GUI/MainFrame.hpp
 src/slic3r/GUI/MarkdownTip.hpp
@@ -1525,6 +1556,7 @@ src/slic3r/GUI/OptionsGroup.hpp
 src/slic3r/GUI/ParamsDialog.hpp
 src/slic3r/GUI/ParamsPanel.hpp
 src/slic3r/GUI/PartPlate.hpp
+src/slic3r/GUI/PhysicalPrinter.hpp
 src/slic3r/GUI/PhysicalPrinterDialog.hpp
 src/slic3r/GUI/Plater.hpp
 src/slic3r/GUI/PlateSettingsDialog.hpp
@@ -1557,6 +1589,8 @@ src/slic3r/GUI/SingleChoiceDialog.hpp
 src/slic3r/GUI/SliceInfoPanel.hpp
 src/slic3r/GUI/SlicingProgressNotification.hpp
 src/slic3r/GUI/StatusPanel.hpp
+src/slic3r/GUI/StepMeshDialog.hpp
+src/slic3r/GUI/SupportMeshCreator.hpp
 src/slic3r/GUI/SurfaceDrag.hpp
 src/slic3r/GUI/SyncUserPresets.hpp
 src/slic3r/GUI/SysInfoDialog.hpp
@@ -1576,6 +1610,7 @@ src/slic3r/GUI/UserManager.hpp
 src/slic3r/GUI/UserNotification.hpp
 src/slic3r/GUI/WebDownPluginDlg.hpp
 src/slic3r/GUI/WebGuideDialog.hpp
+src/slic3r/GUI/WebModelLibraryView.hpp
 src/slic3r/GUI/WebUpdatePlugin.hpp
 src/slic3r/GUI/WebUserLoginDialog.hpp
 src/slic3r/GUI/WebViewDialog.hpp
@@ -1692,6 +1727,7 @@ src/slic3r/GUI/print_manage/TypeDefine.hpp
 src/slic3r/GUI/print_manage/Upload3mfToCloud.hpp
 src/slic3r/GUI/print_manage/UploadGcodeToCloud.hpp
 src/slic3r/GUI/print_manage/Utils.hpp
+src/slic3r/GUI/print_manage/App/mqtt_client.cpp
 src/slic3r/GUI/print_manage/App/PrinterMgrView.cpp
 src/slic3r/GUI/print_manage/App/SendToPrinter.cpp
 src/slic3r/GUI/print_manage/App/PrinterMgrView.hpp
@@ -1712,11 +1748,13 @@ src/slic3r/GUI/print_manage/Device/LanPrinterInterface.hpp
 src/slic3r/GUI/print_manage/Device/OctoPrintInterface.hpp
 src/slic3r/GUI/print_manage/Routes/AppRoutes.cpp
 src/slic3r/GUI/print_manage/Routes/DeviceMgrRoutes.cpp
+src/slic3r/GUI/print_manage/Routes/ModelLibraryRoutes.cpp
 src/slic3r/GUI/print_manage/Routes/Routes.cpp
 src/slic3r/GUI/print_manage/Routes/SenderRoutes.cpp
 src/slic3r/GUI/print_manage/Routes/SysRoutes.cpp
 src/slic3r/GUI/print_manage/Routes/AppRoutes.hpp
 src/slic3r/GUI/print_manage/Routes/DeviceMgrRoutes.hpp
+src/slic3r/GUI/print_manage/Routes/ModelLibraryRoutes.hpp
 src/slic3r/GUI/print_manage/Routes/Routes.hpp
 src/slic3r/GUI/print_manage/Routes/SenderRoutes.hpp
 src/slic3r/GUI/print_manage/Routes/SysRoutes.hpp
@@ -1725,6 +1763,7 @@ src/slic3r/GUI/Widgets/AMSControl.cpp
 src/slic3r/GUI/Widgets/AxisCtrlButton.cpp
 src/slic3r/GUI/Widgets/Button.cpp
 src/slic3r/GUI/Widgets/CheckBox.cpp
+src/slic3r/GUI/Widgets/ColorSlider.cpp
 src/slic3r/GUI/Widgets/ComboBox.cpp
 src/slic3r/GUI/Widgets/DropDown.cpp
 src/slic3r/GUI/Widgets/ErrorMsgStaticText.cpp
@@ -1761,6 +1800,7 @@ src/slic3r/GUI/Widgets/AMSControl.hpp
 src/slic3r/GUI/Widgets/AxisCtrlButton.hpp
 src/slic3r/GUI/Widgets/Button.hpp
 src/slic3r/GUI/Widgets/CheckBox.hpp
+src/slic3r/GUI/Widgets/ColorSlider.hpp
 src/slic3r/GUI/Widgets/ComboBox.hpp
 src/slic3r/GUI/Widgets/DropDown.hpp
 src/slic3r/GUI/Widgets/ErrorMsgStaticText.hpp
@@ -1825,6 +1865,7 @@ src/slic3r/Utils/Repetier.cpp
 src/slic3r/Utils/Serial.cpp
 src/slic3r/Utils/SimplyPrint.cpp
 src/slic3r/Utils/TCPConsole.cpp
+src/slic3r/Utils/TestHelper.cpp
 src/slic3r/Utils/UndoRedo.cpp
 src/slic3r/Utils/WxFontUtils.cpp
 src/slic3r/Utils/ASCIIFolding.hpp
@@ -1849,6 +1890,7 @@ src/slic3r/Utils/json_diff.hpp
 src/slic3r/Utils/MacDarkMode.hpp
 src/slic3r/Utils/minilzo_extension.hpp
 src/slic3r/Utils/MKS.hpp
+src/slic3r/Utils/mouse_scheme.hpp
 src/slic3r/Utils/NetworkAgent.hpp
 src/slic3r/Utils/Obico.hpp
 src/slic3r/Utils/OctoPrint.hpp
@@ -1866,8 +1908,10 @@ src/slic3r/Utils/SerialMessage.hpp
 src/slic3r/Utils/SerialMessageType.hpp
 src/slic3r/Utils/SimplyPrint.hpp
 src/slic3r/Utils/TCPConsole.hpp
+src/slic3r/Utils/TestHelper.hpp
 src/slic3r/Utils/UndoRedo.hpp
 src/slic3r/Utils/WxFontUtils.hpp
+src/video/RTSPDecoder.cpp
 src/video/WebRTCDecoder.cpp
 src/video/YangPlayerBase.cpp
 src/video/YangPlayerDecoder.cpp

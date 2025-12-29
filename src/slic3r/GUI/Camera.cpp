@@ -3,9 +3,10 @@
 
 #include "Camera.hpp"
 #include "GUI_App.hpp"
+#include "Plater.hpp"
+#include "PartPlate.hpp"
 #if ENABLE_CAMERA_STATISTICS
 #include "Mouse3DController.hpp"
-#include "Plater.hpp"
 #endif // ENABLE_CAMERA_STATISTICS
 
 #include <GL/glew.h>
@@ -85,6 +86,7 @@ void Camera::set_zoom(double zoom)
 
 void Camera::select_view(const std::string& direction)
 {
+    m_cr30_rotate_y_offset = 0.0f;
     if (direction == "iso")
         set_default_orientation();
     else if (direction == "left")
@@ -350,6 +352,12 @@ void Camera::debug_render() const
 
 void Camera::rotate_on_sphere_with_target(double delta_azimut_rad, double delta_zenit_rad, bool apply_limits, Vec3d target)
 {
+    if (wxGetApp().preset_bundle->machine_is_belt())
+    {
+        auto roate_center = wxGetApp().plater()->get_partplate_list().belt_machine_get_bed_rotate_center();
+        target             = roate_center + Vec3d{0.0, m_cr30_rotate_y_offset, 0.0};
+    }
+
     m_zenit += Geometry::rad2deg(delta_zenit_rad);
     if (apply_limits) {
         if (m_zenit > 90.0f) {
@@ -421,10 +429,15 @@ void Camera::rotate_local_around_target(const Vec3d& rotation_rad)
 
 void Camera::set_rotation(const Transform3d& rotation)
 {
-    const Vec3d translation = m_view_matrix.translation() + m_view_rotation * m_target;
+    auto        target      = m_target;
+    if (wxGetApp().preset_bundle->machine_is_belt()) {
+        auto roate_center = wxGetApp().plater()->get_partplate_list().belt_machine_get_bed_rotate_center();
+        target            = roate_center + Vec3d{0.0, m_cr30_rotate_y_offset, 0.0};
+    }
+    const Vec3d translation = m_view_matrix.translation() + m_view_rotation * target;
     m_view_rotation = Eigen::Quaterniond(rotation.matrix().template block<3, 3>(0, 0));
     m_view_rotation.normalize();
-    m_view_matrix.fromPositionOrientationScale(m_view_rotation * (-m_target) + translation, m_view_rotation, Vec3d(1., 1., 1.));
+    m_view_matrix.fromPositionOrientationScale(m_view_rotation * (-target) + translation, m_view_rotation, Vec3d(1., 1., 1.));
     update_zenit();
 }
 

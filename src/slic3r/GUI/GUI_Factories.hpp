@@ -102,6 +102,9 @@ private:
     MenuWithSeparators m_plate_menu;
     MenuWithSeparators m_assemble_object_menu;
     MenuWithSeparators m_assemble_part_menu;
+
+    int  m_add_volume_insert_pos = -1;
+    bool m_support_enforcer_menu_state = true;
    
     wxMenu m_filament_action_menu;
 
@@ -134,8 +137,8 @@ private:
 
     void        append_menu_item_add_text(wxMenu* menu, ModelVolumeType type, bool is_submenu_item = true);
     void        append_menu_item_add_svg(wxMenu *menu, ModelVolumeType type, bool is_submenu_item = true);    
-    void        append_menu_items_add_volume(wxMenu* menu);
-    wxMenuItem* append_menu_item_layers_editing(wxMenu* menu);
+    void        append_menu_items_add_volume(wxMenu* menu, int insert_pos = wxNOT_FOUND);
+    wxMenuItem* append_menu_item_layers_editing(wxMenu* menu, int insert_pos = wxNOT_FOUND);
     wxMenuItem* append_menu_item_settings(wxMenu* menu);
     wxMenuItem* append_menu_item_change_type(wxMenu* menu);
     wxMenuItem* append_menu_item_instance_to_object(wxMenu* menu);

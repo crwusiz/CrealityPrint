@@ -7,13 +7,14 @@ namespace DM{
 
     struct App
     {
-        App(wxWebView* browser = nullptr)
-            : browser(browser)
+        App(wxWebView* browser = nullptr, std::string app_name = "")
+            : browser(browser), name(app_name)
         {
         }
 
         wxWebView* browser = nullptr;
         std::vector<std::string> events;
+        std::string name; // app name, used by test
     };
 
     typedef std::vector<App> Apps;
@@ -22,11 +23,12 @@ namespace DM{
     class AppMgr
     {
     public:
-        void Register(wxWebView* browser);
+        void Register(wxWebView* browser, std::string name = "");
         void UnRegister(wxWebView* browser);
         void RegisterEvents(wxWebView* browser, std::vector<std::string> events);
         bool Invoke(wxWebView* browser, std::string data);
         void GetNeedToReceiveSysEventApp(std::string event, Apps& apps);
+        void GetAppsByName(std::string name, Apps& apps);
         static AppMgr& Ins();
 
     public://system event to every app.

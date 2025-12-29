@@ -29,7 +29,26 @@ BEGIN {
 use FindBin;
 
 # Let the XS module know where the GUI resources reside.
-set_resources_dir(decode_path($FindBin::Bin) . (($^O eq 'darwin') ? '/../Resources' : '/resources'));
+# 1) 若 C++ 侧已初始化 resources_dir()，则不在此覆写
+# 2) 规范化 FindBin::Bin（去除路径末尾分隔符），避免出现 '/resources/' + '/resources' 的重复
+my $current_resources = resources_dir();
+if (!defined $current_resources || length($current_resources) == 0) {
+    my $base = decode_path($FindBin::Bin);
+    # strip trailing slashes/backslashes
+    $base =~ s{[\\/]+$}{};
+    my $resources_path;
+    if ($^O eq 'darwin') {
+        $resources_path = $base . '/../Resources';
+    } else {
+        # If base already points to resources (case-insensitive), use it directly.
+        if ($base =~ m{(?:/|\\)resources$}i) {
+            $resources_path = $base;
+        } else {
+            $resources_path = $base . '/resources';
+        }
+    }
+    set_resources_dir($resources_path);
+}
 set_var_dir(resources_dir() . "/images");
 set_local_dir(resources_dir() . "/i18n/");
 
@@ -133,3 +152,4 @@ sub system_info
 }
 
 1;
+

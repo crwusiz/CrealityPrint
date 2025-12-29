@@ -18,6 +18,8 @@ public:
     ~PrinterPresetConfig();
 
     std::vector<std::string> getFilament(const std::string& printerName, const std::string& nozzle);
+    bool getPrinterDefaultMaterials(const std::string& vendor, const std::string& printerName, std::vector<std::string>& vtPrinterDefaultMaterials);
+    bool getPrinterDefaultMaterials(const std::string& vendor, const std::string& printerName, std::vector<std::pair<std::string, std::string>>& vtPrinterDefaultMaterials);
     int                      LoadProfile();
     json                     getProfileJson() const { 
         json m_Res           = json::object();

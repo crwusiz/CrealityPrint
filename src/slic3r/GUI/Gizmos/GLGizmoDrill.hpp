@@ -67,6 +67,8 @@ class GLGizmoDrill : public GLGizmoBase
         }
     };
     std::vector<VolumeCacheItem> m_volumes_cache;
+    std::vector<size_t>          m_volume_facet_offsets;
+    size_t                       m_total_cached_facets { 0 };
 
     PickingModel m_cube;
     PickingModel m_triPrism;
@@ -152,6 +154,11 @@ private:
 
     void generate_new_volume(bool delete_input, const TriangleMesh& mesh_result);
     VolumeInfo m_src;
+    const VolumeCacheItem* volume_from_facet(size_t facet_idx) const;
+    Transform3d build_feature_matrix_local(const Transform3d& selected_volumes_matrix,
+                                           const Vec3d&       local_pos,
+                                           const Vec3d&       local_normal,
+                                           double             drill_depth) const;
 
     bool render_combo(const std::string& label, const std::vector<std::string>& lines, int& selection_idx);
     bool render_reset_button(const std::string& label_id) const;

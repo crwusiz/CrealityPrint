@@ -17,6 +17,8 @@
 
 #include "libnest2d/common.hpp"
 
+#include <boost/log/trivial.hpp>
+#include <boost/log/core.hpp>
 #define SAVE_ARRANGE_POLY 0
 
 namespace Slic3r { namespace GUI {
@@ -91,6 +93,7 @@ void ArrangeJob::clear_input()
     m_selected.clear();
     m_unselected.clear();
     m_unprintable.clear();
+    m_unprintable_instances.clear();
     m_locked.clear();
     m_unarranged.clear();
     m_move_top_left_ids.clear();
@@ -99,6 +102,7 @@ void ArrangeJob::clear_input()
     m_selected.reserve(count + 1 /* for optional wti */);
     m_unselected.reserve(count + 1 /* for optional wti */);
     m_unprintable.reserve(cunprint /* for optional wti */);
+    m_unprintable_instances.reserve(cunprint);
     m_locked.reserve(count + 1 /* for optional wti */);
     current_plate_index = 0;
 }
@@ -163,9 +167,9 @@ void ArrangeJob::prepare_selected(bool consider_lock) {
                 locked = plate_list.preprocess_arrange_polygon(oidx, i, ap, inst_sel[i]);
             }
             
-            if (!locked)
-                {
-                ArrangePolygons& cont = mo->instances[i]->printable ?
+            if (!locked) {
+                bool is_printable = mo->instances[i]->printable;
+                ArrangePolygons& cont = is_printable ?
                     (inst_sel[i] ? m_selected :
                         m_unselected) :
                     m_unprintable;
@@ -177,24 +181,27 @@ void ArrangeJob::prepare_selected(bool consider_lock) {
 
                     ap.instance_id = cont.size(); // use instance_id to for [arrange selected] logic, because the itemid can be changed by the arrange and used for other logic
 
-                    if (mo->instances[i]->printable && inst_sel[i]) {
+                    if (is_printable && inst_sel[i]) {
                         m_instance_id_to_instance[ap.instance_id] = mo->instances[i];
+                    }
+
+                    if(!is_printable && inst_sel[i]) {
+                        m_unprintable_instances.emplace_back(mo->instances[i]);
                     }
                 }
 
                 cont.emplace_back(std::move(ap));
-                }
-            else
-                {
+            }
+            else {
                 //skip this object due to be locked in plate
                 ap.itemid = m_locked.size();
                 m_locked.emplace_back(std::move(ap));
                 if (inst_sel[i])
                     selected_is_locked = true;
                 BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": skip locked instance, obj_id %1%, instance_id %2%, name %3%") % oidx % i % mo->name;
-                }
             }
         }
+    }
 
 
     // If the selection was empty arrange everything
@@ -239,17 +246,20 @@ void ArrangeJob::prepare_selected(bool consider_lock) {
 void ArrangeJob::prepare_all() {
     clear_input();
 
-    PartPlateList& plate_list = m_plater->get_partplate_list();    
-    for (size_t i = 0; i < plate_list.get_plate_count(); i++) {
-        PartPlate* plate = plate_list.get_plate(i);
-        bool same_as_global_print_seq = true;
-        plate->get_real_print_seq(&same_as_global_print_seq);
-        if (plate->is_locked() == false && !same_as_global_print_seq) {
-            plate->lock(true);
-            m_uncompatible_plates.push_back(i);
+    PartPlateList& plate_list = m_plater->get_partplate_list();
+
+    // if only one plate exist, skip this uncompatible plate check
+    if(plate_list.get_plate_count() > 1) {
+        for (size_t i = 0; i < plate_list.get_plate_count(); i++) {
+            PartPlate* plate = plate_list.get_plate(i);
+            bool same_as_global_print_seq = true;
+            plate->get_real_print_seq(&same_as_global_print_seq);
+            if (plate->is_locked() == false && !same_as_global_print_seq) {
+                plate->lock(true);
+                m_uncompatible_plates.push_back(i);
+            }
         }
     }
-
 
     Model &model = m_plater->model();
     bool selected_is_locked = false;
@@ -274,6 +284,10 @@ void ArrangeJob::prepare_all() {
                 ap.instance_id = cont.size(); // use instance_id to for [arrange selected] logic, because the itemid can be changed by the arrange and used for other logic
                 if (mo->instances[i]->printable) {
                     m_instance_id_to_instance[ap.instance_id] = mo->instances[i];
+                }
+                else
+                {
+                    m_unprintable_instances.emplace_back(mo->instances[i]);
                 }
 
                 cont.emplace_back(std::move(ap));
@@ -554,7 +568,8 @@ void ArrangeJob::prepare_partplate() {
             bool             in_plate = plate->contain_instance(oidx, inst_idx) || plate->intersect_instance(oidx, inst_idx);
             ArrangePolygon&& ap = prepare_arrange_polygon(mo->instances[inst_idx]);
 
-            ArrangePolygons& cont = mo->instances[inst_idx]->printable ?
+            bool is_printable = mo->instances[inst_idx]->printable;
+            ArrangePolygons& cont = is_printable ?
                 (in_plate ? m_selected : m_unselected) :
                 m_unprintable;
             bool locked = plate_list.preprocess_arrange_polygon_other_locked(oidx, inst_idx, ap, in_plate);
@@ -562,7 +577,11 @@ void ArrangeJob::prepare_partplate() {
             {
                 ap.itemid = cont.size();
                 ap.instance_id = cont.size();
-                m_instance_id_to_instance[ap.instance_id] = mo->instances[inst_idx];
+                if(is_printable)
+                    m_instance_id_to_instance[ap.instance_id] = mo->instances[inst_idx];  
+                else
+                    m_unprintable_instances.emplace_back(mo->instances[inst_idx]);
+
                 cont.emplace_back(std::move(ap));
             }
             else
@@ -736,7 +755,10 @@ void ArrangeJob::process(Ctl &ctl)
             <<", bbox:"<<get_extents(item.poly).min.transpose()<<","<<get_extents(item.poly).max.transpose();
     }
     
-    arrangement::arrange(m_selected, m_unselected, bedpts, params);
+    if (wxGetApp().preset_bundle->machine_is_belt())
+        arrangement::cr30_arrange(m_selected, m_unselected, bedpts);
+    else
+        arrangement::arrange(m_selected, m_unselected, bedpts, params);
 
     // sort by item id
     std::sort(m_selected.begin(), m_selected.end(), [](auto a, auto b) {return a.itemid < b.itemid; });
@@ -790,189 +812,184 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
         show_error(m_plater, _(L("Arrange failed. "
                                  "Found some exceptions when processing object geometries.")));
         eptr = nullptr;
+        BOOST_LOG_TRIVIAL(warning) << "ArrangeJob::finalize geometry exception";
+        boost::log::core::get()->flush();
     } catch (...) {
         eptr = std::current_exception();
+        BOOST_LOG_TRIVIAL(warning) << "ArrangeJob::finalize unknown exception";
+        boost::log::core::get()->flush();
     }
 
-    if (canceled || eptr)
+    if (canceled || eptr) {
+        BOOST_LOG_TRIVIAL(warning) << "ArrangeJob::finalize early exit"
+                                   << ", canceled=" << (canceled ? "true" : "false")
+                                   << ", has_eptr=" << (eptr ? "true" : "false");
+        boost::log::core::get()->flush();
         return;
-
-    // Unprintable items go to the last virtual bed
-    int beds = 0;
-
-    //BBS: partplate
-    PartPlateList& plate_list = m_plater->get_partplate_list();
-    //clear all the relations before apply the arrangement results
-    if (only_on_partplate) {
-        plate_list.clear(false, false, true, current_plate_index);
     }
-    else
-        plate_list.clear(false, false, true, -1);
 
-    // under the "only_on_partplate" situation, if ArrangePolygon can not place on the current plate, move them to the top left position of the first plate
-    if (only_on_partplate) {
-        for (ArrangePolygon& ap : m_selected) {
-            if (ap.bed_idx > 0) {
-                m_move_top_left_ids.emplace_back(ap.instance_id);
-            }
+    try {
+        int beds = 0;
+
+        PartPlateList& plate_list = m_plater->get_partplate_list();
+        if (only_on_partplate) {
+            plate_list.clear(false, false, true, current_plate_index);
         }
-    }
-
-    //BBS: adjust the bed_index, create new plates, get the max bed_index
-    for (ArrangePolygon& ap : m_selected) {
-        //if (ap.bed_idx < 0) continue;  // bed_idx<0 means unarrangable
-        //BBS: partplate postprocess
-        if (only_on_partplate)
-            plate_list.postprocess_bed_index_for_current_plate(ap);
         else
-            plate_list.postprocess_bed_index_for_selected(ap);
+            plate_list.clear(false, false, true, -1);
 
-        beds = std::max(ap.bed_idx, beds);
-
-        BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": arrange selected %4%: bed_id %1%, trans {%2%,%3%}") % ap.bed_idx % unscale<double>(ap.translation(X)) % unscale<double>(ap.translation(Y)) % ap.name;
-    }
-
-    //BBS: adjust the bed_index, create new plates, get the max bed_index
-    for (ArrangePolygon& ap : m_unselected)
-    {
-        if (ap.is_virt_object)
-            continue;
-
-        //BBS: partplate postprocess
-        if (!only_on_partplate)
-            plate_list.postprocess_bed_index_for_unselected(ap);
-
-        beds = std::max(ap.bed_idx, beds);
-        BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":arrange unselected %4%: bed_id %1%, trans {%2%,%3%}") % ap.bed_idx % unscale<double>(ap.translation(X)) % unscale<double>(ap.translation(Y)) % ap.name;
-    }
-
-    for (ArrangePolygon& ap : m_locked) {
-        beds = std::max(ap.bed_idx, beds);
-
-        plate_list.postprocess_arrange_polygon(ap, false);
-
-        ap.apply();
-    }
-
-    bool move_object_top_left = false;
-
-    // Apply the arrange result to all selected objects
-    for (ArrangePolygon& ap : m_selected) {
-
-        if ( (only_on_partplate && std::find(m_move_top_left_ids.begin(), m_move_top_left_ids.end(), ap.instance_id) != m_move_top_left_ids.end()) || (ap.bed_idx == -1)) {
-            //ap.translation(Y) += scaled<double>(plate_list.plate_stride_y());
-
-            ModelInstance* mi = nullptr;
-            if (m_instance_id_to_instance.find(ap.instance_id) != m_instance_id_to_instance.end()) {
-                mi = m_instance_id_to_instance[ap.instance_id];
+        if (only_on_partplate) {
+            for (ArrangePolygon& ap : m_selected) {
+                if (ap.bed_idx > 0) {
+                    m_move_top_left_ids.emplace_back(ap.instance_id);
+                }
             }
-
-            PartPlate* first_plate = plate_list.get_plate(0);
-            if (first_plate && mi) {
-                BoundingBoxf3 plate_bbox   = first_plate->get_build_volume();
-                 Vec3d   instance_bbox_size = mi->get_object()->instance_bounding_box(0).size();
-                 auto          offset             = mi->get_offset();
-                 Vec3d top_left = {plate_bbox.min.x() + instance_bbox_size.x(), plate_bbox.max.y() + instance_bbox_size.y(), offset(2)};
-                 mi->set_offset(top_left);
-
-                 move_object_top_left = true;
-            }
-
-        } else {
-            // BBS: partplate postprocess
-            plate_list.postprocess_arrange_polygon(ap, true);
-            ap.apply();
         }
 
-        
-    }
+        for (ArrangePolygon& ap : m_selected) {
+            if (only_on_partplate)
+                plate_list.postprocess_bed_index_for_current_plate(ap);
+            else
+                plate_list.postprocess_bed_index_for_selected(ap);
 
-    if(m_plater->get_prepare_state() != Job::JobPrepareState::PREPARE_STATE_EXTRA) {
-        // Apply the arrange result to unselected objects(due to the sukodu-style column changes, the position of unselected may also be modified)
+            beds = std::max(ap.bed_idx, beds);
+
+            BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": arrange selected %4%: bed_id %1%, trans {%2%,%3%}") % ap.bed_idx % unscale<double>(ap.translation(X)) % unscale<double>(ap.translation(Y)) % ap.name;
+        }
+
         for (ArrangePolygon& ap : m_unselected)
         {
             if (ap.is_virt_object)
                 continue;
 
-            //BBS: partplate postprocess
+            if (!only_on_partplate)
+                plate_list.postprocess_bed_index_for_unselected(ap);
+
+            beds = std::max(ap.bed_idx, beds);
+            BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":arrange unselected %4%: bed_id %1%, trans {%2%,%3%}") % ap.bed_idx % unscale<double>(ap.translation(X)) % unscale<double>(ap.translation(Y)) % ap.name;
+        }
+
+        for (ArrangePolygon& ap : m_locked) {
+            beds = std::max(ap.bed_idx, beds);
+
             plate_list.postprocess_arrange_polygon(ap, false);
 
             ap.apply();
         }
-    }
 
-    // Move the unprintable items to top left position of the first plate
-    // Note ap.apply() moves relatively according to bed_idx, so we need to subtract the orignal bed_idx
-    for (ArrangePolygon& ap : m_unprintable) {
-        ModelInstance* mi = nullptr;
-        if (m_instance_id_to_instance.find(ap.instance_id) != m_instance_id_to_instance.end()) {
-            mi = m_instance_id_to_instance[ap.instance_id];
+        bool move_object_top_left = false;
+
+        for (ArrangePolygon& ap : m_selected) {
+
+            if ( (only_on_partplate && std::find(m_move_top_left_ids.begin(), m_move_top_left_ids.end(), ap.instance_id) != m_move_top_left_ids.end()) || (ap.bed_idx == -1)) {
+                ModelInstance* mi = nullptr;
+                if (m_instance_id_to_instance.find(ap.instance_id) != m_instance_id_to_instance.end()) {
+                    mi = m_instance_id_to_instance[ap.instance_id];
+                }
+
+                PartPlate* first_plate = plate_list.get_plate(0);
+                if (first_plate && mi) {
+                    BoundingBoxf3 plate_bbox   = first_plate->get_build_volume();
+                    Vec3d   instance_bbox_size = mi->get_object()->instance_bounding_box(0).size();
+                    auto          offset             = mi->get_offset();
+                    Vec3d top_left = {plate_bbox.min.x() + instance_bbox_size.x(), plate_bbox.max.y() + instance_bbox_size.y(), offset(2)};
+                    mi->set_offset(top_left);
+
+                    move_object_top_left = true;
+                }
+
+            } else {
+                plate_list.postprocess_arrange_polygon(ap, true);
+                ap.apply();
+            }
         }
 
-        PartPlate* first_plate = plate_list.get_plate(0);
-        if (first_plate && mi) {
-            BoundingBoxf3 plate_bbox   = first_plate->get_build_volume();
-                Vec3d   instance_bbox_size = mi->get_object()->instance_bounding_box(0).size();
-                auto          offset             = mi->get_offset();
-                Vec3d top_left = {plate_bbox.min.x() + instance_bbox_size.x(), plate_bbox.max.y() + instance_bbox_size.y(), offset(2)};
-                mi->set_offset(top_left);
+        if(m_plater->get_prepare_state() != Job::JobPrepareState::PREPARE_STATE_EXTRA) {
+            for (ArrangePolygon& ap : m_unselected)
+            {
+                if (ap.is_virt_object)
+                    continue;
 
-                move_object_top_left = true;
+                plate_list.postprocess_arrange_polygon(ap, false);
+
+                ap.apply();
+            }
         }
 
-        //ap.bed_idx = beds + 1;
-        //plate_list.postprocess_arrange_polygon(ap, true);
+        if(m_unprintable.size() > 0) {
+            PartPlate* first_plate = plate_list.get_plate(0);
+            if (first_plate) {
+                BoundingBoxf3 plate_bbox   = first_plate->get_build_volume();
+                for(ModelInstance* mi : m_unprintable_instances) {
+                    if(mi) {
+                        Vec3d   instance_bbox_size = mi->get_object()->instance_bounding_box(0).size();
+                        auto          offset             = mi->get_offset();
+                        Vec3d top_left = {plate_bbox.min.x() + instance_bbox_size.x(), plate_bbox.max.y() + instance_bbox_size.y(), offset(2)};
+                        mi->set_offset(top_left);
+                    }
+                }
+            }
 
-        //ap.apply();
-        //BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":arrange m_unprintable: name: %4%, bed_id %1%, trans {%2%,%3%}") % ap.bed_idx % unscale<double>(ap.translation(X)) % unscale<double>(ap.translation(Y)) % ap.name;
-    }
+            m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
+                                                                    NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                        into_u8(_L("The UnPrintable Objects are placed above Tray 1.")));
+        }
 
-    m_plater->update();
-    // BBS
-    //wxGetApp().obj_manipul()->set_dirty();
+        m_plater->update();
 
-    if (!m_unarranged.empty()) {
-        std::set<std::string> names;
-        for (ModelInstance *mi : m_unarranged)
-            names.insert(mi->get_object()->name);
+        if (!m_unarranged.empty()) {
+            std::set<std::string> names;
+            for (ModelInstance *mi : m_unarranged)
+                names.insert(mi->get_object()->name);
 
-        m_plater->get_notification_manager()->push_notification(GUI::format(
-            _L("Arrangement ignored the following objects which can't fit into a single bed:\n%s"),
-            concat_strings(names, "\n")));
-    }
+            m_plater->get_notification_manager()->push_notification(GUI::format(
+                _L("Arrangement ignored the following objects which can't fit into a single bed:\n%s"),
+                concat_strings(names, "\n")));
+        }
 
-    if (move_object_top_left) {
-        m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
-                                                                NotificationManager::NotificationLevel::WarningNotificationLevel,
-                                    into_u8(_L("Current tray is full; Unarranged models are placed above Tray 1.")));
-    }
+        if (move_object_top_left) {
+            m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
+                                                                    NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                        into_u8(_L("Current tray is full; Unarranged models are placed above Tray 1.")));
+        }
 
-    m_plater->get_notification_manager()->close_notification_of_type(NotificationType::ArrangeOngoing);
+        m_plater->get_notification_manager()->close_notification_of_type(NotificationType::ArrangeOngoing);
 
-    //BBS: reload all objects due to arrange
-    if (only_on_partplate) {
-        plate_list.rebuild_plates_after_arrangement(!only_on_partplate, true, current_plate_index);
-    }
-    else {
-        plate_list.rebuild_plates_after_arrangement(!only_on_partplate, true);
-    }
+        if (only_on_partplate) {
+            plate_list.rebuild_plates_after_arrangement(!only_on_partplate, true, current_plate_index);
+        }
+        else {
+            plate_list.rebuild_plates_after_arrangement(!only_on_partplate, true);
+        }
 
-    // unlock the plates we just locked
-    for (int i : m_uncompatible_plates)
-        plate_list.get_plate(i)->lock(false);
+        for (int i : m_uncompatible_plates)
+            plate_list.get_plate(i)->lock(false);
 
-    // BBS: update slice context and gcode result.
-    m_plater->update_slicing_context_to_current_partplate();
+        m_plater->update_slicing_context_to_current_partplate();
 
-    wxGetApp().obj_list()->reload_all_plates();
+        wxGetApp().obj_list()->reload_all_plates();
 
-    m_plater->update();
+        m_plater->update();
 
-    m_plater->m_arrange_running.store(false);
+        m_plater->m_arrange_running.store(false);
 
 #if AUTO_CONVERT_3MF
-    wxGetApp().auto_convert_3mf_mgr.on_arrange_job_finished();
+        wxGetApp().auto_convert_3mf_mgr.on_arrange_job_finished();
 #endif
+    } catch (const std::exception& ex) {
+        BOOST_LOG_TRIVIAL(warning) << "ArrangeJob::finalize apply exception"
+                                   << ", ex=" << ex.what();
+        boost::log::core::get()->flush();
+        if (m_plater) {
+            show_error(m_plater, _L("An unexpected error occured"));
+        }
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(warning) << "ArrangeJob::finalize apply unknown exception";
+        boost::log::core::get()->flush();
+        if (m_plater) {
+            show_error(m_plater, _L("An unexpected error occured"));
+        }
+    }
 }
 
 #if AUTO_CONVERT_3MF
@@ -1106,9 +1123,25 @@ arrangement::ArrangeParams init_arrange_params(Plater *p)
     auto                              &print        = wxGetApp().plater()->get_partplate_list().get_current_fff_print();
     const PrintConfig                 &print_config = print.config();
 
+    std::tuple<float, float> object_skirt = std::make_tuple(0.f, 0.f);
+    if(!print.empty()) {
+        if(print.is_all_objects_are_short()) {
+            float object_skirt_width = print_config.skirt_loops >= 1 ? (print.skirt_flow().width() + (print_config.skirt_loops-1) * print.skirt_flow().spacing()) : 0.0f;
+            float object_skirt_offset = print_config.skirt_distance + object_skirt_width;
+            object_skirt = std::make_tuple(object_skirt_offset, object_skirt_width);
+        }
+        else
+        {
+            object_skirt = print.object_skirt_offset();
+        }
+    }
+
+    float object_skirt_offset = std::get<0>(object_skirt);
+
     params.clearance_height_to_rod             = print_config.extruder_clearance_height_to_rod.value;
     params.clearance_height_to_lid             = print_config.extruder_clearance_height_to_lid.value;
-    params.cleareance_radius                   = print_config.extruder_clearance_radius.value;
+    params.cleareance_radius                   = print_config.extruder_clearance_radius.value + object_skirt_offset * 2;;
+    params.object_skirt_offset                 = object_skirt_offset;
     params.printable_height                    = print_config.printable_height.value;
     params.allow_rotations                     = settings.enable_rotation;
     params.nozzle_height                       = print.config().nozzle_height.value;
@@ -1119,15 +1152,23 @@ arrangement::ArrangeParams init_arrange_params(Plater *p)
     params.min_obj_distance                    = scaled(settings.distance);
     params.align_to_y_axis                     = settings.align_to_y_axis;
 
+    PartPlateList &plate_list = p->get_partplate_list();
+    PartPlate *    plate      = plate_list.get_curr_plate();
+    bool plate_same_as_global = true;
     int state = p->get_prepare_state();
     if (state == Job::JobPrepareState::PREPARE_STATE_MENU) {
-        PartPlateList &plate_list = p->get_partplate_list();
-        PartPlate *    plate      = plate_list.get_curr_plate();
-        bool plate_same_as_global = true;
         params.is_seq_print       = plate->get_real_print_seq(&plate_same_as_global) == PrintSequence::ByObject;
         // if plate's print sequence is not the same as global, the settings.distance is no longer valid, we set it to auto
         if (!plate_same_as_global)
             params.min_obj_distance = 0;
+    }
+    else if(state == Job::JobPrepareState::PREPARE_STATE_DEFAULT) {  // global( all plates ) arrangement
+        if( 1 == plate_list.get_plate_count()) {
+            // if only one plate exist, use the plate sequence print setting
+            params.is_seq_print       = plate->get_real_print_seq(&plate_same_as_global) == PrintSequence::ByObject;
+            if (params.is_seq_print)
+                params.min_obj_distance = 0;
+        }
     }
 
     if (params.is_seq_print) {

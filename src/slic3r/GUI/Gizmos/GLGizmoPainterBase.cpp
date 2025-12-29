@@ -204,9 +204,9 @@ void GLGizmoPainterBase::render_cursor_circle()
 #if ENABLE_RENDERDOC_CAPTURE
 #else
     glsafe(::glPushAttrib(GL_ENABLE_BIT));
-#endif //ENABLE_RENDERDOC_CAPTURE
     glsafe(::glLineStipple(4, 0xAAAA));
     glsafe(::glEnable(GL_LINE_STIPPLE));
+#endif // ENABLE_RENDERDOC_CAPTURE
 
     if (!m_circle.is_initialized() || !m_old_center.isApprox(center) || std::abs(m_old_cursor_radius - radius) > EPSILON) {
         m_old_cursor_radius = radius;

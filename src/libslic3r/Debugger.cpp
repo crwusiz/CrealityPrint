@@ -828,6 +828,29 @@ namespace Slic3r {
         svg.Close();
     }
 
+    void to_svg(const char* path, const Polygon& poly0, const ExPolygon& expoly1, bool fill/* = true*/)
+    {
+        std::string color_0 = "blue";
+        std::string color_1 = "green";
+
+        BoundingBox bb = get_extents(poly0);
+        bb.merge(get_extents(expoly1));
+
+        SVG svg(path, bb);
+        if (fill)
+        {
+            svg.draw(poly0, color_0);
+            svg.draw(expoly1, color_1);
+        }
+        else
+        {
+            svg.draw_outline(poly0, color_0, 10000);
+            svg.draw_outline(expoly1, color_1, color_1, 50000);
+        }
+
+        svg.Close();
+    }
+
     void to_svg(const char* path, const Polygon& poly, const Polylines& polylines, bool fill/* = true*/)
     {
         SVG svg(path, get_extents(poly));

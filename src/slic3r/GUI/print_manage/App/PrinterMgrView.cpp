@@ -46,6 +46,9 @@
 #include "video/RTSPDecoder.h"
 #include "buildinfo.h"
 #include <cmath>
+#include "slic3r/GUI/UploadFile.hpp"
+// For Test::EVENT_SPREAD and other test utilities
+#include "../../../Utils/TestHelper.hpp"
 
 namespace pt = boost::property_tree;
 
@@ -127,7 +130,7 @@ PrinterMgrView::PrinterMgrView(wxWindow *parent)
         this->Refresh();
     });
     #endif
-    DM::AppMgr::Ins().Register(m_browser);
+    DM::AppMgr::Ins().Register(m_browser, "PrinterMgrView");
     DM::AppMgr::Ins().RegisterEvents(m_browser, std::vector<std::string>{DM::EVENT_SET_CURRENT_DEVICE, DM::EVENT_FORWARD_DEVICE_DETAIL});
     //initMqtt();
  }
@@ -384,6 +387,14 @@ void PrinterMgrView::OnError(wxWebViewEvent &evt)
     switch (evt.GetInt()) {
       case wxWEBVIEW_NAV_ERR_CONNECTION:
         e = "wxWEBVIEW_NAV_ERR_CONNECTION";
+#if wxUSE_WEBVIEW_EDGE
+        if(!m_bHasError)
+        {
+            m_bHasError = true;
+            Slic3r::GUI::wxGetApp().reinstall_webview_runtime();
+        }
+            
+#endif
         break;
       case wxWEBVIEW_NAV_ERR_CERTIFICATE:
         e = "wxWEBVIEW_NAV_ERR_CERTIFICATE";
@@ -494,6 +505,28 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
 
         wxString strCmd = j["command"];
         BOOST_LOG_TRIVIAL(trace) << "DeviceDialog::OnScriptMessage;Command:" << strCmd;
+        if(strCmd == "get_oss_info")
+        {
+            UploadFile uploadFile;
+            json ossInfo = uploadFile.getCloudUploadInfo();
+            nlohmann::json commandJson;
+            commandJson["command"] = "oss_info";
+            commandJson["data"]    = RemotePrint::Utils::url_encode(ossInfo.dump(-1, ' ', true));
+
+            wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
+
+            wxTheApp->CallAfter([this, strJS]() {
+                try
+                {
+                    if (!m_browser->IsBusy()) {
+                        run_script(strJS.ToStdString());
+                    }
+                }
+                catch (...)
+                {
+                }
+            });
+        }
         if (strCmd == "get_printer_progress")
         {
             //get all uploading progress
@@ -810,6 +843,10 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
         {
             _ctrl.requestStop();
             _ctrl.reset();
+        } 
+        else if (strCmd == "test_exec_js_respone") 
+        {
+            Test::EVENT_SPREAD("test_exec_js_respone", strInput.ToStdString());
         }
         
         else {
@@ -1422,6 +1459,15 @@ void PrinterMgrView::request_refresh_all_device()
     nlohmann::json commandJson = {
         {"command", "refresh_all_device"},
         {"data", ""}
+    };
+
+    ExecuteScriptCommand(commandJson.dump());
+}
+
+void PrinterMgrView::update_current_cxy_device_filament(const std::string& mac)
+{
+    nlohmann::json commandJson = {
+        {"command", "update_current_cxy_device_filament"}, {"data", mac}
     };
 
     ExecuteScriptCommand(commandJson.dump());

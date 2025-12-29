@@ -27,4 +27,6 @@ else
 fi
 echo $R_APP_NAME
 scp -P 9122 ./build/${APP_NAME}-V${VERSION}-x86_64-${RTYPE}.AppImage cxsw@172.20.180.14:/vagrant_data/www/shared/build/$JOB_NAME/${R_APP_NAME}-V${VERSION}-x86_64-${RTYPE}.AppImage
+chmod 777 build
+chmod 777 build/${APP_NAME}-V${VERSION}-x86_64-${RTYPE}.AppImage
 exit 0

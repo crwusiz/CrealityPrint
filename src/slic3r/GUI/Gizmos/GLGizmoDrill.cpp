@@ -255,47 +255,22 @@ bool GLGizmoDrill::gizmo_event(SLAGizmoEventType action, const Vec2d& mouse_posi
         }
     }
 
-    //fix bug:[#10503], if do mirror operation on model, the drill operation would cause exception
-    // (1) the "temp_src_mesh" and  "temp_tool_mesh"  should both use the local space when calling the  "sla::hollow_mesh_and_drill" interface;
-    // (2) the "temp_mesh_resuls" should apply the model world transform after "hollow_mesh_and_drill"
-    Transform3d inverse_matrix = selected_volumes_matrix.inverse();
-    Vec3d local_pos = inverse_matrix * pos;
-    Vec3d local_normal = inverse_matrix.linear().inverse().transpose() * normal;
-    local_normal.normalize();
+    Transform3d selected_volumes_inverse = selected_volumes_matrix.inverse();
 
-    float             depth_scale_factor    = 100.f;
-    //const Transform3d feature_matrix = Geometry::translation_transform(pos + normal * (depth_scale_factor)) *
-    //                                Eigen::Quaternion<double>::FromTwoVectors(Vec3d::UnitZ(), -normal) *
-    //                                   Geometry::scale_transform(
-    //                                       {(double) m_radius, (double) m_radius, (normal_on_model).norm() * (depth + depth_scale_factor)});
-    //fix:[11399]
-    Eigen::Matrix3d A = selected_volumes_matrix.linear();
-
-    Eigen::Vector3d n         = local_normal;
-    Eigen::Vector3d arbitrary = (std::abs(n.x()) < 0.9) ? Eigen::Vector3d::UnitX() : Eigen::Vector3d::UnitY();
-    Eigen::Vector3d u         = (arbitrary - arbitrary.dot(n) * n).normalized();
-    Eigen::Vector3d v         = n.cross(u).normalized();
-
-    const double su  = (A * u).norm();
-    const double sv  = (A * v).norm();
-    const double sn  = (A * n).norm();
-    const double eps = 1e-12;
-
-    const double Rw = m_radius;
+    float depth_scale_factor = 100.f;
 
     const double Dw = m_one_layer_only ? depth : m_depth;
-
     const double guard_w = static_cast<double>(depth_scale_factor);
 
-    const double rx_local    = Rw / std::max(su, eps);
-    const double ry_local    = Rw / std::max(sv, eps);
-    const double guard_local = guard_w / std::max(sn, eps);
-    const double Dz_local    = (Dw + guard_w) / std::max(sn, eps);
+    Vec3d n_world = normal;
+    n_world.normalize();
 
-    const Transform3d feature_matrix_local = 
-    Geometry::translation_transform(local_pos + n * guard_local) *
-    Eigen::Quaternion<double>::FromTwoVectors(Vec3d::UnitZ(), -n) *
-    Geometry::scale_transform({rx_local, ry_local, Dz_local});
+    const Transform3d feature_matrix_world =
+        Geometry::translation_transform(pos + n_world * guard_w) *
+        Eigen::Quaternion<double>::FromTwoVectors(Vec3d::UnitZ(), -n_world) *
+        Geometry::scale_transform({ (double)m_radius, (double)m_radius, Dw + guard_w });
+
+    const Transform3d feature_matrix_local = selected_volumes_inverse * feature_matrix_world;
 
     auto m = indexed_triangle_set{};
     TriangleMesh        temp_src_mesh{selected_volumes->mesh().its};
@@ -723,4 +698,3 @@ void GLGizmoDrill::draw_cp_input_double(const std::string& label, double* v, dou
 
 }
 }
-

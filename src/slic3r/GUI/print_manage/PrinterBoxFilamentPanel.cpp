@@ -11,7 +11,7 @@
 #include <wx/event.h>
 #include <wx/gdicmn.h>
 #include <wx/colour.h>
-#include "../GUI_App.hpp"
+#include "slic3r/GUI/MainFrame.hpp"
 
 namespace RemotePrint {
 
@@ -381,8 +381,12 @@ void PrinterBoxFilamentPanel::on_auto_device_filament_mapping()
 {
     if(m_device_data.materialBoxes.empty())
         return;
- 
-    wxPostEvent(Slic3r::GUI::wxGetApp().plater(), wxCommandEvent(Slic3r::GUI::EVT_AUTO_SYNC_CURRENT_DEVICE_FILAMENT));
+    if (m_device_data.deviceType == 1) {
+        wxGetApp().mainframe->get_printer_mgr_view()->update_current_cxy_device_filament(m_device_data.mac);
+        return;
+    } else {
+        wxPostEvent(Slic3r::GUI::wxGetApp().plater(), wxCommandEvent(Slic3r::GUI::EVT_AUTO_SYNC_CURRENT_DEVICE_FILAMENT));   
+    }
 }
 
 void PrinterBoxFilamentPanel::on_show_box_color_selection(wxPoint popup_pos, int sync_filament_item_index)

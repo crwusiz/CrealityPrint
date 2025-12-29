@@ -188,6 +188,31 @@ wxString ErrorReportDialog::getSystemInfo()
     j["uuid"]               = m_info.uuid.ToStdString();
     j["userEmail"]          = intoU8(m_InfoInput->GetTextCtrl()->GetValue()); // m_InfoInput->GetTextCtrl()->GetValue().ToStdString();
     j["systemArchitecture"] = get_system_architecture();
+
+    // 附加调试字段：原始 OS 描述和 Windows 版本号
+    j["osDescriptionRaw"] = wxGetOsDescription().ToStdString();
+#ifdef _WIN32
+    {
+        typedef NTSTATUS(WINAPI* RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+        HMODULE hMod = GetModuleHandleW(L"ntdll.dll");
+        if (hMod) {
+            RtlGetVersionPtr fxPtr = (RtlGetVersionPtr)GetProcAddress(hMod, "RtlGetVersion");
+            if (fxPtr != nullptr) {
+                RTL_OSVERSIONINFOW rovi = {};
+                rovi.dwOSVersionInfoSize = sizeof(rovi);
+                if (fxPtr(&rovi) == 0) {
+                    const bool is_win11 = (rovi.dwMajorVersion == 10 && rovi.dwMinorVersion == 0 && rovi.dwBuildNumber >= 22000);
+                    j["windowsVersion"] = {
+                        {"major", static_cast<int>(rovi.dwMajorVersion)},
+                        {"minor", static_cast<int>(rovi.dwMinorVersion)},
+                        {"build", static_cast<int>(rovi.dwBuildNumber)}
+                    };
+                    j["isWindows11"] = is_win11;
+                }
+            }
+        }
+    }
+#endif
     try {
         // 获取临时目录路径
         std::filesystem::path tempDir(wxFileName::GetTempDir().ToStdString());
@@ -431,6 +456,8 @@ void ErrorReportDialog::GetErrorReport()
     {
         // 获取错误报告
         wxString osDescription = wxGetOsDescription();
+        // 记录原始系统描述，便于定位误判（提升为warning级别）
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " wxGetOsDescription(raw)=" << osDescription.ToStdString();
         
         // 改进的Windows 11检测逻辑
         #ifdef _WIN32
@@ -447,8 +474,15 @@ void ErrorReportDialog::GetErrorReport()
                 RTL_OSVERSIONINFOW rovi = {};
                 rovi.dwOSVersionInfoSize = sizeof(rovi);
                 if (fxPtr(&rovi) == 0) {
+                    const bool is_win11 = (rovi.dwMajorVersion == 10 && rovi.dwMinorVersion == 0 && rovi.dwBuildNumber >= 22000);
+                    // 记录RtlGetVersion结果（提升为warning级别）
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                        << " RtlGetVersion: major=" << rovi.dwMajorVersion
+                        << " minor=" << rovi.dwMinorVersion
+                        << " build=" << rovi.dwBuildNumber
+                        << " is_win11=" << (is_win11 ? "true" : "false");
                     // Windows 11的判断条件：版本10.0且构建号>=22000
-                    if (rovi.dwMajorVersion == 10 && rovi.dwMinorVersion == 0 && rovi.dwBuildNumber >= 22000) {
+                    if (is_win11) {
                         // 替换操作系统描述中的"Windows 10"为"Windows 11"
                         osDescription.Replace("Windows 10", "Windows 11");
                         // 如果没有找到"Windows 10"，但确实是Windows 11，则添加构建号信息
@@ -457,7 +491,16 @@ void ErrorReportDialog::GetErrorReport()
                         }
                     }
                 }
+                else {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " RtlGetVersion call failed";
+                }
             }
+            else {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " GetProcAddress(RtlGetVersion) returned nullptr";
+            }
+        }
+        else {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " GetModuleHandleW(ntdll.dll) failed";
         }
         #endif
         
@@ -465,6 +508,8 @@ void ErrorReportDialog::GetErrorReport()
         m_info.build           = wxString(CREALITYPRINT_VERSION, wxConvUTF8);
         m_info.uuid = Slic3r::GUI::wxGetApp().app_config->get("language") + wxDateTime::Now().Format("%Y%m%d%H%M%S") +
                       wxString::Format("%03lu", wxDateTime::UNow().GetMillisecond());
+        // 记录最终展示的系统描述（提升为warning级别）
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " osDescription(final)=" << m_info.osDescription.ToStdString();
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " uuid:" << m_info.uuid.ToStdString().c_str();
         // 获取显卡信息
         if (!glfwInit()) {

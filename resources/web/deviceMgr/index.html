@@ -5,9 +5,21 @@
         <!-- <link rel="icon" href="/favicon.ico"> -->
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>DevicePage</title>
-      <script  defer src="./assets/KwG7x4lB.js"></script>
+      <script  defer src="./assets/CQKv4dak.js"></script>
     </head>
     <body>
-        <div id="app"></div>
+        <div id="app"></div>
+        <script>
+            (function () {
+                if (!Array.isArray(window.__studioCmdQueue__)) {
+                    window.__studioCmdQueue__ = [];
+                }
+                if (typeof window.handleStudioCmd !== 'function') {
+                    window.handleStudioCmd = function (jsonData) {
+                        window.__studioCmdQueue__.push(jsonData);
+                    };
+                }
+            })();
+        </script>
     </body>
 </html>

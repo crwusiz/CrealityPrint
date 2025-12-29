@@ -2,6 +2,7 @@
 #include "nlohmann/json.hpp"
 #include "../AppUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/LoginDialog.hpp"
 
 using namespace Slic3r::GUI;
 
@@ -48,6 +49,21 @@ namespace DM{
 
             return true;
             });
+
+        this->Handler({ "open_login_dialog" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            std::string url = json_data["url"];
+            wxGetApp().ShowUserLogin(true,url);
+
+            return true;
+            });
+        this->Handler({ "switch_to_tab" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            std::string tabname = json_data["tabName"];
+            wxGetApp().switch_to_tab(tabname);
+
+            return true;
+            });
+    
+        
 
         this->Handler({ "get_lang" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
             wxString lan = wxGetApp().app_config->get("language");

@@ -1,7 +1,7 @@
 {
     "type": "machine_model",
     "name": "Creality Sermoon M300",
-    "nozzle_diameter": "0.4",
+    "nozzle_diameter": "0.8;0.6;0.4",
     "bed_model": "creality_k1_buildplate_model.stl",
     "default_bed_type": "Textured PEI Plate",
     "bed_texture": "",

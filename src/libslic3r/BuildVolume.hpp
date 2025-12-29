@@ -13,14 +13,16 @@ namespace Slic3r {
 
 struct GCodeProcessorResult;
 enum class BuildVolume_Type : unsigned char {
-  // Not set yet or undefined.
-  Invalid,
-  // Rectangular print bed. Most common, cheap to work with.
-  Rectangle,
-  // Circular print bed. Common on detals, cheap to work with.
-  Circle,
-  // Convex print bed. Complex to process.
-  Convex,
+    // Not set yet or undefined.
+    Invalid,
+    // Rectangular print bed. Most common, cheap to work with.
+    Rectangle,
+    // Circular print bed. Common on detals, cheap to work with.
+    Circle,
+    // Convex print bed. Complex to process.
+    Convex,
+    //
+    Belt,
   // Some non convex shape.
   Custom
 };

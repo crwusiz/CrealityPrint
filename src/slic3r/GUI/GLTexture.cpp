@@ -157,6 +157,67 @@ bool GLTexture::load_from_png_svg_file(
     return false;
 }
 
+bool GLTexture::load_from_png_file_half(const std::string& filename,
+                                        int half_top,
+                                        bool  use_mipmaps,
+                                        ECompressionType   compression_type,
+                                        bool               apply_anisotropy)
+{
+    if (half_top == -1)
+        return false;
+
+    reset();
+
+    if (!boost::filesystem::exists(filename))
+        return false;
+
+    if (boost::algorithm::iends_with(filename, ".png"))
+    {
+        wxImage image;
+        if (!image.LoadFile(wxString::FromUTF8(filename.c_str()), wxBITMAP_TYPE_PNG)) {
+            return false;
+        }
+
+        auto width  = image.GetWidth();
+        auto height = image.GetHeight();
+        auto half_h = height / 2;
+
+        wxImage sub_img(width, height, true);
+        sub_img.InitAlpha();
+
+        unsigned char* src    = image.GetData();
+        unsigned char* src_a  = image.GetAlpha();
+        unsigned char* dst    = sub_img.GetData();
+        unsigned char* dst_a  = sub_img.GetAlpha();
+        // empty
+        for (auto h = 0; h < half_h; ++h) {
+            for (auto w = 0; w < width; ++w) {
+                auto offset         = h * width + w;
+                auto pix_offset     = offset * 3;
+                dst[pix_offset + 0] = 0;
+                dst[pix_offset + 1] = 0;
+                dst[pix_offset + 2] = 0;
+                dst_a[offset]       = 0;
+            }
+        }
+        // vaild data
+        for (auto h = half_h; h < height; ++h) {
+            for (auto w = 0; w < width; ++w) {
+                // vaild data
+                auto offset         = h * width + w;
+                auto pix_offset     = offset * 3;
+                dst[pix_offset + 0] = src[pix_offset + 0];
+                dst[pix_offset + 1] = src[pix_offset + 1];
+                dst[pix_offset + 2] = src[pix_offset + 2];
+                dst_a[offset]       = src_a[offset];
+            }
+        }
+        return load_from_png(filename, use_mipmaps, compression_type, apply_anisotropy, &sub_img);
+    }
+    else
+        return false;
+}
+
 bool GLTexture::load_from_png_file(const std::string& filename, bool use_mipmaps, ECompressionType compression_type, bool apply_anisotropy)
 {
     reset();
@@ -1020,17 +1081,23 @@ static bool to_squared_power_of_two(const std::string& filename, int max_size_px
     return ret;
 }
 
-bool GLTexture::load_from_png(const std::string& filename, bool use_mipmaps, ECompressionType compression_type, bool apply_anisotropy)
+bool GLTexture::load_from_png(const std::string& filename, bool use_mipmaps, ECompressionType compression_type, bool apply_anisotropy, wxImage* cache)
 {
     const bool compression_enabled = (compression_type != None) && OpenGLManager::are_compressed_textures_supported();
 
     // Load a PNG with an alpha channel.
     wxImage image;
-    if (!image.LoadFile(wxString::FromUTF8(filename.c_str()), wxBITMAP_TYPE_PNG)) {
-        reset();
-        return false;
+    if (cache == nullptr) {
+        if (!image.LoadFile(wxString::FromUTF8(filename.c_str()), wxBITMAP_TYPE_PNG)) {
+            reset();
+            return false;
+        }
+    } 
+    else
+    {
+        image = *cache;
     }
-
+    
     m_width = image.GetWidth();
     m_height = image.GetHeight();
 

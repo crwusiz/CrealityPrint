@@ -268,30 +268,36 @@ wxString WebViewPanel::GetURL()
                 region = "North America";
             }
     }
-
+    //替换region中的空格为下划线
+    std::replace(region.begin(), region.end(), ' ', '_');
     std::string use_inches = wxGetApp().app_config->get("use_inches");
 
     int port = wxGetApp().get_server_port();
     wxGetApp().check_creality_privacy_version(false); // 检查隐私政策版本
     // for pro
     #ifdef _DEBUG1
-    type = std::string("Beta");
+    if (boost::algorithm::iequals(type, std::string("Dev"))) {
+        type = std::string("Dev");
+    }
+    else {
+        type = std::string("Beta3");
+    }
     #endif
     wxString url = wxString::Format(
         "http://localhost:%d/homepage/index.html?lang=%s&version=%s&type=%s&region=%s&use_inches=%s&debug=false&ai=true&time=%d&privacy=%d#/Community/Home Page", port,
         lang, version, type, region, use_inches,std::time(0),wxGetApp().is_privacy_checked());
-   
-    #ifdef _DEBUG1
-     //for dev: 使用局域网地址：可以找【刘明，或其他前端开发同事】，按要求启动一个 http 服务，用于调试
-     port = 9090;
-     type = std::string("Alpha");
-     
-     url = wxString::Format(
-         "http://localhost:%d/index.html?lang=%s&version=%s&type=%s&region=%s&use_inches=%s&debug=false&ai=true&time=%d&privacy=%d#/Community/Home Page", port, lang,
-         version, type, region, use_inches,std::time(0),wxGetApp().is_privacy_checked()
-     );
-     #endif
-     return url;
+#ifdef _DEBUG1
+    // for dev: 使用局域网地址：可以找【刘明，或其他前端开发同事】，按要求启动一个 http 服务，用于调试
+    port = 9090;
+
+    //
+    
+    url = wxString::Format(
+        "http://localhost:%d/index.html?lang=%s&version=%s&type=%s&region=%s&use_inches=%s&debug=false&ai=true&time=%d&privacy=%d#/"
+        "Community/Home Page",
+        port, lang, version, type, region, use_inches, std::time(0), wxGetApp().is_privacy_checked());
+#endif
+    return url;
 }
 WebViewPanel::~WebViewPanel()
 {
@@ -529,6 +535,11 @@ void WebViewPanel::SendRecentList(int images)
     req.put_child(L"response", data);
     std::wostringstream oss;
     pt::write_json(oss, req, false);
+
+    // 通过WebSocket发送消息
+
+
+    // 保留原有的RunScript调用作为备用
     RunScript(wxString::Format("window.handleStudioCmd(%s)", oss.str()));
 }
 
@@ -629,9 +640,6 @@ void WebViewPanel::OpenModelDetail(std::string id, NetworkAgent* agent)
 
 void WebViewPanel::SendLoginInfo()
 {
-#if AUTO_CONVERT_3MF
-    return;
-#endif
     if (wxGetApp().getAgent()) {
         std::string login_info = wxGetApp().getAgent()->build_login_info();
         wxString    strJS      = wxString::Format("window.handleStudioCmd(%s)", login_info);
@@ -710,7 +718,10 @@ void WebViewPanel::OnNavigationRequest(wxWebViewEvent& evt)
             if (file.StartsWith('/'))
                 file = file.Mid(1);
 #endif
-            wxGetApp().plater()->load_files(wxArrayString{1, &file});
+            if (wxGetApp().app_config->get("is_first_install") == "1" ||
+                (wxGetApp().app_config->get("is_first_install") != "1" && !wxGetApp().preset_bundle->printers.only_default_printers())) {
+                wxGetApp().plater()->load_files(wxArrayString{1, &file});
+            }
             evt.Veto();
             return;
         }
@@ -820,10 +831,6 @@ void WebViewPanel::OnScriptMessage(wxWebViewEvent& evt)
     if (DM::AppMgr::Ins().Invoke(m_browser, evt.GetString().ToUTF8().data())) {
         return;
     }
-
-#if AUTO_CONVERT_3MF
-    return;
-#endif
 
     std::string response = wxGetApp().handle_web_request(evt.GetString().ToUTF8().data());
     if (response.empty())

@@ -316,7 +316,16 @@ static void add_config_substitutions(const ConfigSubstitutions& conf_substitutio
 				}
 			}
 			else
+			{
+				if(val>=static_cast<int>(values.size()) || val>=static_cast<int>(labels.size()))
+				{
+					assert(false);
+					new_val = _L("Undefined");
+					break;
+				}
 				new_val = wxString("\"") + values[val] + "\"" + " (" + from_u8(_utf8(labels[val])) + ")";
+			}
+				
 			break;
 		}
 		case coBool:
@@ -602,8 +611,8 @@ void desktop_open_any_folder( const std::string path )
 
 std::string get_vertion_type()
 {
-	Semver semver(SLIC3R_VERSION);
-	std::string version = std::string(PROJECT_VERSION_EXTRA);
+    Semver semver(SLIC3R_VERSION);
+    std::string version = std::string(PROJECT_VERSION_EXTRA);
 	//bool is_alpha = false;
 	//bool is_beta
 	//if(version == "Alpha" || version == "alpha")
@@ -612,29 +621,63 @@ std::string get_vertion_type()
 	//｝
 	//else if(version == "Beta" || version == "beta")
 
-    bool is_alpha = boost::algorithm::icontains(version, "alpha");
-	//bool is_beta = false;
-	bool is_beta =	boost::algorithm::icontains(version, "beta");
-	return (is_alpha ? "Alpha" : (is_beta ? "Beta" : "Release")); 
+    // 当 PROJECT_VERSION_EXTRA 为 Dev 时，除社区与云端交互外，其它逻辑按 Alpha 处理
+    bool is_alpha = boost::algorithm::icontains(version, "alpha") || boost::algorithm::icontains(version, "dev");
+    //bool is_beta = false;
+    bool is_beta =	boost::algorithm::icontains(version, "beta");
+    return (is_alpha ? "Alpha" : (is_beta ? "Beta" : "Release")); 
 }
 
 std::string get_cloud_api_url()
 {
     std::string url;
     std::string version_type = get_vertion_type();
-	std::string country_code = wxGetApp().app_config->get_country_code();
-	// url = "https://api-dev.crealitycloud.cn";//for dev
+    std::string country_code = wxGetApp().app_config->get_country_code();
+    // 当 PROJECT_VERSION_EXTRA 为 Dev 时，云端交互统一指向 Dev 接口
+    {
+        std::string extra = std::string(PROJECT_VERSION_EXTRA);
+        if (boost::algorithm::iequals(extra, std::string("Dev"))) {
+            return "http://api-dev.crealitycloud.cn";
+        }
+    }
     if (version_type == "Alpha") {
         if (country_code == "CN") {
             url = "https://admin-pre.crealitycloud.cn";
         } else {
-            url = "https://admin-pre.crealitycloud.cn";
+            url = "https://admin-pre.crealitycloud.com";
         }
     } else {
         if (country_code == "CN") {
             url = "https://api.crealitycloud.cn";
         } else {
             url = "https://api.crealitycloud.com";
+        }
+    }
+    return url;
+}
+std::string get_cloud_webaddress()
+{
+	std::string url;
+    std::string version_type = get_vertion_type();
+    std::string country_code = wxGetApp().app_config->get_country_code();
+    // 当 PROJECT_VERSION_EXTRA 为 Dev 时，云端交互统一指向 Dev 接口
+    {
+        std::string extra = std::string(PROJECT_VERSION_EXTRA);
+        if (boost::algorithm::iequals(extra, std::string("Dev"))) {
+            return "https://dev2.crealitycloud.cn/";
+        }
+    }
+    if (version_type == "Alpha") {
+        if (country_code == "CN") {
+            url = "https://pre-2.crealitycloud.cn/";
+        } else {
+            url = "https://pre-2.crealitycloud.com/";
+        }
+    } else {
+        if (country_code == "CN") {
+            url = "https://cp.crealitycloud.cn/";
+        } else {
+            url = "https://cp.crealitycloud.com/";
         }
     }
     return url;

@@ -43,6 +43,7 @@ public:
     void OnLogo(wxAuiToolBarEvent& evt);
     void OnDownMgr(wxAuiToolBarEvent& evt);
     void OnLogin(wxAuiToolBarEvent& evt);
+    void OnFeedback(wxAuiToolBarEvent& evt);
     void EnableSaveItem(bool enable);
     void EnableUndoItem(bool enable);
     void EnableRedoItem(bool enable);
@@ -109,6 +110,7 @@ private:
     wxAuiToolBarItem* maximize_btn;
     wxAuiToolBarItem* m_save_project_item;
     wxAuiToolBarItem* m_upload_btn;
+    wxAuiToolBarItem* m_feedback_item;
     wxControl* m_tabCtrol;
 
     wxBitmap m_publish_bitmap;
@@ -119,6 +121,9 @@ private:
 
     wxBitmap m_model_store_bitmap;
     wxBitmap m_model_store_hover_bitmap;
+
+    // Track spacer items and their logical DIP sizes so they can be resized on DPI changes.
+    std::vector<std::pair<wxAuiToolBarItem*, int>> m_spacer_items;
 
     int m_toolbar_h;
     bool m_skip_popup_file_menu;

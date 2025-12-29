@@ -9,9 +9,9 @@ namespace DM{
         AppRoutes m_routes;
     };
 
-    void AppMgr::Register(wxWebView* browser)
+    void AppMgr::Register(wxWebView* browser, std::string name)
     {
-        impl->m_apps.emplace_back(browser);
+        impl->m_apps.emplace_back(App{browser, name});
     }
 
     void AppMgr::UnRegister(wxWebView* browser)
@@ -53,6 +53,14 @@ namespace DM{
         }
     }
 
+    void AppMgr::GetAppsByName(std::string name, Apps& apps)
+    {
+        for (const auto& app : impl->m_apps) {
+            if (app.name == name) {
+                apps.push_back(app);
+            }
+        }
+    }
 
     AppMgr& AppMgr::Ins()
     {

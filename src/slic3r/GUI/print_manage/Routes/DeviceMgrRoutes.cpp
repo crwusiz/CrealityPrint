@@ -16,6 +16,9 @@
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/Thread.hpp"
 #include "slic3r/GUI/AnalyticsDataUploadManager.hpp"
+#include "libslic3r/Time.hpp"
+#include "slic3r/GUI/PhysicalPrinter.hpp"
+
 using namespace Slic3r;
 namespace DM {
     DeviceMgrRoutes::DeviceMgrRoutes()
@@ -66,6 +69,12 @@ namespace DM {
             AppUtils::PostMsg(browse, commandJson);
 
             return true;
+            });
+
+        this->Handler({"sync_mappinp_cfs_filament"},
+                      [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+                          wxPostEvent(Slic3r::GUI::wxGetApp().plater(), wxCommandEvent(Slic3r::GUI::EVT_AUTO_SYNC_CURRENT_DEVICE_FILAMENT));
+                return true;
             });
 
         this->Handler({ "set_current_plate_index" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
@@ -333,6 +342,68 @@ namespace DM {
 
             return true;
             });
+        this->Handler({"buy_filament_cmd"},[](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            string color = json_data["filamentColor"].get<std::string>();
+            string type  = json_data["filamentType"].get<std::string>();
+            string name  = json_data["filamentName"].get<std::string>();
+            wxGetApp().OpenEshopRecommendedGoods(color, type, name);
+
+            try
+            {
+                json js;
+                js["type_code"] = "slice822";
+                js["event_type"]      = "click_event";
+                js["function_module"] = "buy_filament";
+                js["module_id"]       = 1;
+                js["app_version"]     = GUI_App::format_display_version().c_str();
+                js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+                js["timestamp"]       = Slic3r::Utils::utc_timestamp(Slic3r::Utils::get_current_time_utc());
+                 wxGetApp().track_event("click_event", js.dump());
+            }
+            catch (...){}
+        
+            return true;
+        }); 
+        this->Handler({"track_learn_about_cfs"},[](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            try
+            {
+                json js;
+                js["type_code"] = "slice822";
+                js["event_type"]      = "click_event";
+                js["function_module"] = "learn_about_CFS";
+                js["module_id"]       = 1;
+                js["app_version"]     = GUI_App::format_display_version().c_str();
+                js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+                js["timestamp"]       = Slic3r::Utils::utc_timestamp(Slic3r::Utils::get_current_time_utc());
+                 wxGetApp().track_event("click_event", js.dump());
+            }
+            catch (...){}
+        
+            return true;
+        }); 
+
+        this->Handler({"test_fluidd_device"},[](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            
+            std::string deviceUrl  = json_data["url"].get<std::string>();
+            //std::string deviceType = json_data["type"].get<std::string>();
+            //std::string deviceUrl  = json_data["url"].get<std::string>();
+            //bool        ignoreCertRevocation = json_data["ignoreCertRevocation"].get<std::string>();
+
+            //预留接口
+            GUI::PhysicalPrinter PhyPrinter("", deviceUrl, "", false);
+            string               info      = "";
+            bool isSuccess =  PhyPrinter.TestConnection(info);
+            nlohmann::json commandJson;
+            commandJson["command"] = "test_fluidd_device";
+            commandJson["result"] = (isSuccess ? 1 : 0);
+            commandJson["info"] = info;
+
+            wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump()));
+            wxGetApp().CallAfter([browse,strJS]{ AppUtils::PostMsg(browse,strJS.ToStdString());});
+
+            return true;
+        });
+
          this->Handler({ "get_model_match" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
             std::string printmodelA = json_data["modelA"];
             std::string printmodelB = json_data["modelB"];

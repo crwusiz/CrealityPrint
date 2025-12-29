@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include <boost/filesystem/path.hpp>
+#include <unordered_map>
 
 #include <wx/panel.h>
 // BBS
@@ -17,6 +18,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "Search.hpp"
+#include "3DBed.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PrintBase.hpp"
 
@@ -51,7 +53,9 @@ class SlicingStatusEvent;
 enum SLAPrintObjectStep : unsigned int;
 enum class ConversionType : int;
 class Ams;
-
+namespace csg {
+enum class BooleanFailReason;
+}
 using ModelInstancePtrs = std::vector<ModelInstance*>;
 
 
@@ -308,6 +312,7 @@ public:
     SidebarPrinter& sidebar_printer();
     const Model& model() const;
     Model& model();
+    Bed3D& bed();
     const Print& fff_print() const;
     Print& fff_print();
     const SLAPrint& sla_print() const;
@@ -388,6 +393,7 @@ public:
     // To be called when providing a list of files to the GUI slic3r on command line.
     std::vector<size_t> load_files(const std::vector<std::string>& input_files, LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig,  bool ask_multi = false);
     // to be called on drag and drop
+    bool load_same_type_files(const wxArrayString &filenames);
     bool load_files(const wxArrayString& filenames);
 
     const wxString& get_last_loaded_gcode() const { return m_last_loaded_gcode; }
@@ -435,6 +441,7 @@ public:
     void select_view(const std::string& direction);
     //BBS: add no_slice logic
     void select_view_3D(const std::string& name, bool no_slice = true);
+    void select_ai_cloud_service();
 
     void reload_paint_after_background_process_apply();
     bool is_preview_shown() const;
@@ -519,7 +526,13 @@ public:
     void reload_all_from_disk();
     bool has_toolpaths_to_export() const;
     void export_toolpaths_to_obj() const;
+    void close_checked_3rd_filament_vendor_tip();
+    void check_filament_vendor_for_models();
     void reslice();
+    void restore_belt_trans();
+    void update_belt_trans();
+    void add_belt_support();
+    void remove_belt_support();
     void record_slice_preset(std::string action);
     void reslice_SLA_supports(const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_hollowing(const ModelObject &object, bool postpone_error_messages = false);
@@ -639,6 +652,7 @@ public:
     //BBS: add clone logic
     void clone_selection();
     void center_selection();
+
     void search(bool plater_is_active, Preset::Type  type, wxWindow *tag, TextInput *etag, wxWindow *stag);
     void mirror(Axis axis);
     void split_object();
@@ -959,6 +973,12 @@ private:
     friend class SuppressBackgroundProcessingUpdate;
     friend class PlaterDropTarget;
     std::time_t m_startTime;
+
+    struct BeltSupportSignature {
+        size_t config_hash { 0 };
+        size_t geom_hash   { 0 };
+    };
+    std::unordered_map<size_t, BeltSupportSignature> m_belt_support_cache;
 };
 
 class SuppressBackgroundProcessingUpdate
@@ -969,7 +989,7 @@ public:
 private:
     bool m_was_scheduled;
 };
-
+std::string      check_boolean_possible(const std::vector<const ModelVolume *> &volumes, csg::BooleanFailReason& fail_reason);
 std::vector<int> get_min_flush_volumes(const DynamicPrintConfig& full_config);
 } // namespace GUI
 } // namespace Slic3r

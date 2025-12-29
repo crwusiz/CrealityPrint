@@ -15,7 +15,7 @@ Klipper4408Interface::~Klipper4408Interface() {
     curl_global_cleanup();
 }
 bool isGCodeFile(const boost::filesystem::path& filePath) {
-    // 获取文件扩展�?
+    // 获取文件扩展名
     boost::filesystem::path extension = filePath.extension();
     // 将扩展名转换为小写并检查是否为 .gcode
     std::string extStr = extension.string();
@@ -34,10 +34,8 @@ std::future<void> Klipper4408Interface::sendFileToDevice(const std::string& serv
     BOOST_LOG_TRIVIAL(info) << boost::format("%1%: Uploading file %2% to %3%") % uploadFileName % localFilePath % urlUpload;
 
     auto http = Slic3r::Http::post(urlUpload);
-    {
-        std::lock_guard<std::mutex> lock(mapHttpMutex);
-        mapHttp[serverIp] = &http;
-    }
+    //m_pHttp   = &http;
+    mapHttp.emplace(serverIp, &http);
     std::string temp_upload_name = uploadFileName;
     
     http.clear_header();
@@ -62,7 +60,7 @@ std::future<void> Klipper4408Interface::sendFileToDevice(const std::string& serv
                 if (uploadStatusCallback) {
                     uploadStatusCallback(CURLE_HTTP_RETURNED_ERROR);
                 }
-        } else {
+            } else {
                 if (uploadStatusCallback) {
                     uploadStatusCallback(CURLE_OK); // the upload is complete
                 }
@@ -92,7 +90,7 @@ std::future<void> Klipper4408Interface::sendFileToDevice(const std::string& serv
                 if(now != last_time) {
                     curl_off_t bytes_sent = progress.ulnow;
                     double time_elapsed = difftime(now, last_time);
-                    speed = bytes_sent / time_elapsed / 1024; // 字节/�?
+                    speed = bytes_sent / time_elapsed / 1024; // 字节/秒
                 }
                 if(progress.ultotal > 0) {
                     float tpercent = static_cast<float>(progress.ulnow) / progress.ultotal * 100.0f;
@@ -106,19 +104,14 @@ std::future<void> Klipper4408Interface::sendFileToDevice(const std::string& serv
            
         })
         .perform_sync();
-
-    {
-        std::lock_guard<std::mutex> lock(mapHttpMutex);
         mapHttp.erase(serverIp);
-    }
-
-    if (!res && uploadStatusCallback) {
-        if (http.is_cancelled()) {
-            uploadStatusCallback(601); // 601 表示取消成功
-        } else {
-            //uploadStatusCallback(CURLE_HTTP_RETURNED_ERROR);
+        if (!res && uploadStatusCallback) {
+            if (http.is_cancelled()) {
+                uploadStatusCallback(601); // 601 表示取消成功
+            } else {
+                //uploadStatusCallback(CURLE_HTTP_RETURNED_ERROR);
+            }
         }
-    }
     });
 
     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " end!!!";
@@ -128,14 +121,10 @@ void Klipper4408Interface::cancelSendFileToDevice(std::string ipAddress)
 {
     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " start";
     m_bCancelSend = true;
-    Slic3r::Http* http = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(mapHttpMutex);
-        auto it = mapHttp.find(ipAddress);
-        if (it != mapHttp.end()) {
-            http = it->second;
-        }
+    if(mapHttp.count(ipAddress) == 0) {
+        return;
     }
+    Slic3r::Http*     http = mapHttp.at(ipAddress);
     if (http != nullptr) {
         http->cancel();
     }
@@ -143,7 +132,3 @@ void Klipper4408Interface::cancelSendFileToDevice(std::string ipAddress)
 }
 
 }
-
-
-
-

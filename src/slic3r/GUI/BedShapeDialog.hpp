@@ -102,6 +102,8 @@ public:
     const std::string& get_custom_texture() const { return m_panel->get_custom_texture(); }
     const std::string& get_custom_model() const { return m_panel->get_custom_model(); }
 
+    virtual void EndModal(int ret) override;
+
 protected:
     void on_dpi_changed(const wxRect &suggested_rect) override;
 };

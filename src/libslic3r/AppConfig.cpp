@@ -622,7 +622,7 @@ void AppConfig::set_defaults()
     }
     
     if (get("max_recent_count").empty()) {
-        set("max_recent_count", "18");
+        set("max_recent_count", "30");
     }
 
     // if (get("staff_pick_switch").empty()) {
@@ -705,6 +705,10 @@ void AppConfig::set_defaults()
 	if (get("enable_lod").empty())
         set_bool("enable_lod", true);
     
+	//Ԥ��ҳLOD����beta�׶�Ĭ�ϴ򿪣�12�·� 7.0�汾Ĭ�Ϲر�
+	if (get("enable_preview_lod").empty())
+        set_bool("enable_preview_lod", true);
+
     erase("app", "main_frame_maximized");
     erase("app", "main_frame_pos");
     erase("app", "main_frame_size");
@@ -1656,9 +1660,9 @@ std::string AppConfig::get_country_code()
     else if (region == "USA")
         return "US";
     else if (region == "Asia-Pacific")
-        return "Others";
+        return "JP";
     else if (region == "Europe")
-        return "US";
+        return "EU";
     else if (region == "North America")
         return "US";
     else

@@ -619,19 +619,21 @@ void PartPlate::calc_vertex_for_name_background(int w, int h,GLModel& buffer) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "Unable to generate geometry buffers for icons\n";
 }
 
-void PartPlate::calc_vertex_for_icons(int index, PickingModel &model)
+void PartPlate::calc_vertex_for_icons(int index, PickingModel& model, bool reverse_position_y /* = false*/)
 {
     model.reset();
 
 	ExPolygon poly;
 	auto bed_ext = get_extents(m_shape);
     Vec2d p = bed_ext[2];
-    if (m_plater && m_plater->get_build_volume_type() == BuildVolume_Type::Circle)
-        p[1] -= std::max(
-            0.0, (bed_ext.size()(1) - 5 * PARTPLATE_ICON_SIZE - 4 * PARTPLATE_ICON_GAP_Y - PARTPLATE_ICON_GAP_TOP) / 2);
-
+	if (m_plater && m_plater->get_build_volume_type() == BuildVolume_Type::Circle)
+		p[1] -= std::max(0.0, (bed_ext.size()(1) - 5 * PARTPLATE_ICON_SIZE - 4 * PARTPLATE_ICON_GAP_Y - PARTPLATE_ICON_GAP_TOP) / 2);
+    
 	p(0) += PARTPLATE_ICON_GAP_LEFT;
-	p(1) -= index * (PARTPLATE_ICON_SIZE + PARTPLATE_ICON_GAP_Y);
+    if (reverse_position_y)
+        p(1) = index * (PARTPLATE_ICON_SIZE + PARTPLATE_ICON_GAP_Y);
+    else
+		p(1) -= index * (PARTPLATE_ICON_SIZE + PARTPLATE_ICON_GAP_Y);
 	poly.contour.append({ scale_(p(0)), scale_(p(1) - PARTPLATE_ICON_SIZE) });
 	poly.contour.append({ scale_(p(0) + PARTPLATE_ICON_SIZE), scale_(p(1) - PARTPLATE_ICON_SIZE) });
 	poly.contour.append({ scale_(p(0) + PARTPLATE_ICON_SIZE), scale_(p(1))});
@@ -800,8 +802,17 @@ void PartPlate::render_logo(bool bottom, int verder)
                     part.update_buffer();
                 }
 				auto tindex = DispConfig::TextureType(DispConfig::e_tt_bed_custom+curr_bed_type - btEP);
-                auto tex = DispConfig().getTexture(tindex);
-                render_logo_texture(*tex, *(part.buffer), bottom);
+
+                if (wxGetApp().preset_bundle->machine_is_belt()) 
+				{
+                    auto tex = DispConfig().getTexture(tindex, false, false, 1);
+                    render_logo_texture(*tex, *(part.buffer), bottom);
+				}
+				else
+				{
+                    auto tex = DispConfig().getTexture(tindex);
+                    render_logo_texture(*tex, *(part.buffer), bottom);
+				}
             }
 		}
 	}
@@ -975,6 +986,10 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
 {
 	GLShaderProgram* shader = wxGetApp().get_shader("printbed");
 	if (shader != nullptr) {
+        bool machine_is_belt = false;
+        if (Slic3r::GUI::wxGetApp().preset_bundle)
+            machine_is_belt = Slic3r::GUI::wxGetApp().preset_bundle->machine_is_belt();
+
 		shader->start_using();
         const Camera &camera = wxGetApp().plater()->get_camera();
         shader->set_uniform("view_model_matrix", camera.get_view_matrix());
@@ -999,6 +1014,21 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
             };
 			for(int i=0;i<e_at_unlock_triangle;++i)
 			{
+				if (machine_is_belt)
+				{
+					// cr30 machine plate button show set
+					bool bshow = false;
+					for (auto it : m_cr30_show_action_btns)
+					{
+						if (it == (decltype(e_at_unlock_triangle))i)
+						{
+                            bshow = true;
+                            break;
+						}
+					}
+                    if (bshow == false)
+                        continue;
+				}
                 auto& md = m_action_icon[i].model;
 				bool hover = hover_id == i;
                 int offset = i;
@@ -1400,6 +1430,18 @@ void PartPlate::check_gcode_path_contain_in_bed()
 	BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(",paths_bounding_box {%1%, %2%}-{%3%, %4%}\n")
 		% m_gcode_paths_bounding_box.min.x() % m_gcode_paths_bounding_box.min.y() % m_gcode_paths_bounding_box.max.x() % m_gcode_paths_bounding_box.max.y();
 
+	//// if is cr30, gcode bounding box need calc inverse matrix, because it will effect collsion check between bed and toolpath
+ //   if (wxGetApp().preset_bundle->machine_is_belt()) {
+ //       Transform3d transform = Transform3d::Identity();
+ //       transform             = m_plater->get_current_canvas3D()->get_preview_extra_transform();
+
+ //       auto min  = transform * m_gcode_paths_bounding_box.min;
+ //       auto max  = transform * m_gcode_paths_bounding_box.max;
+ //       m_gcode_paths_bounding_box.reset();
+ //       m_gcode_paths_bounding_box.max = max;
+ //       m_gcode_paths_bounding_box.min = min;
+ //   }
+
 	// use convex_hull for toolpath outside check
 	contained_in_bed = bed_build_volume.all_paths_inside(*m_gcode_result, m_gcode_paths_bounding_box);
 
@@ -1693,7 +1735,7 @@ std::vector<int> PartPlate::get_used_extruders()
 	return std::vector(used_extruders_set.begin(), used_extruders_set.end());
 }
 
-Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, const double w, const double d, int plate_extruder_size, bool use_global_objects) const
+Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, const double w, const double d, const double wipe_volume, int plate_extruder_size, bool use_global_objects) const
 {
 	Vec3d wipe_tower_size;
 
@@ -1733,8 +1775,22 @@ Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, con
 	//const DynamicPrintConfig &dconfig = wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto timelapse_type    = config.option<ConfigOptionEnum<TimelapseType>>("timelapse_type");
     bool timelapse_enabled = timelapse_type ? (timelapse_type->value == TimelapseType::tlSmooth) : false;
+    const ConfigOptionBool* use_rib_wall_opt  = config.option<ConfigOptionBool>("prime_tower_rib_wall");
+    bool                    use_rib_wall      = use_rib_wall_opt ? use_rib_wall_opt->value : true;
 
     double depth = plate_extruder_size == 1 ? 0 : d;
+    int    nozzle_nums = wxGetApp().preset_bundle->get_printer_extruder_count();
+    double volume      = wipe_volume * (nozzle_nums == 2 ? plate_extruder_size : (plate_extruder_size - 1));
+    if (use_rib_wall) {
+        depth = std::sqrt(volume / layer_height);
+        if (timelapse_enabled || plate_extruder_size > 1) {
+            float min_wipe_tower_depth = WipeTower::get_limit_depth_by_height(max_height);
+            depth                      = std::max((double) min_wipe_tower_depth, depth);
+            wipe_tower_size(0) = wipe_tower_size(1) = depth;
+        }
+        return wipe_tower_size;
+    }
+
     if (timelapse_enabled || depth > EPSILON) {
 		float min_wipe_tower_depth = 0.f;
 		auto iter = WipeTower::min_depth_per_height.begin();
@@ -1781,7 +1837,7 @@ arrangement::ArrangePolygon PartPlate::estimate_wipe_tower_polygon(const Dynamic
 	//float a = dynamic_cast<const ConfigOptionFloat*>(config.option("wipe_tower_rotation_angle"))->value;
 	float v = dynamic_cast<const ConfigOptionFloat*>(config.option("prime_volume"))->value;
     float tower_brim_width = dynamic_cast<const ConfigOptionFloat*>(config.option("prime_tower_brim_width"))->value;
-    Vec3d wipe_tower_size = estimate_wipe_tower_size(config, w, v, plate_extruder_size, use_global_objects);
+    Vec3d wipe_tower_size = estimate_wipe_tower_size(config, w, m_depth, v, plate_extruder_size, use_global_objects);
 	int plate_width=m_width, plate_depth=m_depth;
 	float depth = wipe_tower_size(1);
 	float margin = WIPE_TOWER_MARGIN + tower_brim_width, wp_brim_width = 0.f;
@@ -1934,6 +1990,8 @@ void PartPlate::generate_plate_name_texture()
     m_plate_name_icon.reset();
     auto bed_ext = get_extents(m_shape);
     auto factor  = bed_ext.size()(1) / 200.0;
+    if (wxGetApp().preset_bundle->machine_is_belt())
+        factor = 1.0f;
 	wxCoord   h        = int(factor * 16);
 	int prew = bed_ext[3](0);
     if (!m_name.empty()){
@@ -2767,8 +2825,10 @@ bool PartPlate::set_shape(const Pointfs& shape, const Pointfs& exclude_areas, Ve
 		const BoundingBox& pp_bbox = poly.contour.bounding_box();
 		calc_gridlines(poly, pp_bbox);
 
+		bool machine_is_belt = wxGetApp().preset_bundle->machine_is_belt();
+
 		for (int i=e_at_close;i<=e_at_set;++i)
-			calc_vertex_for_icons(i-1, m_action_icon[i]);
+            calc_vertex_for_icons(i - 1, m_action_icon[i], machine_is_belt);
         //calc_vertex_for_icons_background(m_right_top);
 
 		calc_vertex_for_number(false, m_plate_idx_icon);
@@ -3379,7 +3439,7 @@ void PartPlateList::generate_icon_textures()
 			else
 				file_name = std::to_string(i+1);
 
-			wxColour foreground(23, 204, 95, 0xff);
+			wxColour foreground = m_is_dark ? wxColour(23, 204, 95, 0xff) : wxColour(0x4E, 0x59, 0x69, 0xff);
 			if (!m_idx_textures[i].generate_from_text_string(file_name, *font, *wxBLACK, foreground)) {
 				BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(":load file %1% failed") % file_name;
 			}
@@ -3662,6 +3722,11 @@ int PartPlateList::create_plate(bool adjust_position)
 	PartPlate* plate = NULL;
 	Vec3d origin;
 	int new_index;
+
+	// make sure belt only have one plater
+	if (wxGetApp().preset_bundle->machine_is_belt())
+		if (m_plate_list.size() >= 1)
+			return -1;
 
 	new_index = m_plate_list.size();
 	if (new_index >= MAX_PLATES_COUNT)
@@ -4860,8 +4925,16 @@ void PartPlateList::postprocess_arrange_polygon(arrangement::ArrangePolygon& arr
 	}
 }
 
-void PartPlateList::on_change_color_mode(bool is_dark) { 
+void PartPlateList::on_change_color_mode(bool is_dark)
+{
+	if (m_is_dark == is_dark)
+		return;
+
 	m_is_dark = is_dark;
+	for (int i = 0; i < MAX_PLATE_COUNT; ++i) {
+		m_idx_textures[i].reset();
+	}
+	generate_icon_textures();
 }
 
 /*rendering related functions*/
@@ -4960,6 +5033,7 @@ bool PartPlateList::set_shapes(const Pointfs& shape, const Pointfs& exclude_area
 
 	double stride_x = plate_stride_x();
 	double stride_y = plate_stride_y();
+
 	for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
 	{
 		PartPlate* plate = m_plate_list[i];
@@ -5428,6 +5502,11 @@ int PartPlateList::load_from_3mf_structure(PlateDataPtrs& plate_data_list)
 	for (unsigned int i = 0; i < (unsigned int)plate_data_list.size(); ++i)
 	{
 		int index = create_plate(false);
+		if (index == -1)
+		{
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":create_plate failed, index=%1%, plate_data_list size=%2%") % i %plate_data_list.size();
+            continue;
+		}
 		m_plate_list[index]->m_locked = plate_data_list[i]->locked;
 		m_plate_list[index]->config()->apply(plate_data_list[i]->config);
 		m_plate_list[index]->set_plate_name(plate_data_list[i]->plate_name);
@@ -5674,6 +5753,12 @@ void PartPlateList::load_bedtype_textures()
     int   bed_height = bed_ext.size()(1);
     float x_rate = bed_width / base_width;
     float y_rate = bed_height / base_height;
+
+	if (wxGetApp().preset_bundle->machine_is_belt()) 
+	{
+        y_rate = y_rate > 1.0f ? 1.0f : y_rate;
+    }
+
 	GLint max_tex_size = OpenGLManager::get_gl_info().get_max_tex_size();
 	GLint logo_tex_size = (max_tex_size < 2048) ? max_tex_size : 2048;
 	for (int i = 0; i < (unsigned int)btCount; ++i) {

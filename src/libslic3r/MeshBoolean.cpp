@@ -85,6 +85,46 @@ void minus(TriangleMesh& A, const TriangleMesh& B)
     A = eigen_to_triangle_mesh(eA);
 }
 
+void plus(EigenMesh& A, const EigenMesh& B)
+{
+    auto &[VA, FA] = A;
+    auto &[VB, FB] = B;
+
+    Eigen::MatrixXd VC;
+    Eigen::MatrixXi FC;
+    igl::MeshBooleanType boolean_type(igl::MESH_BOOLEAN_TYPE_UNION);
+    igl::copyleft::cgal::mesh_boolean(VA, FA, VB, FB, boolean_type, VC, FC);
+
+    VA = std::move(VC); FA = std::move(FC);
+}
+
+void plus(TriangleMesh& A, const TriangleMesh& B)
+{
+    EigenMesh eA = triangle_mesh_to_eigen(A);
+    plus(eA, triangle_mesh_to_eigen(B));
+    A = eigen_to_triangle_mesh(eA);
+}
+
+void intersect(EigenMesh& A, const EigenMesh& B)
+{
+    auto &[VA, FA] = A;
+    auto &[VB, FB] = B;
+
+    Eigen::MatrixXd VC;
+    Eigen::MatrixXi FC;
+    igl::MeshBooleanType boolean_type(igl::MESH_BOOLEAN_TYPE_INTERSECT);
+    igl::copyleft::cgal::mesh_boolean(VA, FA, VB, FB, boolean_type, VC, FC);
+
+    VA = std::move(VC); FA = std::move(FC);
+}
+
+void intersect(TriangleMesh& A, const TriangleMesh& B)
+{
+    EigenMesh eA = triangle_mesh_to_eigen(A);
+    intersect(eA, triangle_mesh_to_eigen(B));
+    A = eigen_to_triangle_mesh(eA);
+}
+
 void self_union(EigenMesh &A)
 {
     EigenMesh result;
@@ -761,47 +801,55 @@ bool do_boolean_single(McutMesh &srcMesh, const McutMesh &cutMesh, const std::st
 
 void do_boolean(McutMesh& srcMesh, const McutMesh& cutMesh, const std::string& boolean_opts)
 {
-    TriangleMesh tri_src = mcut_to_triangle_mesh(srcMesh);
-    std::vector<indexed_triangle_set> src_parts = its_split(tri_src.its);
+    try
+    {
+        TriangleMesh                      tri_src   = mcut_to_triangle_mesh(srcMesh);
+        std::vector<indexed_triangle_set> src_parts = its_split(tri_src.its);
 
-    TriangleMesh tri_cut = mcut_to_triangle_mesh(cutMesh);
-    std::vector<indexed_triangle_set> cut_parts = its_split(tri_cut.its);
+        TriangleMesh                      tri_cut   = mcut_to_triangle_mesh(cutMesh);
+        std::vector<indexed_triangle_set> cut_parts = its_split(tri_cut.its);
 
-    if (src_parts.empty() && boolean_opts == "UNION") {
-        srcMesh = cutMesh;
-        return;
-    }
-    if(cut_parts.empty()) return;
-
-    // when src mesh has multiple connected components, mcut refuses to work.
-    // But we can force it to work by spliting the src mesh into disconnected components,
-    // and do booleans seperately, then merge all the results.
-    indexed_triangle_set all_its;
-    if (boolean_opts == "UNION" || boolean_opts == "A_NOT_B") {
-        for (size_t i = 0; i < src_parts.size(); i++) {
-            auto src_part = triangle_mesh_to_mcut(src_parts[i]);
-            for (size_t j = 0; j < cut_parts.size(); j++) {
-                auto cut_part = triangle_mesh_to_mcut(cut_parts[j]);
-                do_boolean_single(*src_part, *cut_part, boolean_opts);
-            }
-            TriangleMesh tri_part = mcut_to_triangle_mesh(*src_part);
-            its_merge(all_its, tri_part.its);
+        if (src_parts.empty() && boolean_opts == "UNION") {
+            srcMesh = cutMesh;
+            return;
         }
-    }
-    else if (boolean_opts == "INTERSECTION") {
-        for (size_t i = 0; i < src_parts.size(); i++) {
-            for (size_t j = 0; j < cut_parts.size(); j++) {
+        if (cut_parts.empty())
+            return;
+
+        if (src_parts.size() > cut_parts.size() && boolean_opts == "UNION")
+            std::swap(src_parts, cut_parts);
+
+        // when src mesh has multiple connected components, mcut refuses to work.
+        // But we can force it to work by spliting the src mesh into disconnected components,
+        // and do booleans seperately, then merge all the results.
+        indexed_triangle_set all_its;
+        if (boolean_opts == "UNION" || boolean_opts == "A_NOT_B") {
+            for (size_t i = 0; i < src_parts.size(); i++) {
                 auto src_part = triangle_mesh_to_mcut(src_parts[i]);
-                auto cut_part = triangle_mesh_to_mcut(cut_parts[j]);
-                bool success = do_boolean_single(*src_part, *cut_part, boolean_opts);
-                if (success) {
-                    TriangleMesh tri_part = mcut_to_triangle_mesh(*src_part);
-                    its_merge(all_its, tri_part.its);
+                for (size_t j = 0; j < cut_parts.size(); j++) {
+                    auto cut_part = triangle_mesh_to_mcut(cut_parts[j]);
+                    do_boolean_single(*src_part, *cut_part, boolean_opts);
+                }
+                TriangleMesh tri_part = mcut_to_triangle_mesh(*src_part);
+                its_merge(all_its, tri_part.its);
+            }
+        } else if (boolean_opts == "INTERSECTION") {
+            for (size_t i = 0; i < src_parts.size(); i++) {
+                for (size_t j = 0; j < cut_parts.size(); j++) {
+                    auto src_part = triangle_mesh_to_mcut(src_parts[i]);
+                    auto cut_part = triangle_mesh_to_mcut(cut_parts[j]);
+                    bool success  = do_boolean_single(*src_part, *cut_part, boolean_opts);
+                    if (success) {
+                        TriangleMesh tri_part = mcut_to_triangle_mesh(*src_part);
+                        its_merge(all_its, tri_part.its);
+                    }
                 }
             }
         }
+        srcMesh = *triangle_mesh_to_mcut(all_its);
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "check error:" << e.what();
     }
-    srcMesh = *triangle_mesh_to_mcut(all_its);
 }
 
 void make_boolean(const TriangleMesh &src_mesh, const TriangleMesh &cut_mesh, std::vector<TriangleMesh> &dst_mesh, const std::string &boolean_opts)

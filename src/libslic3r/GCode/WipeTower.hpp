@@ -26,7 +26,11 @@ public:
     static const std::string never_skip_tag() { return "_GCODE_WIPE_TOWER_NEVER_SKIP_TAG"; }
 
 	// WipeTower height to minimum depth map
-	static const std::map<float, float> min_depth_per_height;
+    static const std::map<float, float> min_depth_per_height;
+    static float                        get_limit_depth_by_height(float max_height);
+    static float                        get_auto_brim_by_height(float max_height);
+    static Vec2f                        move_box_inside_box(const BoundingBox& box1, const BoundingBox& box2, int offset = 0);
+    static TriangleMesh                 its_make_cone_brim(const Polygon& brim, float layer_height);
 
     struct Extrusion
     {
@@ -64,13 +68,15 @@ public:
         // Is this a priming extrusion? (If so, the wipe tower rotation & translation will not be applied later)
         bool                    priming;
 
+		bool  is_tool_change{false};
+        Vec2f tool_change_start_pos;
         // Pass a polyline so that normal G-code generator can do a wipe for us.
         // The wipe cannot be done by the wipe tower because it has to pass back
         // a loaded extruder, so it would have to either do a wipe with no retraction
         // (leading to https://github.com/prusa3d/PrusaSlicer/issues/2834) or do
         // an extra retraction-unretraction pair.
         std::vector<Vec2f> wipe_path;
-
+        std::vector<std::vector<Vec2f>> wipe_paths;
 		// BBS
         float purge_volume = 0.f;
 
@@ -130,6 +136,29 @@ public:
         Vec2f rd;	// right lower
         Vec2f ru;  // right upper
     };
+
+	struct WipeTowerBlock
+    {
+        int                block_id{0};
+        int                filament_adhesiveness_category{0};
+        std::vector<float> layer_depths;
+        std::vector<bool>  solid_infill;
+        std::vector<float> finish_depth{0}; // the start pos of finish frame for every layer
+        float              depth{0};
+        float              start_depth{0};
+        float              cur_depth{0};
+        int                last_filament_change_id{-1};
+        int                last_nozzle_change_id{-1};
+    };
+
+	struct BlockDepthInfo
+    {
+        int   category{-1};
+        float depth{0};
+        float nozzle_change_depth{0};
+    };
+
+
 
     // Construct ToolChangeResult from current state of WipeTower and WipeTowerWriter.
     // WipeTowerWriter is moved from !

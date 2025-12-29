@@ -369,7 +369,8 @@ void MonitorPanel::update_all()
 
     m_status_info_panel->obj = obj;
     m_upgrade_panel->update(obj);
-    m_status_info_panel->m_media_play_ctrl->SetMachineObject(obj);
+    if (m_status_info_panel->m_media_play_ctrl)
+        m_status_info_panel->m_media_play_ctrl->SetMachineObject(obj);
     m_media_file_panel->SetMachineObject(obj);
     m_side_tools->update_status(obj);
     

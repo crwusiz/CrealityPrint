@@ -251,6 +251,7 @@ public:
         // Render path content
         // Index of the path in TBuffer::paths
         unsigned int                path_id;
+        int                         layer_no;  //layer number, from bottom to top
         std::vector<unsigned int>   sizes;
         std::vector<size_t>         offsets; // use size_t because we need an unsigned integer whose size matches pointer's size (used in the call glMultiDrawElements())
         bool contains(size_t offset) const {
@@ -275,6 +276,14 @@ public:
     struct RenderPathPropertyEqual {
         bool operator() (const RenderPath &l, const RenderPath &r) const {
             return l.tbuffer_id == r.tbuffer_id && l.ibuffer_id == r.ibuffer_id && l.color == r.color;
+        }
+    };
+
+	struct RenderPathPropertyEqual_WithLayerNo
+    {
+        bool operator()(const RenderPath& l, const RenderPath& r) const
+        {
+            return l.tbuffer_id == r.tbuffer_id && l.ibuffer_id == r.ibuffer_id && l.color == r.color && l.layer_no == r.layer_no;
         }
     };
 
@@ -673,6 +682,38 @@ public:
         std::vector<bool>  m_tool_visibles;
     };
 
+	
+	struct FilterLayerResult
+	{
+	public:
+        void reset()
+        {
+            m_valid          = false;
+            m_dynamic_stride = 0;
+            m_layers_z_range.fill(0);
+            m_layers_z_offset.clear();
+        }
+
+        bool check_valid(const int dynamic_stride, const std::array<unsigned int, 2>& layers_z_range)
+        {
+            return m_valid && m_dynamic_stride == dynamic_stride && m_layers_z_range[0] == layers_z_range[0] &&
+                   m_layers_z_range[1] == layers_z_range[1];
+        };
+        
+        const std::vector<double>& get_layers_z_offset() { return m_layers_z_offset; }
+
+		const std::vector<double>& rebuild_filter_layers_z_offset(const   GCodeViewer* viewer,
+                                                                  const   int dynamic_stride,
+                                                                  const   std::array<unsigned int, 2>& layers_z_range,
+											                      const   Layers& layers);
+	private:
+        //capture parameters
+        int m_dynamic_stride {0};
+		std::array<unsigned int, 2> m_layers_z_range = {0,0};
+ 
+		bool m_valid {false};
+        std::vector<double> m_layers_z_offset;
+	};
 
     //BBS
     ConflictResultOpt m_conflict_result;
@@ -684,7 +725,7 @@ private:
     size_t m_moves_count{ 0 };
     float m_scale = 1.0;
     //BBS: save m_gcode_result as well
-    const GCodeProcessorResult* m_gcode_result;
+    const GCodeProcessorResult* m_gcode_result{ nullptr };
     //BBS: add only gcode mode
     bool m_only_gcode_in_preview {false};
     std::vector<size_t> m_ssid_to_moveid_map;
@@ -740,11 +781,18 @@ private:
     std::array<SequentialRangeCap, 2> m_sequential_range_caps;
 
     std::vector<CustomGCode::Item> m_custom_gcode_per_print_z;
+    FilterLayerResult m_filter_layer_result;
 
     bool m_contained_in_bed{ true };
 mutable bool m_no_render_path { false };
     bool m_is_dark = false;
     bool m_is_lite_mode {false};
+    bool m_is_belt {false};
+
+	bool m_is_lod {false};
+	float m_stride_factor {10.0f};
+    int   m_filter_stride {0};
+    std::set<int> m_top_surface_layer;
 
 public:
     GCodeViewer();
@@ -782,7 +830,9 @@ public:
     bool has_data() const { return !m_roles.empty(); }
     bool can_export_toolpaths() const;
     std::vector<int> get_plater_extruder();
-
+    bool is_gcode_result_valid() const {
+        return m_gcode_result == nullptr ? false : true;
+    }
     const float                get_max_print_height() const { return m_max_print_height; }
     const BoundingBoxf3& get_paths_bounding_box() const { return m_paths_bounding_box; }
     const BoundingBoxf3& get_max_bounding_box() const { return m_max_bounding_box; }
@@ -797,11 +847,17 @@ public:
         return *paths_box_ex;
     }
 
-    bool has_printable_area(){ return m_gcode_result->printable_area.size();}
+    bool           has_printable_area() { return m_gcode_result ? m_gcode_result->printable_area.size() : false; }
     BoundingBoxf3&        get_printable_area()
     {
         BoundingBoxf bboxf = get_extents(m_gcode_result->printable_area);
         m_printable_area_box = BoundingBoxf3{to_3d(bboxf.min, 0.), to_3d(bboxf.max, m_gcode_result->printable_height)};
+        // Belt machines use swapped Y/Z in downstream checks (raw G-code bbox already in machine coords).
+        if (m_is_belt) {
+            std::swap(m_printable_area_box.min.y(), m_printable_area_box.min.z());
+            std::swap(m_printable_area_box.max.y(), m_printable_area_box.max.z());
+            m_printable_area_box.max.y() *= 1.42;
+        }
         return m_printable_area_box;
     }
 
@@ -890,6 +946,13 @@ private:
     void _on_set_fold(bool fold);
 
 	bool show_gcode_surface() const;
+	
+	double estimate_pixels_of_one_layer() const;
+    int get_dynamic_stride(double pixels_of_layer_height) const;
+	inline bool should_be_filtered_of_layer(int stride, int layer) const;
+    int get_layer_index(const Path& path) const;
+
+    const std::vector<double>& get_filtered_layers_z_offset(const int dynamic_stride);
 };
 
 } // namespace GUI

@@ -5,6 +5,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
 #include "libslic3r_version.h"
+#include "slic3r/Utils/TestHelper.hpp"
 
 #include <regex>
 #include <string>
@@ -60,9 +61,20 @@ CxSentToPrinterDialog::CxSentToPrinterDialog(Plater *plater,
                 _L("Send to Lan Printer"),
                 wxDefaultPosition,
                 wxDefaultSize,
-                wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER), m_sendtype(sendtype),m_mapString(mapString)
+                // Linux 下不需要最大/最小化按钮：移除可调尺寸边框
+                // 其他平台保持原行为（可调整大小）
+                #if defined(__linux__) || defined(__LINUX__) || defined(__WXGTK__)
+                wxCAPTION | wxCLOSE_BOX
+                #else
+                wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER
+                #endif
+                ), m_sendtype(sendtype),m_mapString(mapString)
     , m_plater(plater)
 {
+    // 双保险：即使窗口管理器默认添加，也在 Linux 下移除最小/最大化按钮
+    #if defined(__linux__) || defined(__LINUX__) || defined(__WXGTK__)
+    SetWindowStyleFlag(GetWindowStyleFlag() & ~(wxMINIMIZE_BOX | wxMAXIMIZE_BOX));
+    #endif
     #ifdef __WINDOWS__
     SetDoubleBuffered(true);
 #endif //__WINDOWS__
@@ -147,7 +159,7 @@ CxSentToPrinterDialog::CxSentToPrinterDialog(Plater *plater,
             });
     }
     CenterOnParent();
-    DM::AppMgr::Ins().Register(m_browser);
+    DM::AppMgr::Ins().Register(m_browser, "SentToPrinter");
 }
 
 CxSentToPrinterDialog::~CxSentToPrinterDialog() 
@@ -307,6 +319,27 @@ run_script(strJS.ToStdString());
     RegisterHandler("get_webrtc_local_param", [this](const nlohmann::json& json_data) {
         this->handle_get_webrtc_local_param(json_data);
     });
+
+    RegisterHandler("buy_filament_cmd", [this](const nlohmann::json& json_data) 
+    {
+        string color = json_data["filamentColor"].get<std::string>();
+        string type  = json_data["filamentType"].get<std::string>();
+        string name  = json_data["filamentName"].get<std::string>();
+        wxGetApp().OpenEshopRecommendedGoods(color, type, name);
+        try
+        {
+            json js;
+            js["type_code"] = "slice822";
+            js["event_type"]      = "click_event";
+            js["function_module"] = "buy_filament";
+            js["module_id"]       = 1;
+            js["app_version"]     = GUI_App::format_display_version().c_str();
+            js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+            js["timestamp"]       = Slic3r::Utils::utc_timestamp(Slic3r::Utils::get_current_time_utc());
+             wxGetApp().track_event("click_event", js.dump());
+        }
+        catch (...){}
+    });
 }
 
 void CxSentToPrinterDialog::RegisterHandler(const std::string& command, std::function<void(const nlohmann::json&)> handler)
@@ -350,6 +383,8 @@ void CxSentToPrinterDialog::OnScriptMessage(wxWebViewEvent& evt)
             wxPostEvent(this, wxCloseEvent(wxEVT_CLOSE_WINDOW));
         }else if (strCmd == "common_open_wiki_url") {
             wxLaunchDefaultBrowser(j["url"]);
+        } else if (strCmd == "test_exec_js_respone") {
+            Test::EVENT_SPREAD("test_exec_js_respone", strInput.ToStdString());
         }
         
         if (DM::AppMgr::Ins().Invoke(m_browser, evt.GetString().ToUTF8().data()))
@@ -1628,6 +1663,7 @@ void CxSentToPrinterDialog::OnLoaded(wxWebViewEvent &evt)
         return;
     SendAPIKey();
 
+    Test::EVENT_SPREAD("sendToPrint_loaded");
 }
 
 void CxSentToPrinterDialog::on_dpi_changed(const wxRect& suggested_rect)

@@ -5,6 +5,7 @@
 
 #include <wx/dcclient.h>
 #include <wx/dcgraph.h>
+#include <boost/log/trivial.hpp>
 
 BEGIN_EVENT_TABLE(TextInput, wxPanel)
 
@@ -65,7 +66,34 @@ void TextInput::Create(wxWindow *     parent,
     text_ctrl->SetForegroundColour(text_color.colorForStates(state_handler.states()));
     state_handler.attach_child(text_ctrl);
     text_ctrl->Bind(wxEVT_KILL_FOCUS, [this](auto &e) {
-        OnEdit();
+        // 防护：窗口正在销毁则不再转发事件
+        if (this->IsBeingDeleted()) {
+            wxString value_del = text_ctrl ? text_ctrl->GetValue() : wxString();
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " TextInput(KILL_FOCUS): window being deleted, skip (id=" << GetId() << ") value='" << value_del.ToStdString() << "'";
+            e.Skip();
+            return;
+        }
+
+        // OnEdit 保护性执行
+        try {
+            OnEdit();
+        } catch (const std::exception &ex) {
+            wxString value = text_ctrl ? text_ctrl->GetValue() : wxString();
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " TextInput(KILL_FOCUS): OnEdit threw: " << ex.what() << " value='" << value.ToStdString() << "'";
+        } catch (...) {
+            wxString value = text_ctrl ? text_ctrl->GetValue() : wxString();
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " TextInput(KILL_FOCUS): OnEdit threw unknown error value='" << value.ToStdString() << "'";
+        }
+
+        // 二次防护：若 OnEdit 导致窗口进入销毁，则不再进行本地分发
+        if (this->IsBeingDeleted()) {
+            wxString value = text_ctrl ? text_ctrl->GetValue() : wxString();
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " TextInput(KILL_FOCUS): window deleted during OnEdit, skip (id=" << GetId() << ") value='" << value.ToStdString() << "'";
+            e.Skip();
+            return;
+        }
+
+        // 同步本地分发，保持原有业务流程
         e.SetId(GetId());
         ProcessEventLocally(e);
         e.Skip();

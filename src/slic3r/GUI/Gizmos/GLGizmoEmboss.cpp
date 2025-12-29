@@ -504,7 +504,11 @@ bool GLGizmoEmboss::init_create(ModelVolumeType volume_type)
     m_style_manager.discard_style_changes();
 
     // set default text
+#ifdef __APPLE__
+    m_text = _u8L("Text");
+#else
     m_text = _u8L("Embossed text");
+#endif
     return true;
 }
 
@@ -745,6 +749,14 @@ bool GLGizmoEmboss::on_init()
 }
 
 std::string GLGizmoEmboss::on_get_name() const { return _u8L("Emboss"); }
+
+bool GLGizmoEmboss::on_is_activable() const
+{
+    const Selection& selection = m_parent.get_selection();
+    if (selection.is_wipe_tower() || selection.is_any_connector())
+        return false;
+    return true;
+}
 
 void GLGizmoEmboss::on_render() {
     // no volume selected
@@ -997,7 +1009,7 @@ EmbossStyles GLGizmoEmboss::create_default_styles()
 #ifdef __APPLE__
     // Set normal font to helvetica when possible
     for (const wxString &facename : facenames) {
-        if (facename.IsSameAs("Helvetica")) {
+        if (facename.IsSameAs("Hei")) {
             wx_font_normal = wxFont(wxFontInfo().FaceName(facename).Encoding(Facenames::encoding));
             break;
         }

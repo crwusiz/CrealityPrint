@@ -1,6 +1,13 @@
 #ifndef slic3r_Fill_hpp_
 #define slic3r_Fill_hpp_
 
+#include <memory.h>
+#include <float.h>
+#include <stdint.h>
+
+#include "../libslic3r.h"
+#include "../PrintConfig.hpp"
+
 #include "FillBase.hpp"
 
 namespace Slic3r {

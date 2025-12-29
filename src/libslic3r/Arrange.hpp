@@ -136,6 +136,7 @@ struct ArrangeParams {
     float clearance_height_to_rod = 0;
     float clearance_height_to_lid = 0;
     float cleareance_radius = 0;
+    float object_skirt_offset = 0;
     float nozzle_height = 0;
     float printable_height = 256.0;
     Vec2d align_center{ 0.5,0.5 };
@@ -179,7 +180,7 @@ struct ArrangeParams {
 
 };
 
-void update_arrange_params(ArrangeParams& params, const DynamicPrintConfig* print_cfg, const ArrangePolygons& selected);
+void update_arrange_params(ArrangeParams& params, const DynamicPrintConfig* print_cfg, ArrangePolygons& selected);
 
 void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPrintConfig* print_cfg, ArrangeParams& params);
 
@@ -204,6 +205,9 @@ template<class TBed> void arrange(ArrangePolygons &items, const ArrangePolygons 
 
 // A dispatch function that determines the bed shape from a set of points.
 template<> void arrange(ArrangePolygons &items, const ArrangePolygons &excludes, const Points &bed, const ArrangeParams &params);
+
+// cr30 arrange
+void cr30_arrange(ArrangePolygons& items, const ArrangePolygons& excludes, const Points& bed);
 
 extern template void arrange(ArrangePolygons &items, const ArrangePolygons &excludes, const BoundingBox &bed, const ArrangeParams &params);
 extern template void arrange(ArrangePolygons &items, const ArrangePolygons &excludes, const CircleBed &bed, const ArrangeParams &params);

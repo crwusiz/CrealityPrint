@@ -540,6 +540,27 @@ inline bool is_rotation_ninety_degrees(double a)
     return a < 0.001;
 }
 
+inline bool hasShearContamination(const Eigen::Matrix3f& scaling_matrix, float threshold = 1e-3f)
+{
+    float avg_diag = scaling_matrix.diagonal().cwiseAbs().mean();
+
+    if (avg_diag < std::numeric_limits<float>::epsilon()) {
+        float max_off = scaling_matrix.cwiseAbs().array().maxCoeff();
+        return max_off > std::numeric_limits<float>::epsilon();
+    }
+
+    float max_off = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            if (i != j) {
+                max_off = std::max(max_off, std::abs(scaling_matrix(i, j)));
+            }
+        }
+    }
+
+    return (max_off > threshold * avg_diag);
+}
+
 // Is the angle close to a multiple of 90 degrees?
 inline bool is_rotation_ninety_degrees(const Vec3d &rotation)
 {

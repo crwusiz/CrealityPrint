@@ -183,14 +183,21 @@ static wxSizer* make_kv(wxWindow* parent, const wxString& key, const wxString& d
     auto* k   = new wxStaticText(parent, wxID_ANY, key);
     auto* sep = new wxStaticText(parent, wxID_ANY, ": ");
     auto* d   = new wxStaticText(parent, wxID_ANY, desc);
-#ifdef __WXMSW__
+    // Ensure static texts have transparent background across platforms.
+    // Otherwise, on Linux the parent panel's custom painting may overlap
+    // and visually clip the glyphs.
     k->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
     sep->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
     d->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
-#endif
     k->SetFont(k->GetFont().Bold());
+    // Prevent wrapping in the key/desc rows inside mouse scheme cards.
+    k->Wrap(-1);
+    d->Wrap(10000);
+    // Reserve enough width for the key label to avoid squeezing the last
+    // character to a next line on GTK.
+    k->SetMinSize(wxSize(k->GetBestSize().GetWidth(), -1));
     row->Add(k, 0, wxALIGN_CENTER_VERTICAL);
-    row->Add(sep, 0, wxALIGN_CENTER_VERTICAL);
+    row->Add(sep, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, parent->FromDIP(20));
     row->Add(d, 0, wxALIGN_CENTER_VERTICAL);
     return row;
 }
@@ -223,11 +230,46 @@ void KBShortcutsDialog::create_mouse_scheme_cards(wxWindow* parent)
         auto* v = new wxBoxSizer(wxVERTICAL);
         v->AddSpacer(card->HeaderHeight() + FromDIP(12));
 
-        for (const auto& kv : rows)
-            v->Add(make_kv(card, kv.first, kv.second), 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(12));
+        // 使用 FlexGridSizer 构建两列（键、描述），让第二列自适应
+        wxFlexGridSizer* grid = new wxFlexGridSizer((int)rows.size(), 2, FromDIP(8), FromDIP(20));
+        grid->AddGrowableCol(1, 1);
+        grid->SetFlexibleDirection(wxBOTH);
+        grid->SetNonFlexibleGrowMode(wxFLEX_GROWMODE_SPECIFIED);
+
+        // 计算键列的最大文本宽度，确保不折行并与下方列表一致
+        int max_key_width = 0;
+        {
+            wxClientDC dc(card);
+            wxFont bold = card->GetFont();
+            bold.SetWeight(wxFONTWEIGHT_BOLD);
+            dc.SetFont(bold);
+            for (const auto& kv : rows) {
+                wxSize ext;
+                dc.GetTextExtent(kv.first, &ext.x, &ext.y);
+                max_key_width = std::max(max_key_width, ext.x);
+            }
+            max_key_width += FromDIP(4);
+        }
+
+        for (const auto& kv : rows) {
+            auto* key = new wxStaticText(card, wxID_ANY, kv.first);
+            key->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+            key->SetFont(key->GetFont().Bold());
+            key->Wrap(-1); // 键列不换行
+            key->SetMinSize(wxSize(max_key_width, -1));
+            grid->Add(key, 0, wxALIGN_CENTER_VERTICAL);
+
+            auto* desc = new wxStaticText(card, wxID_ANY, kv.second);
+            desc->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+            desc->Wrap(10000); // 描述列默认不换行，空间不足时由 sizer 处理
+            grid->Add(desc, 0, wxALIGN_CENTER_VERTICAL | wxEXPAND);
+        }
+
+        v->Add(grid, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(12));
 
         card->SetSizer(v);
-        card->SetMinSize(wxSize(FromDIP(380), wxDefaultCoord));
+        // 取消固定最小宽度，让左右两卡片按父容器宽度对半分
+        card->SetMinSize(wxSize(wxDefaultCoord, wxDefaultCoord));
         card->SetCursor(wxCursor(wxCURSOR_HAND));
         return card;
     };
@@ -273,13 +315,13 @@ void KBShortcutsDialog::create_mouse_scheme_cards(wxWindow* parent)
     m_is_a_selected = true;
 
     auto make_texts_transparent = [](wxWindow* panel) {
-#ifdef __WXMSW__
+        // Make all static texts transparent so custom painting of SelectableCard
+        // doesn't cover or clip text on non-Windows platforms.
         for (auto* child : panel->GetChildren())
             if (auto* st = wxDynamicCast(child, wxStaticText)) {
                 st->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
                 st->SetBackgroundColour(wxNullColour);
             }
-#endif
     };
     make_texts_transparent(m_card_scheme_a);
     make_texts_transparent(m_card_scheme_b);
@@ -649,23 +691,68 @@ wxPanel* KBShortcutsDialog::create_page(wxWindow* parent, const ShortcutsItem& s
 
     //wxBoxSizer *     scrollable_panel_sizer = new wxBoxSizer(wxVERTICAL);
     wxFlexGridSizer *grid_sizer             = new wxFlexGridSizer(items_count, 2, FromDIP(10), FromDIP(20));
+    // Make the description column grow to take available width to avoid
+    // unintended wrapping on Linux with wider fonts.
+    grid_sizer->AddGrowableCol(1, 1);
+    grid_sizer->SetFlexibleDirection(wxBOTH);
+    grid_sizer->SetNonFlexibleGrowMode(wxFLEX_GROWMODE_SPECIFIED);
+
+    // Collect description labels to update wrap width on resize (Linux/GTK).
+    std::vector<wxStaticText*> desc_labels;
+    desc_labels.reserve(items_count);
+
+    // Measure the maximum width needed by the first (key) column to avoid
+    // GTK/Pango wrapping the last character when the column is squeezed.
+    int max_key_width = 0;
+    {
+        wxClientDC dc(scrollable_panel);
+        dc.SetFont(bold_font);
+        for (int i = 0; i < items_count; ++i) {
+            const auto& shortcut = shortcuts.second[i].first;
+            wxSize      ext;
+            dc.GetTextExtent(_(shortcut), &ext.x, &ext.y);
+            max_key_width = std::max(max_key_width, ext.x);
+        }
+        // Add a small safety padding to account for DPI rounding.
+        max_key_width += FromDIP(4);
+    }
 
     for (int i = 0; i < items_count; ++i) {
         const auto &[shortcut, description] = shortcuts.second[i];
         auto key                            = new wxStaticText(scrollable_panel, wxID_ANY, _(shortcut));
         key->SetForegroundColour(wxColour(50, 58, 61));
         key->SetFont(bold_font);
-        grid_sizer->Add(key, 0, wxALIGN_CENTRE_VERTICAL);
+        // Prevent any wrapping and ensure enough width for the longest key.
+        key->Wrap(-1);
+        key->SetMinSize(wxSize(max_key_width, -1));
+        grid_sizer->Add(key, 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, FromDIP(8));
 
         auto desc = new wxStaticText(scrollable_panel, wxID_ANY, _(description));
         desc->SetFont(font);
         desc->SetForegroundColour(wxColour(50, 58, 61));
-        desc->Wrap(FromDIP(600));
-        grid_sizer->Add(desc, 0, wxALIGN_CENTRE_VERTICAL);
+        // On Linux/GTK, wxStaticText may still wrap when the sizer gives
+        // a smaller width. Force a very large wrap width to effectively
+        // disable wrapping in normal dialog sizes.
+        desc->Wrap(10000);
+        grid_sizer->Add(desc, 0, wxALIGN_CENTRE_VERTICAL | wxEXPAND);
+        desc_labels.push_back(desc);
     }
 
     scrollable_panel_sizer->Add(grid_sizer, 1, wxEXPAND | wxALL, FromDIP(20));
     scrollable_panel->SetSizer(scrollable_panel_sizer);
+
+    // Dynamically adjust wrap width on resize so labels keep single-line
+    // appearance when there is enough space.
+    scrollable_panel->Bind(wxEVT_SIZE, [desc_labels, scrollable_panel](wxSizeEvent& e) {
+        const int w = e.GetSize().GetWidth();
+        // Reserve space for the first column and margins.
+        const int wrap = std::max(w - scrollable_panel->FromDIP(260), scrollable_panel->FromDIP(220));
+        for (auto* st : desc_labels) {
+            if (st)
+                st->Wrap(wrap);
+        }
+        e.Skip();
+    });
 
     main_sizer->Add(scrollable_panel, 1, wxEXPAND);
     main_page->SetSizer(main_sizer);

@@ -29,7 +29,7 @@ def getCommonHeaders() -> Dict[str, str]:
         "__CXY_PLATFORM_": "11",
         "__CXY_REQUESTID_": str(uuid.uuid1()),
         "__CXY_APP_VER_": "4.4.0",
-        "__CXY_APP_CH_": "CP_Beta",
+        "__CXY_APP_CH_": "Android_Beta",
         "__CXY_BRAND_": "creality",
         "__CXY_TIMEZONE_": str(time.time()),
         "__cxy_token_":os.getenv('cxy_token'),
@@ -69,12 +69,10 @@ def downloadParamPack(working_path, build_type, engine_type, engine_version) -> 
             default_path = os.path.join(working_path, "mac-build", "build","resources", "sliceconfig", server_path_prefix, engine_type, "default")
         default_path = os.path.join(working_path, server_path_prefix, engine_type, "default")    
         try:
-            headers = getCommonHeaders()
-            if build_type == 'Release':
-                headers["__CXY_APP_CH_"] = "creality"
+            
             response = requests.post(
                 base_url + "api/cxy/v2/slice/profile/official/printerList", data=json.dumps({"engineVersion": engine_version}), 
-                headers=headers).text
+                headers=getCommonHeaders()).text
             response = json.loads(response)
             print(str(response))
             if (response["code"] == 0):

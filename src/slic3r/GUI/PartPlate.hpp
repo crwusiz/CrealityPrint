@@ -146,6 +146,8 @@ private:
     GLModel m_height_limit_bottom;
     GLModel m_height_limit_top;
 
+    GLModel   m_center_mark_buffer;
+    GLTexture m_center_mark_texture;
     PickingModel m_action_icon[e_at_count];
     GLModel      m_plate_idx_icon; //序号
 
@@ -161,6 +163,15 @@ private:
     int m_hover_id;
     bool m_selected;
     int m_timelapse_warning_code = 0;
+
+    // cr30 plate button show or not
+    std::vector<decltype(e_at_count)> m_cr30_show_action_btns{
+        e_at_lay,
+        e_at_dir,
+        e_at_lock,
+        e_at_set,
+        e_at_unlock_triangle
+    };
 
     // BBS
     DynamicPrintConfig m_config;
@@ -180,12 +191,13 @@ private:
     int calc_vertex_for_plate_name_edit_icon(int prew, PickingModel &model);
     void calc_vertex_for_name_background(int prew,int hight, GLModel &model);
 
-    void calc_vertex_for_icons(int index, PickingModel &model);
+    void calc_vertex_for_icons(int index, PickingModel& model, bool reverse_position_y = false);
     void calc_vertex_for_icons_background( GLModel &buffer);
 
     void render_background(bool only_body = false);
     void render_logo(bool bottom, int verder);
     void render_logo_texture(GLTexture &logo_texture, GLModel &logo_buffer, bool bottom);
+    void update_center_mark();
     void render_exclude_area();
     //void render_background_for_picking(const ColorRGBA render_color) const;
     void render_grid(bool bottom);
@@ -314,7 +326,7 @@ public:
     BoundingBoxf3 get_gcode_path_bounding_box();
 
     Vec3d get_origin() { return m_origin; }
-    Vec3d estimate_wipe_tower_size(const DynamicPrintConfig & config, const double w, const double d, int plate_extruder_size = 0, bool use_global_objects = false) const;
+    Vec3d estimate_wipe_tower_size(const DynamicPrintConfig & config, const double w, const double d, const double wipe_volume, int plate_extruder_size = 0, bool use_global_objects = false) const;
     arrangement::ArrangePolygon estimate_wipe_tower_polygon(const DynamicPrintConfig & config, int plate_index, int plate_extruder_size = 0, bool use_global_objects = false) const;
     std::vector<int> get_extruders(bool conside_custom_gcode = false) const;
     std::vector<int> get_extruders_under_cli(bool conside_custom_gcode, DynamicPrintConfig& full_config) const;
@@ -684,6 +696,11 @@ public:
     int get_curr_plate_index() const { return m_current_plate; }
     PartPlate* get_curr_plate() { return m_plate_list[m_current_plate]; }
     const PartPlate* get_curr_plate() const { return m_plate_list[m_current_plate]; }
+    const Vec3d      belt_machine_get_bed_rotate_center() 
+    {
+        auto bed_size = m_plate_list[m_current_plate]->get_shape()[2];
+        return {bed_size.x() * 0.5, bed_size.y() * 0.02, 0.0f};
+    }
 
     std::vector<PartPlate*>& get_plate_list() { return m_plate_list; };
 

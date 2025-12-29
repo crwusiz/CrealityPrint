@@ -7,6 +7,8 @@
 #include "Tab.hpp"
 #include "libslic3r/common_header/common_header.h"
 #include <expat.h>
+#include "PrinterPresetConfig.hpp"
+#include "libslic3r/ModelObject.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -16,6 +18,11 @@ Check3mfVendor* Check3mfVendor::getInstance()
 {
     static Check3mfVendor instance;
     return &instance;
+}
+
+void Check3mfVendor::updateCurPrinterType() {
+    const Preset& preset = wxGetApp().preset_bundle->printers.get_selected_preset();
+    m_isCurPrinterProject = preset.is_project_embedded;
 }
 
 bool Check3mfVendor::check(const std::string& fileName, const std::string& printerSettingId, BusyCursor* busy)
@@ -28,7 +35,7 @@ bool Check3mfVendor::check(const std::string& fileName, const std::string& print
         m_bNeedSelectPrinterPreset = false;
         if (busy != nullptr)
             busy->reset();
-        ChoosePresetDlg dlg((wxWindow*)wxGetApp().mainframe, printerSettingId);
+        ChoosePresetDlg dlg((wxWindow*)wxGetApp().mainframe, printerSettingId, m_isCurPrinterProject);
         dlg.ShowModal();
         if (busy != nullptr)
             busy->set();
@@ -39,11 +46,233 @@ bool Check3mfVendor::check(const std::string& fileName, const std::string& print
     return bRet;
 }
 
+bool Check3mfVendor::get3mfConfig(const DynamicPrintConfig& config_loaded, DynamicPrintConfig& new_config_loaded)
+{
+    bool bRet = false;
+    m_new_config_loaded.clear();
+    m_process_config.clear();
+    m_defaultProcess.clear();
+    do {
+        bool isCurSelectedPrinter = wxGetApp().preset_bundle->printers.get_selected_preset_name() == m_printerPresetName;
+        
+        Preset* printerPreset = wxGetApp().preset_bundle->printers.find_preset(m_printerPresetName);
+        if (printerPreset == nullptr) {
+            break;
+        }
+        std::string vendor;
+        if (printerPreset->is_system) {
+            vendor = printerPreset->vendor->id;
+        } else {
+            Preset* parentPreset = wxGetApp().preset_bundle->printers.find_preset(printerPreset->inherits());
+            if (parentPreset != nullptr) {
+                vendor = parentPreset->vendor->id;
+            } else {
+                vendor = "Creality";
+            }
+        }
+        for (auto iter = printerPreset->config.cbegin(); iter != printerPreset->config.cend(); ++iter) {
+            new_config_loaded.optptr(iter->first, true)->set(iter->second.get());
+        }
+        // Use a named option to avoid taking address of a temporary ConfigOptionString.
+        ConfigOptionString printer_settings_id_opt(m_printerPresetName);
+        new_config_loaded.optptr("printer_settings_id", true)->set(&printer_settings_id_opt);
+
+        std::string defaultFilament = "";
+        //if (isCurSelectedPrinter) {
+        //    defaultFilament = wxGetApp().preset_bundle->filaments.get_selected_preset_name();
+        //} else 
+        {
+            ConfigOptionStrings* optFilaments = new_config_loaded.option<ConfigOptionStrings>("default_filament_profile", false);
+            if (optFilaments != nullptr) {
+                defaultFilament = optFilaments->vserialize()[0];
+            }
+        }
+        Preset* filamentPreset = wxGetApp().preset_bundle->filaments.find_preset(defaultFilament);
+        if (filamentPreset == nullptr) {
+            for (auto preset : wxGetApp().preset_bundle->filaments.get_presets()) {
+                if (!preset.is_visible)
+                    continue;
+                const ConfigOptionStrings* compatible_printers = preset.config.opt<ConfigOptionStrings>("compatible_printers");
+                if (compatible_printers) {
+                    for (auto value : compatible_printers->values) {
+                        if (value == (printerPreset->is_system ? m_printerPresetName : printerPreset->name)) {
+                            filamentPreset = wxGetApp().preset_bundle->filaments.find_preset(preset.name);
+                            break;
+                        }
+                    }
+                }
+                if (filamentPreset != nullptr) {
+                    break;
+                }
+            }
+            if (filamentPreset == nullptr) {
+                filamentPreset = wxGetApp().preset_bundle->filaments.find_preset("Default Filament");
+                if (filamentPreset == nullptr)
+                    break;
+            }
+        }
+        for (auto iter = filamentPreset->config.cbegin(); iter != filamentPreset->config.cend(); ++iter) {
+            new_config_loaded.optptr(iter->first, true)->set(iter->second.get());
+        }
+        std::vector<std::pair<std::string,std::string>>   vtPrinterDefaultMaterials;
+        wxGetApp().printerPresetConfig->getPrinterDefaultMaterials(vendor, printerPreset->is_system?m_printerPresetName:printerPreset->name, vtPrinterDefaultMaterials);
+        //std::sort(vtPrinterDefaultMaterials.begin(), vtPrinterDefaultMaterials.end());
+        ConfigOptionStrings* optFilamentsDefault = new_config_loaded.option<ConfigOptionStrings>("default_filament_profile", false);
+        const ConfigOptionStrings* filament_settings_id = config_loaded.opt<ConfigOptionStrings>("filament_settings_id");
+        if (optFilamentsDefault != nullptr && filament_settings_id != nullptr)
+        {
+            ConfigOptionStrings* new_filament_settings_id = new_config_loaded.opt<ConfigOptionStrings>("filament_settings_id", true);
+            new_filament_settings_id->set(filament_settings_id);
+            const ConfigOptionStrings* filament_type = config_loaded.opt<ConfigOptionStrings>("filament_type");
+            for (size_t i = 0; i < new_filament_settings_id->values.size(); ++i) {
+                auto& item = new_filament_settings_id->values[i];
+                if (filament_type != nullptr && i < filament_type->values.size()) {
+                    std::string filamentValue;
+                    for (auto& item2 : vtPrinterDefaultMaterials) {
+                        if (item2.second == filament_type->values[i]) {
+                            if (item2.first.find("@") != std::string::npos) {
+                                filamentValue = item2.first;
+                            } else {
+                                filamentValue = item2.first + " @" + (printerPreset->is_system ? m_printerPresetName : printerPreset->name);
+                            }
+                            break;
+                        }
+                    }
+                    if (filamentValue.empty()) {
+                        if (vtPrinterDefaultMaterials.empty()) {
+                            filamentValue = filamentPreset->name;
+                        } else {
+                            Preset* filamentPreset2 = nullptr;
+                            for (auto preset : wxGetApp().preset_bundle->filaments.get_presets()) {
+                                //if (!preset.is_visible)
+                                //    continue;
+                                const ConfigOptionStrings* compatible_printers = preset.config.opt<ConfigOptionStrings>("compatible_printers");
+                                if (compatible_printers) {
+                                    for (auto value : compatible_printers->values) {
+                                        if (value == (printerPreset->is_system ? m_printerPresetName : printerPreset->name)) {
+                                            const ConfigOptionStrings* filament_type2 = preset.config.opt<ConfigOptionStrings>("filament_type");
+                                            if (filament_type2 != nullptr && filament_type2->values[0] == filament_type->values[i]) {
+                                                filamentPreset2 = wxGetApp().preset_bundle->filaments.find_preset(preset.name);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                if (filamentPreset2 != nullptr) {
+                                    break;
+                                }
+                            }
+                            if (filamentPreset2 != nullptr) {
+                                filamentValue = filamentPreset2->name;
+                            } else {
+                                filamentValue = optFilamentsDefault->values[0];
+                                if (filamentValue.find("@") == std::string::npos) {
+                                    filamentValue = filamentValue + " @" +
+                                                    (printerPreset->is_system ? m_printerPresetName : printerPreset->name);
+                                }
+                            }
+                        }
+                    }
+                    item = filamentValue;
+                } else {
+                    item = optFilamentsDefault->values[0];
+                }
+            }
+        }
+        const ConfigOptionStrings* filament_colour = config_loaded.opt<ConfigOptionStrings>("filament_colour");
+        if (filament_colour != nullptr) {
+            new_config_loaded.opt<ConfigOptionStrings>("filament_colour", true)->set(filament_colour);
+        }
+        const ConfigOptionFloats* filament_diameter = config_loaded.opt<ConfigOptionFloats>("filament_diameter");
+        if (filament_diameter != nullptr) {
+            new_config_loaded.opt<ConfigOptionFloats>("filament_diameter", true)->set(filament_diameter);
+        }
+
+        std::string defaultProcess = "";
+        if (isCurSelectedPrinter) {
+            defaultProcess = wxGetApp().preset_bundle->prints.get_selected_preset_name();
+        } else {
+            ConfigOptionString* optProcess = new_config_loaded.option<ConfigOptionString>("default_print_profile", false);
+            if (optProcess != nullptr) {
+                defaultProcess = optProcess->value;
+            }
+        }
+        m_defaultProcess = defaultProcess;
+        Preset* processPreset = wxGetApp().preset_bundle->prints.find_preset(defaultProcess);
+        if (processPreset == nullptr) {
+            for (auto preset : wxGetApp().preset_bundle->prints.get_presets()) {
+                if (!preset.is_visible)
+                    continue;
+                const ConfigOptionStrings* compatible_printers = preset.config.opt<ConfigOptionStrings>("compatible_printers");
+                if (compatible_printers) {
+                    for (auto value : compatible_printers->values) {
+                        if (value == (printerPreset->is_system ? m_printerPresetName : printerPreset->name)) {
+                            processPreset = wxGetApp().preset_bundle->prints.find_preset(preset.name);
+                            break;
+                        }
+                    }
+                }
+                if (processPreset != nullptr) {
+                    break;
+                }
+            }
+            if (processPreset == nullptr) {
+                processPreset = wxGetApp().preset_bundle->prints.find_preset("Default Setting");
+                if (processPreset == nullptr)
+                    break;
+            }
+        }
+        const ConfigOptionStrings* different_settings_to_system = config_loaded.opt<ConfigOptionStrings>("different_settings_to_system");
+        std::set<std::string> setDiff;
+        if (different_settings_to_system != nullptr) {
+            for (auto item : different_settings_to_system->values) {
+                std::vector<std::string> vtDiff;
+                boost::split(vtDiff, item, boost::is_any_of(";"));
+                setDiff.insert(vtDiff.begin(), vtDiff.end());
+            }
+        }
+        for (auto iter = processPreset->config.cbegin(); iter != processPreset->config.cend(); ++iter) {
+            auto opt = config_loaded.optptr(iter->first);
+            if (opt != nullptr) {
+                if (iter->second->type() == opt->type()) {
+                    if (setDiff.find(iter->first) != setDiff.end()) {
+                        new_config_loaded.optptr(iter->first, true)->set(opt);
+                        m_process_config.optptr(iter->first, true)->set(opt);
+                    } else {
+                        new_config_loaded.optptr(iter->first, true)->set(iter->second.get());
+                        m_process_config.optptr(iter->first, true)->set(iter->second.get());
+                    }
+                }
+            } else {
+                new_config_loaded.optptr(iter->first, true)->set(iter->second.get());
+                m_process_config.optptr(iter->first, true)->set(iter->second.get());
+            }
+        }
+        ConfigOptionString print_settings_id_opt(processPreset->name);
+        new_config_loaded.optptr("print_settings_id", true)->set(&print_settings_id_opt);
+
+        bRet = true;
+        m_new_config_loaded = new_config_loaded;
+    } while (0);
+    return bRet;
+}
+
 void Check3mfVendor::doSelectPrinterPreset()
 {
     if (m_bNeedSelectPrinterPreset) {
-        if (m_printerPresetIdx != wxGetApp().plater()->sidebar_printer().get_selection_combo_printer()) {
-            wxGetApp().plater()->sidebar_printer().select_printer_preset(m_printerPresetName, m_printerPresetIdx);
+        //if (m_printerPresetIdx != wxGetApp().plater()->sidebar_printer().get_selection_combo_printer()) {
+        //    wxGetApp().plater()->sidebar_printer().select_printer_preset(m_printerPresetName, m_printerPresetIdx);
+        //}
+        Preset* processPreset = wxGetApp().preset_bundle->prints.find_preset(m_defaultProcess);
+        if (processPreset != nullptr) {
+            std::vector<std::string> dirty_options = processPreset->config.diff(m_process_config);
+            if (dirty_options.size() > 0) {
+                for (auto iter = m_process_config.cbegin(); iter != m_process_config.cend(); ++iter) {
+                    processPreset->config.optptr(iter->first, true)->set(iter->second.get());
+                }
+                wxGetApp().preset_bundle->prints.get_selected_preset().set_dirty();
+                wxGetApp().preset_bundle->prints.get_edited_preset().set_dirty();
+            }
         }
     }
     m_bNeedSelectPrinterPreset = false;
@@ -55,6 +284,36 @@ bool Check3mfVendor::isCreality3mf() {
 
 void Check3mfVendor::setCreality3mf(bool isCreality3mf) {
     m_isCreality3mf = isCreality3mf;
+}
+
+void Check3mfVendor::updatePlateObject(const PlateDataPtrs& plate_data, const Slic3r::Model& model)
+{
+    m_vtPlateObject.clear();
+    std::vector<int> obj_idxs;
+    for (int i = 0; i < plate_data.size(); ++i) {
+        obj_idxs.clear();
+        for (auto item : plate_data[i]->obj_inst_map) {
+            for (int k = 0; k < model.objects.size(); k++) {
+                // if (item.second.second == model.objects[k]->instances[0]->loaded_id)
+                if (item.first == model.objects[k]->from_loaded_id) {
+                    obj_idxs.emplace_back(k);
+                }
+            }
+        }
+        m_vtPlateObject.emplace_back(obj_idxs);
+    }
+}
+void Check3mfVendor::centerModelToPlate(View3D* view3D, Sidebar* sidebar)
+{
+    if (!m_isCreality3mf)
+    {
+        for (int i = 0; i < m_vtPlateObject.size(); ++i) {
+            view3D->select_object_from_idx(m_vtPlateObject[i]);
+            sidebar->obj_list()->update_selections();
+            view3D->center_selected_plate(i);
+        }
+        m_vtPlateObject.clear();
+    }
 }
 
 bool Check3mfVendor::isCreality3mf(const std::string& fileName)
@@ -151,7 +410,7 @@ bool Check3mfVendor::isCrealityIn3dModel(mz_zip_archive* pArchive)
     return bRet;
 }
 
-ChoosePresetDlg::ChoosePresetDlg(wxWindow* parent, const std::string& printerSettingId)
+ChoosePresetDlg::ChoosePresetDlg(wxWindow* parent, const std::string& printerSettingId, bool isCurPrinterProject)
     : DPIDialog(parent ? parent : nullptr, wxID_ANY, _L("Tips"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
     std::string icon_path = (boost::format("%1%/images/%2%.ico") % resources_dir() % Slic3r::CxBuildInfo::getIconName()).str();
@@ -232,7 +491,7 @@ ChoosePresetDlg::ChoosePresetDlg(wxWindow* parent, const std::string& printerSet
         //  ��ȡ����һ�������ϵͳԤ��
         if (firstCrealityPresetIdx == -1 && /*item.find("Creality") != std::string::npos*/
             preset != nullptr && preset->is_system && 
-            preset->name.find("Creality") != std::string::npos||preset->name.find("SPARKX") != std::string::npos) {
+            (preset->name.find("Creality") != std::string::npos||preset->name.find("SPARKX") != std::string::npos)) {
             firstCrealityPresetIdx = i;
         }
 
@@ -251,25 +510,36 @@ ChoosePresetDlg::ChoosePresetDlg(wxWindow* parent, const std::string& printerSet
         leftSelectedPresetName = m_vtComboText[idx];
     }
 
-    if (defaultPrinterSettingId != -1) {//����ҵ�3mf�ļ��е�Ԥ�裬��ѡ���Ԥ��
-        m_comboLastSelected = defaultPrinterSettingId;
-    } else {
-        auto preset = wxGetApp().preset_bundle->printers.find_preset(leftSelectedPresetName);
-        if (preset != nullptr && preset->is_system &&
-            (preset->name.find("Creality") != std::string::npos||preset->name.find("SPARKX") != std::string::npos)) { // ����ҵ�3mf�ļ��е�Ԥ�裬���жϵ�ǰѡ���е��Ǵ����ϵͳԤ��
-            m_comboLastSelected = idx;
+    //if (defaultPrinterSettingId != -1) {//如果找到3mf文件中的预设，则选择该预设
+    //    m_comboLastSelected = defaultPrinterSettingId;
+    //} else {
+    //    auto preset = wxGetApp().preset_bundle->printers.find_preset(leftSelectedPresetName);
+    //    if (preset != nullptr && preset->is_system &&
+    //        preset->name.find("Creality") != std::string::npos) { // 如果找到3mf文件中的预设，则判断当前选择中的是创想的系统预设
+    //        m_comboLastSelected = idx;
+    //    } else {
+    //        if (firstCrealityPresetIdx != -1) {//如果没有找到3mf文件中的预设，且当前选中的不是创想的系统预设，则选择第一个创想的系统预设
+    //            m_comboLastSelected = firstCrealityPresetIdx;
+    //        } else { 
+    //            if (idx >= 0 && idx < m_vtComboText.size()){
+    //                m_comboLastSelected = idx+m_projectPresetCount;
+    //            }
+    //            else {
+    //                m_comboLastSelected = 1+m_projectPresetCount;
+    //            }
+    //        }
+    //    }
+    //}
+
+    auto preset = wxGetApp().preset_bundle->printers.find_preset(leftSelectedPresetName);
+    if (preset != nullptr && (preset->is_system || preset->is_user())) {
+        if (isCurPrinterProject) {
+            m_comboLastSelected = firstCrealityPresetIdx;
         } else {
-            if (firstCrealityPresetIdx != -1) {//���û���ҵ�3mf�ļ��е�Ԥ�裬�ҵ�ǰѡ�еĲ��Ǵ����ϵͳԤ�裬��ѡ���һ�������ϵͳԤ��
-                m_comboLastSelected = firstCrealityPresetIdx;
-            } else { 
-                if (idx >= 0 && idx < m_vtComboText.size()){
-                    m_comboLastSelected = idx+m_projectPresetCount;
-                }
-                else {
-                    m_comboLastSelected = 1+m_projectPresetCount;
-                }
-            }
+            m_comboLastSelected = idx + m_projectPresetCount;
         }
+    } else {
+        m_comboLastSelected = firstCrealityPresetIdx;
     }
 
     m_combo->SetSelection(m_comboLastSelected - m_projectPresetCount);

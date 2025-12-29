@@ -1,3 +1,4 @@
+// [FORMATTED BY CLANG-FORMAT 2025-10-24 10:54:26]
 #include "AppRoutes.hpp"
 #include "nlohmann/json.hpp"
 #include "../TypeDefine.hpp"
@@ -7,11 +8,12 @@
 #include "SysRoutes.hpp"
 #include "SenderRoutes.hpp"
 #include "DeviceMgrRoutes.hpp"
+#include "ModelLibraryRoutes.hpp"
 
-namespace DM{
-    bool AppRoutes::Invoke(wxWebView* browser, const std::string& data)
-    {
-        try{
+namespace DM {
+bool AppRoutes::Invoke(wxWebView* browser, const std::string& data)
+{
+    try {
         nlohmann::json j = nlohmann::json::parse(data);
         if (j.contains("command")) {
             std::string command = j["command"].get<std::string>();
@@ -29,20 +31,22 @@ namespace DM{
             }
 
             if (1) {
-                if(SysRoutes().Invoke(browser, j, data))return true;
-                if(SenderRoutes().Invoke(browser, j, data))return true;
-                if(DeviceMgrRoutes().Invoke(browser, j, data))return true;
+                if (SysRoutes().Invoke(browser, j, data))
+                    return true;
+                if (SenderRoutes().Invoke(browser, j, data))
+                    return true;
+                if (DeviceMgrRoutes().Invoke(browser, j, data))
+                    return true;
+                if (ModelLibraryRoutes().Invoke(browser, j, data))
+                    return true;
             }
         }
-        }catch(...){
-            //BOOST_LOG_TRIVIAL(error) << "AppRoutes::Invoke error: " << e.what();
-        }
-
-        return false;
+    } catch (...) {
+        // BOOST_LOG_TRIVIAL(error) << "AppRoutes::Invoke error: " << e.what();
     }
 
-    AppRoutes::AppRoutes()
-    {
-       
-    }
+    return false;
 }
+
+AppRoutes::AppRoutes() {}
+} // namespace DM

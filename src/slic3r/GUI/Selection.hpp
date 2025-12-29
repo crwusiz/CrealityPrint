@@ -443,6 +443,7 @@ private:
 
     // calculate the ModelObject preview offset
     void calculate_model_object_clone_preview_offsets(int numbers);
+    void calculate_model_object_clone_preview_offsets_cr30(int numbers);
     // calculate the Volume preview offset
     void calculate_volume_clone_preview_offsets(int numbers);
 
@@ -465,6 +466,8 @@ private:
 
     void paste_volumes_from_clipboard();
     void paste_objects_from_clipboard();
+    void cr30_find_displacements(std::vector<Vec3f>& all_displacements);
+    void find_displacements(std::vector<Vec3f>& all_displacements);
 
     void transform_instance_relative(GLVolume& volume, const VolumeCache& volume_data, TransformationType transformation_type,
         const Transform3d& transform, const Vec3d& world_pivot);

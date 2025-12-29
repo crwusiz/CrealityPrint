@@ -37,7 +37,7 @@
     "filament_cooling_initial_speed": "2.2",
     "filament_cooling_moves": "4",
     "filament_cost": "30",
-    "filament_density": "1.24",
+    "filament_density": "1.1",
     "filament_deretraction_speed": "nil",
     "filament_diameter": "1.75",
     "filament_end_gcode": [

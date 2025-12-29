@@ -86,6 +86,7 @@ using namespace std::literals::string_view_literals;
 #endif
 
 #include <assert.h>
+#include "libslic3r/GCode/Smoothing.hpp"
 
 namespace Slic3r {
 
@@ -405,6 +406,13 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 this->path.points.end()
             );
 
+            // wangwenbin: check if the wipe path is empty
+            for (Point& apoint : wipe_path.points) {
+                if (apoint.x() < 0 || apoint.y() < 0) {
+                    int a = 0;
+                }
+            }
+
             wipe_path.clip_end(wipe_path.length() - wipe_dist);
 
             // subdivide the retraction in segments
@@ -516,8 +524,11 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
 
     std::string WipeTowerIntegration::append_tcr_creality(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z) const
     {
-        static int recode_num = 0;
-        recode_num++;
+
+        if (gcodegen.config().purge_in_prime_tower || (gcodegen.config().timelapse_type == TimelapseType::tlSmooth) /*||
+            (gcodegen.config().timelapse_type == TimelapseType::tlTraditional)*/)
+            return append_tcr_creality_cfs(gcodegen, tcr, new_extruder_id, z);
+
         auto extractXY = [](const std::string& text) -> Slic3r::Vec2f {
             std::regex  pattern(R"(G1\s+[^;]*X([-+]?\d*\.?\d*)\s+Y([-+]?\d*\.?\d*))");
             std::smatch match;
@@ -527,10 +538,10 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
             return {0.f, 0.f}; // 没找到则返回默认点
         };
 
-        if (new_extruder_id != -1 && new_extruder_id != tcr.new_tool)
-            throw Slic3r::InvalidArgument("Error: WipeTowerIntegration::append_tcr was asked to do a toolchange it didn't expect.");
+        /* if (new_extruder_id != -1 && new_extruder_id != tcr.new_tool)
+            throw Slic3r::InvalidArgument("Error: WipeTowerIntegration::append_tcr was asked to do a toolchange it didn't expect.");*/
 
-        //add for CFS
+        // add for CFS
         bool hasToolChange = (tcr.initial_tool != tcr.new_tool) ? true : false;
 
         std::string gcode;
@@ -542,22 +553,134 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         // We want to rotate and shift all extrusions (gcode postprocessing) and starting and ending position
         float alpha = m_wipe_tower_rotation / 180.f * float(M_PI);
 
-        auto transform_wt_pt = [&alpha, this](const Vec2f &pt) -> Vec2f {
+        auto transform_wt_pt = [&alpha, this](const Vec2f& pt) -> Vec2f {
             Vec2f out = Eigen::Rotation2Df(alpha) * pt;
             out += m_wipe_tower_pos;
             return out;
         };
 
-        Vec2f start_pos = transform_wt_pt(tcr.start_pos);
-        Vec2f end_pos   = transform_wt_pt(tcr.end_pos);
+        // Vec2f start_pos = transform_wt_pt(tcr.start_pos);
+        // Vec2f end_pos   = transform_wt_pt(tcr.end_pos);
+        Vec2f start_pos             = tcr.start_pos;
+        Vec2f end_pos               = tcr.end_pos;
+        Vec2f m_wipe_max_pos        = transform_wt_pt(Vec2f(tcr.m_wipe_max_x, tcr.m_wipe_max_y));
 
-        Vec2f m_wipe_max_pos = transform_wt_pt(Vec2f(tcr.m_wipe_max_x, tcr.m_wipe_max_y));
+        Vec2f tool_change_start_pos = start_pos;
+        if (tcr.is_tool_change)
+            tool_change_start_pos = tcr.tool_change_start_pos;
+        if (!tcr.priming) {
+            start_pos             = transform_wt_pt(start_pos);
+            end_pos               = transform_wt_pt(end_pos);
+            tool_change_start_pos = transform_wt_pt(tool_change_start_pos);
+        }
 
         Vec2f wipe_tower_offset   = m_wipe_tower_pos;
         float wipe_tower_rotation = alpha;
         Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
 
-        std::string tcr_rotated_gcode = post_process_wipe_tower_moves_wipe(tcr, wipe_tower_offset, wipe_tower_rotation, z, hasToolChange);
+        // std::string tcr_rotated_gcode = post_process_wipe_tower_moves(tcr, wipe_tower_offset, wipe_tower_rotation,z);
+        std::string wipe_path_before_change_tool;
+        Vec2f       end_wipe_pos;
+
+        //block_type == 1 代表擦拭塔格子
+        int block_type = -1;
+        std::string tcr_rotated_gcode = post_process_wipe_tower_moves_wipe_head(gcodegen, tcr, wipe_tower_offset, end_wipe_pos,
+                                                                                wipe_path_before_change_tool, block_type,
+                                                                                wipe_tower_rotation, z);
+
+
+        ZHopType z_hope_type    = ZHopType(gcodegen.config().z_hop_types.get_at(gcodegen.writer().extruder()->id()));
+        LiftType auto_lift_type = LiftType::NormalLift;
+        switch (z_hope_type) {
+        case ZHopType::zhtNormal: {
+            auto_lift_type = LiftType::NormalLift;
+            break;
+        }
+        case ZHopType::zhtSlope: {
+            auto_lift_type = LiftType::LazyLift;
+            break;
+        }
+        case ZHopType::zhtSpiral: {
+            auto_lift_type = LiftType::SpiralLift;
+            break;
+        }
+        default:
+            // if no corresponding lift type, use normal lift
+            auto_lift_type = LiftType::NormalLift;
+        }
+
+        if (!wipe_path_before_change_tool.empty())
+            gcode += gcodegen.retract(false, false, auto_lift_type);
+        else
+            gcode += gcodegen.retract(hasToolChange, false, auto_lift_type);
+
+       if (!wipe_path_before_change_tool.empty() || !hasToolChange)
+       {
+           gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d), erMixed, "Travel to a Wipe Tower");
+
+           //模型到擦拭塔格子/擦拭塔填充到擦拭塔格子 这两种情形有一个装填，所以这里排除他
+           if (!gcodegen.writer().is_object_start_str_empty() || block_type < 0) 
+           {
+               if (!gcodegen.config().wipe_tower_no_sparse_layers) 
+               {
+                   // compensate retraction
+                   gcode += gcodegen.unretract();
+               }
+           }
+       }
+
+
+
+       auto wipe_indexs = [&](const std::string wipe_path, int& indexs)
+       {
+           std::istringstream gcode_str(wipe_path);
+           std::string        line;
+           while (std::getline(gcode_str, line)) 
+           {
+               if (line.find(";wipe_finish_path") == 0)
+                   indexs++;
+           }
+       };
+
+
+       int index_i = 0, index = 0;
+       wipe_indexs(wipe_path_before_change_tool, index);
+
+        std::istringstream gcode_str(wipe_path_before_change_tool);
+        std::string        wall_tail_wipe, line;
+        while (gcode_str) {
+            std::getline(gcode_str, line);
+            if (line.find(";wipe_finish_path") == 0) {
+                gcodegen.m_wipe.reset_path();
+                gcodegen.set_last_pos(
+                    wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(tcr.wipe_paths[index_i][0]) + plate_origin_2d));
+
+                for (const Vec2f& wipe_pt : tcr.wipe_paths[index_i]) {
+                    gcodegen.m_wipe.path.points.emplace_back(
+                        wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(wipe_pt) + plate_origin_2d));
+                }
+                // compensate retraction
+                gcodegen.unretract();
+                if (index_i < index - 1)
+                    wall_tail_wipe += gcodegen.retract(false, false, auto_lift_type) + "\n";
+                else
+                    wall_tail_wipe += gcodegen.retract(hasToolChange /*true*/, false, auto_lift_type) + "\n";
+                // wall_tail_wipe += line + "\n";
+                index_i++;
+
+            }
+            else if (line.find(";deretraction_from_wipe_tower_zhop") == 0)
+            {
+                wall_tail_wipe += gcodegen.writer().unretract();
+            } 
+            else 
+            {
+                wall_tail_wipe += line;
+                wall_tail_wipe += "\n";
+            }
+        }
+
+        gcode += wall_tail_wipe;
 
         gcode += gcodegen.writer().unlift(); // Make sure there is no z-hop (in most cases, there isn't).
 
@@ -565,12 +688,12 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         if (z == -1.) // in case no specific z was provided, print at current_z pos
             z = current_z;
 
-       /* bool changeZ = false;
-        if (!is_approx((double) tcr.print_z, current_z)) {
-            changeZ = true;
-            z = tcr.print_z;
-            current_z = z;
-        }*/
+        /* bool changeZ = false;
+         if (!is_approx((double) tcr.print_z, current_z)) {
+             changeZ = true;
+             z = tcr.print_z;
+             current_z = z;
+         }*/
 
         const bool needs_toolchange = gcodegen.writer().need_toolchange(new_extruder_id);
         const bool will_go_down     = !is_approx(z, current_z);
@@ -578,36 +701,14 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         {
             // FIXME: It would be better if the wipe tower set the force_travel flag for all toolchanges,
             // then we could simplify the condition and make it more readable.
-    
-            ZHopType z_hope_type    = ZHopType(gcodegen.config().z_hop_types.get_at(gcodegen.writer().extruder()->id()));
-            LiftType auto_lift_type = LiftType::NormalLift;
-            switch (z_hope_type) {
-            case ZHopType::zhtNormal: {
-                auto_lift_type = LiftType::NormalLift;
-                break;
-            }
-            case ZHopType::zhtSlope: {
-                auto_lift_type = LiftType::LazyLift;
-                break;
-            }
-            case ZHopType::zhtSpiral: {
-                auto_lift_type = LiftType::SpiralLift;
-                break;
-            }
-            default:
-                // if no corresponding lift type, use normal lift
-                auto_lift_type = LiftType::NormalLift;
-            }
-            if (gcodegen.m_layer_index == 0 && !hasToolChange) {
-                gcode += gcodegen.retract(hasToolChange, false);
 
-            } else {
-                gcode += gcodegen.retract(hasToolChange, false, auto_lift_type);
-            }
            
-            //gcode += tcr.muti_lapse;
-            
-            bool is_time_lapse = !gcodegen.config().time_lapse_gcode.value.empty() && gcodegen.config().enable_prime_tower &&m_tool_change_idx == 1 && gcodegen.config().timelapse_type != TimelapseType::tlClose ;
+
+            //gcode += gcodegen.retract(false, false, auto_lift_type);
+
+            // gcode += tcr.muti_lapse;
+            bool is_time_lapse = !gcodegen.config().time_lapse_gcode.value.empty() && gcodegen.config().enable_prime_tower &&
+                                 m_tool_change_idx == 1 && gcodegen.config().timelapse_type != TimelapseType::tlClose;
             // add for CFS
             if (!hasToolChange) {
                 if (is_time_lapse) {
@@ -616,19 +717,18 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                     gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, time_lapse_pos + plate_origin_2d), erMixed,
                                                 "Travel to is_time_lapse");
 
-                } 
-                else{
-                        gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-                        gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d), erMixed,
-                                                    "Travel to a Wipe Tower");
-                        gcode += gcodegen.unretract();
-                    }
-                
+                } else {
+                   /* gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+                    gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d), erMixed,
+                                                "Travel to a Wipe Tower");
+                    gcode += gcodegen.unretract();*/
+                }
+
             } else {
                 // for cfs 'EXCLUDE_OBJECT_END'
                 gcodegen.m_writer.add_object_change_labels(gcode);
             }
-            
+
             if (is_time_lapse) {
                 DynamicConfig config;
                 config.set_key_value("layer_num", new ConfigOptionInt(gcodegen.m_layer_index));
@@ -636,52 +736,150 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 config.set_key_value("max_layer_z", new ConfigOptionFloat(gcodegen.m_max_layer_z));
                 config.set_key_value("enable_prime_tower", new ConfigOptionBool(gcodegen.config().enable_prime_tower));
                 gcode += gcodegen.placeholder_parser_process("timelapse_gcode", gcodegen.config().time_lapse_gcode.value,
-                                                             gcodegen.writer().extruder()->id(), &config) + "\n";
-                
+                                                             gcodegen.writer().extruder()->id(), &config) +
+                         "\n";
+
                 if (!hasToolChange) {
                     gcode += gcodegen.writer().travel_to_xy((start_pos + plate_origin_2d).cast<double>());
                     gcode += gcodegen.unretract();
                 }
             }
-
-        } 
+        }
 
         std::string toolchange_gcode_str;
         std::string deretraction_str;
         float       purge_volume = tcr.purge_volume < EPSILON ? 0 : std::max(tcr.purge_volume, g_min_purge_volume);
-        if (new_extruder_id >= 0 && needs_toolchange) {
-            gcodegen.m_wipe.reset_path();                                           // We don't want wiping on the ramming lines.
+        if (new_extruder_id >= 0 && needs_toolchange) 
+        {
+            gcodegen.m_wipe.reset_path(); // We don't want wiping on the ramming lines.
             
-            // add for CFS
-            if (hasToolChange) {
+            if (hasToolChange) 
+            {
                 toolchange_gcode_str = gcodegen.writer().retract();
-                if (!m_single_extruder_multi_material){
+                if (!m_single_extruder_multi_material) 
+                {
                     Vec2d _pos(m_wipe_tower_pos.x(), m_wipe_tower_pos.y());
                     gcodegen.set_tower_pos((_pos));
                 }
+                //toolchange_gcode_str += gcodegen.set_extruder(new_extruder_id, z); // TODO: toolchange_z vs print_z
                 toolchange_gcode_str += gcodegen.set_extruder_new(new_extruder_id, z, purge_volume, (start_pos + plate_origin_2d)[0],
-                                                                           (start_pos + plate_origin_2d)[1], m_wipe_max_pos[0],
-                                                                           m_wipe_max_pos[1]); // TODO: toolchange_z vs print_z
-            } else {
+                                                                  (start_pos + plate_origin_2d)[1], m_wipe_max_pos[0],
+                                                                  m_wipe_max_pos[1]); // TODO: toolchange_z vs print_z
+            } 
+            else 
+            {
+                //toolchange_gcode_str = gcodegen.set_extruder(new_extruder_id, tcr.print_z); // TODO: toolchange_z vs print_z
                 toolchange_gcode_str = gcodegen.set_extruder_new(new_extruder_id, tcr.print_z, purge_volume,
-                                                                 (start_pos + plate_origin_2d)[0],
-                                                                          (start_pos + plate_origin_2d)[1], m_wipe_max_pos[0],
-                                                                          m_wipe_max_pos[1]); // TODO: toolchange_z vs print_z 
+                                                                 (start_pos + plate_origin_2d)[0], (start_pos + plate_origin_2d)[1],
+                                                                 m_wipe_max_pos[0],
+                                                                 m_wipe_max_pos[1]); // TODO: toolchange_z vs print_z 
             }
+
             if (gcodegen.config().enable_prime_tower)
                 deretraction_str = gcodegen.unretract();
         }
 
+
+       {
+            //has change filement over.
+            std::istringstream gcode_str(tcr_rotated_gcode);
+            std::string        wall_tail_wipe, line;
+            while (gcode_str) {
+                std::getline(gcode_str, line);
+                if (line.find(";wipe_finish_path") == 0) {
+                    gcodegen.m_wipe.reset_path();
+                    gcodegen.set_last_pos(
+                        wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(tcr.wipe_paths[index_i][0]) + plate_origin_2d));
+
+                    for (const Vec2f& wipe_pt : tcr.wipe_paths[index_i]) {
+                        gcodegen.m_wipe.path.points.emplace_back(
+                            wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(wipe_pt) + plate_origin_2d));
+                    }
+                    // compensate retraction
+                    gcodegen.unretract();
+                    wall_tail_wipe += gcodegen.retract(false, false, auto_lift_type) + "\n";
+                    /* wall_tail_wipe += gcodegen.writer().travel_to_xy(
+                         (transform_wt_pt(tcr.wipe_paths[path_i][0]) + plate_origin_2d).cast<double>());*/
+                    index_i++;
+
+                } else if (line.find(";deretraction_from_wipe_tower_zhop") == 0) {
+                    wall_tail_wipe += gcodegen.writer().unretract();
+                }
+                else {
+                    wall_tail_wipe += line;
+                    wall_tail_wipe += "\n";
+                }
+            }
+            tcr_rotated_gcode = "";
+            tcr_rotated_gcode += wall_tail_wipe;
+        }
+
+
+        std::string around_wipe_tower_str;
+        // move to start_pos for wiping after toolchange
+        if (!gcodegen.m_config.prime_tower_skip_points.value) {
+        /*    std::string start_pos_str = gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen,
+                                                                                            tool_change_start_pos + plate_origin_2d),
+                                                           erMixed, "Move to start pos");*/
+            std::string start_pos_str = gcodegen.writer().travel_to_xy(gcodegen.point_to_gcode(wipe_tower_point_to_object_point(gcodegen,
+                                                                                            tool_change_start_pos + plate_origin_2d)));
+
+            check_add_eol(start_pos_str);
+            around_wipe_tower_str += start_pos_str;
+        } else {
+            // BBS:change travel_path
+            Vec3f gcode_last_pos;
+            GCodeProcessor::get_last_position_from_gcode(toolchange_gcode_str, gcode_last_pos);
+            Vec2f       gcode_last_pos2d{gcode_last_pos[0], gcode_last_pos[1]};
+            Point       gcode_last_pos2d_object = gcodegen.gcode_to_point(gcode_last_pos2d.cast<double>() + plate_origin_2d.cast<double>());
+            Point       start_wipe_pos          = wipe_tower_point_to_object_point(gcodegen, tool_change_start_pos + plate_origin_2d);
+            BoundingBox avoid_bbx, printer_bbx;
+            {
+                // set printer_bbx
+                Pointfs bed_pointsf = gcodegen.m_config.printable_area.values;
+                Points  bed_points;
+                for (auto p : bed_pointsf) {
+                    bed_points.push_back(wipe_tower_point_to_object_point(gcodegen, p.cast<float>() + plate_origin_2d));
+                }
+                printer_bbx = BoundingBox(bed_points);
+            }
+            {
+                // set avoid_bbx
+                avoid_bbx            = scaled(m_wipe_tower_bbx);
+                Polygon avoid_points = avoid_bbx.polygon();
+                for (auto& p : avoid_points.points) {
+                    Vec2f pp = transform_wt_pt(unscale(p).cast<float>());
+                    p        = wipe_tower_point_to_object_point(gcodegen, pp + plate_origin_2d);
+                }
+                avoid_bbx = BoundingBox(avoid_points.points);
+            }
+            std::string travel_to_wipe_tower_gcode;
+            Polyline    travel_polyline = generate_path_to_wipe_tower(gcode_last_pos2d_object, start_wipe_pos, avoid_bbx, printer_bbx);
+
+            /* for (const auto& p : travel_polyline.points) {
+
+                 travel_to_wipe_tower_gcode += gcodegen.travel_to(p, erNone, "Move to start pos");
+                 //travel_to_wipe_tower_gcode += gcodegen.writer().unlift();
+                 check_add_eol(travel_to_wipe_tower_gcode);
+             }*/
+            for (auto it = travel_polyline.points.begin(); it != travel_polyline.points.end() - 1; ++it) {
+                //travel_to_wipe_tower_gcode += gcodegen.travel_to(*it, erMixed, "Move to start pos");
+                travel_to_wipe_tower_gcode +=gcodegen.writer().travel_to_xy(gcodegen.point_to_gcode(*it));
+                check_add_eol(travel_to_wipe_tower_gcode);
+            }
+            around_wipe_tower_str += travel_to_wipe_tower_gcode;
+            gcodegen.set_last_pos(start_wipe_pos);
+        }
+
         // add for CFS
-        if (will_go_down) 
-        {
-           // if (changeZ) 
+        if (will_go_down) {
+            // if (changeZ)
             {
                 // toolchange_gcode_str += gcodegen.writer().retract();
-                //toolchange_gcode_str += gcodegen.writer().travel_to_z(z, "Travel down to the last wipe tower layer.");
+                // toolchange_gcode_str += gcodegen.writer().travel_to_z(z, "Travel down to the last wipe tower layer.");
                 // toolchange_gcode_str += gcodegen.writer().unretract();
-            } 
-           // else  
+            }
+            // else
             {
                 if (!gcodegen.config().wipe_tower_no_sparse_layers) {
                     toolchange_gcode_str += gcodegen.writer().retract();
@@ -691,11 +889,12 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 current_z = z;
             }
         }
-   
+
         // Insert the toolchange and deretraction gcode into the generated gcode.
 
         DynamicConfig config;
         config.set_key_value("change_filament_gcode", new ConfigOptionString(toolchange_gcode_str));
+        config.set_key_value("move_around_wipe_tower", new ConfigOptionString(around_wipe_tower_str));
         config.set_key_value("deretraction_from_wipe_tower_generator", new ConfigOptionString(deretraction_str));
 
         int previous_extruder_id = gcodegen.writer().extruder() ? (int) gcodegen.writer().extruder()->id() : -1;
@@ -704,8 +903,8 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         config.set_key_value("layer_num", new ConfigOptionInt(gcodegen.m_layer_index));
         config.set_key_value("layer_z", new ConfigOptionFloat(tcr.print_z));
         config.set_key_value("toolchange_z", new ConfigOptionFloat(z));
-        GCodeWriter     &gcode_writer = gcodegen.m_writer;
-        FullPrintConfig &full_config  = gcodegen.m_config;
+        GCodeWriter&     gcode_writer = gcodegen.m_writer;
+        FullPrintConfig& full_config  = gcodegen.m_config;
         float old_retract_length      = gcode_writer.extruder() != nullptr ? full_config.retraction_length.get_at(previous_extruder_id) : 0;
         float new_retract_length      = full_config.retraction_length.get_at(new_extruder_id);
         float old_retract_length_toolchange = gcode_writer.extruder() != nullptr ?
@@ -755,9 +954,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         config.set_key_value("travel_point_2_y", new ConfigOptionFloat(float(travel_point_2.y())));
         config.set_key_value("travel_point_3_x", new ConfigOptionFloat(float(travel_point_3.x())));
         config.set_key_value("travel_point_3_y", new ConfigOptionFloat(float(travel_point_3.y())));
-        config.set_key_value("wipe_tower_start_position_x", new ConfigOptionFloat(float((start_pos + plate_origin_2d)[0])));
-        config.set_key_value("wipe_tower_start_position_y", new ConfigOptionFloat(float((start_pos + plate_origin_2d)[1])));
-        //config.set_key_value("wipe_tower_random_num", new ConfigOptionFloat(float((start_pos + plate_origin_2d)[1])));
+
         int   flush_count = std::min(g_max_flush_count, (int) std::round(purge_volume / g_purge_volume_one_time));
         float flush_unit  = purge_length / flush_count;
         int   flush_idx   = 0;
@@ -773,7 +970,320 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
             config.set_key_value(key_value, new ConfigOptionFloat(0.f));
         }
 
-        std::string tcr_gcode,tcr_escaped_gcode = gcodegen.placeholder_parser_process("tcr_rotated_gcode", tcr_rotated_gcode, new_extruder_id, &config);
+        std::string tcr_gcode,
+            tcr_escaped_gcode = gcodegen.placeholder_parser_process("tcr_rotated_gcode", tcr_rotated_gcode, new_extruder_id, &config);
+        unescape_string_cstyle(tcr_escaped_gcode, tcr_gcode);
+        gcode += tcr_gcode;
+        check_add_eol(toolchange_gcode_str);
+
+        // SoftFever: set new PA for new filament
+        if (new_extruder_id != -1 && gcodegen.config().enable_pressure_advance.get_at(new_extruder_id)) {
+            gcode += gcodegen.writer().set_pressure_advance(gcodegen.config().pressure_advance.get_at(new_extruder_id));
+        }
+  
+        //抬升
+        if (!gcodegen.config().wipe_tower_no_sparse_layers && !is_approx(z, current_z))
+            /*gcode += */ gcodegen.writer().travel_to_z(current_z + gcodegen.config().z_hop.get_at(new_extruder_id) /*0.4*/,
+                                                        "Travel back up to the topmost object layer.");
+
+        // A phony move to the end position at the wipe tower.
+        Vec3f end_pos_;
+        GCodeProcessor::get_last_position_from_gcode(gcode, end_pos_);
+        Vec2f end_pos2d_{end_pos_[0], end_pos_[1]};
+        gcodegen.writer().travel_to_xy((end_pos2d_ + plate_origin_2d).cast<double>());
+        gcodegen.set_last_pos(wipe_tower_point_to_object_point(gcodegen, end_pos2d_ + plate_origin_2d));
+
+        //下降
+        if (!gcodegen.config().wipe_tower_no_sparse_layers && !is_approx(z, current_z))
+        /*gcode += */gcodegen.writer().travel_to_z(current_z, "Travel back up to the topmost object layer.");
+
+        // current_z = gcodegen.writer().get_position().z();
+        if (!gcodegen.config().wipe_tower_no_sparse_layers && !is_approx(z, current_z)) {
+            gcode += gcodegen.writer().retract();
+            gcode += gcodegen.writer().travel_to_z(current_z, "Travel back up to the topmost object layer.");
+            gcode += gcodegen.writer().unretract();
+        }
+
+        //else {
+        //    // Prepare a future wipe.
+        //    gcodegen.m_wipe.reset_path();
+        //    for (const Vec2f& wipe_pt : tcr.wipe_path)
+        //        gcodegen.m_wipe.path.points.emplace_back(
+        //            wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(wipe_pt) + plate_origin_2d));
+        //}
+
+        // Let the planner know we are traveling between objects.
+        gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+
+#if ORCA_CHECK_GCODE_PLACEHOLDERS
+        gcode += ";creality tool change end ########################################\n\n";
+#endif
+        return gcode;
+
+
+    }
+
+    std::string WipeTowerIntegration::append_tcr_creality_cfs(GCode& gcodegen,const WipeTower::ToolChangeResult& tcr,int new_extruder_id,double z) const
+    {
+   
+        static int recode_num = 0;
+        recode_num++;
+        auto extractXY = [](const std::string& text) -> Slic3r::Vec2f {
+            std::regex  pattern(R"(G1\s+[^;]*X([-+]?\d*\.?\d*)\s+Y([-+]?\d*\.?\d*))");
+            std::smatch match;
+            if (std::regex_search(text, match, pattern)) {
+                return {std::stof(match[1].str()), std::stof(match[2].str())};
+            }
+            return {0.f, 0.f}; // 没找到则返回默认点
+        };
+
+        if (new_extruder_id != -1 && new_extruder_id != tcr.new_tool)
+            throw Slic3r::InvalidArgument("Error: WipeTowerIntegration::append_tcr was asked to do a toolchange it didn't expect.");
+
+        // add for CFS
+        bool hasToolChange = (tcr.initial_tool != tcr.new_tool) ? true : false;
+
+        std::string gcode;
+    #if ORCA_CHECK_GCODE_PLACEHOLDERS
+        gcode = "\n;creality tool change start ########################################\n";
+    #endif
+
+        // Toolchangeresult.gcode assumes the wipe tower corner is at the origin (except for priming lines)
+        // We want to rotate and shift all extrusions (gcode postprocessing) and starting and ending position
+        float alpha = m_wipe_tower_rotation / 180.f * float(M_PI);
+
+        auto transform_wt_pt = [&alpha, this](const Vec2f& pt) -> Vec2f {
+            Vec2f out = Eigen::Rotation2Df(alpha) * pt;
+            out += m_wipe_tower_pos;
+            return out;
+        };
+
+        Vec2f start_pos = transform_wt_pt(tcr.start_pos);
+        Vec2f end_pos   = transform_wt_pt(tcr.end_pos);
+
+        Vec2f m_wipe_max_pos = transform_wt_pt(Vec2f(tcr.m_wipe_max_x, tcr.m_wipe_max_y));
+
+        Vec2f wipe_tower_offset   = m_wipe_tower_pos;
+        float wipe_tower_rotation = alpha;
+        Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
+
+        std::string tcr_rotated_gcode = post_process_wipe_tower_moves_wipe(tcr, wipe_tower_offset, wipe_tower_rotation, z, hasToolChange);
+
+        gcode += gcodegen.writer().unlift(); // Make sure there is no z-hop (in most cases, there isn't).
+
+        double current_z = gcodegen.writer().get_position().z();
+        if (z == -1.) // in case no specific z was provided, print at current_z pos
+            z = current_z;
+
+        /* bool changeZ = false;
+            if (!is_approx((double) tcr.print_z, current_z)) {
+                changeZ = true;
+                z = tcr.print_z;
+                current_z = z;
+            }*/
+
+        const bool needs_toolchange = gcodegen.writer().need_toolchange(new_extruder_id);
+        const bool will_go_down     = !is_approx(z, current_z);
+
+        {
+            // FIXME: It would be better if the wipe tower set the force_travel flag for all toolchanges,
+            // then we could simplify the condition and make it more readable.
+
+            ZHopType z_hope_type    = ZHopType(gcodegen.config().z_hop_types.get_at(gcodegen.writer().extruder()->id()));
+            LiftType auto_lift_type = LiftType::NormalLift;
+            switch (z_hope_type) {
+            case ZHopType::zhtNormal: {
+                auto_lift_type = LiftType::NormalLift;
+                break;
+            }
+            case ZHopType::zhtSlope: {
+                auto_lift_type = LiftType::LazyLift;
+                break;
+            }
+            case ZHopType::zhtSpiral: {
+                auto_lift_type = LiftType::SpiralLift;
+                break;
+            }
+            default:
+                // if no corresponding lift type, use normal lift
+                auto_lift_type = LiftType::NormalLift;
+            }
+            if (gcodegen.m_layer_index == 0 && !hasToolChange) {
+                gcode += gcodegen.retract(hasToolChange, false);
+
+            } else {
+                gcode += gcodegen.retract(hasToolChange, false, auto_lift_type);
+            }
+
+            // gcode += tcr.muti_lapse;
+
+            bool is_time_lapse = !gcodegen.config().time_lapse_gcode.value.empty() && gcodegen.config().enable_prime_tower &&
+                                    m_tool_change_idx == 1 && gcodegen.config().timelapse_type != TimelapseType::tlClose;
+            // add for CFS
+            if (!hasToolChange) {
+                if (is_time_lapse) {
+                    Vec2f time_lapse_pos = extractXY(gcodegen.config().time_lapse_gcode.value);
+                    gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+                    gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, time_lapse_pos + plate_origin_2d), erMixed,
+                                                "Travel to is_time_lapse");
+
+                } else {
+                    gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+                    gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d), erMixed,
+                                                "Travel to a Wipe Tower");
+                    gcode += gcodegen.unretract();
+                }
+
+            } else {
+                // for cfs 'EXCLUDE_OBJECT_END'
+                gcodegen.m_writer.add_object_change_labels(gcode);
+            }
+
+            if (is_time_lapse) {
+                DynamicConfig config;
+                config.set_key_value("layer_num", new ConfigOptionInt(gcodegen.m_layer_index));
+                config.set_key_value("layer_z", new ConfigOptionFloat(current_z));
+                config.set_key_value("max_layer_z", new ConfigOptionFloat(gcodegen.m_max_layer_z));
+                config.set_key_value("enable_prime_tower", new ConfigOptionBool(gcodegen.config().enable_prime_tower));
+                gcode += gcodegen.placeholder_parser_process("timelapse_gcode", gcodegen.config().time_lapse_gcode.value,
+                                                                gcodegen.writer().extruder()->id(), &config) +
+                            "\n";
+
+                if (!hasToolChange) {
+                    gcode += gcodegen.writer().travel_to_xy((start_pos + plate_origin_2d).cast<double>());
+                    gcode += gcodegen.unretract();
+                }
+            }
+        }
+
+        std::string toolchange_gcode_str;
+        std::string deretraction_str;
+        float       purge_volume = tcr.purge_volume < EPSILON ? 0 : std::max(tcr.purge_volume, g_min_purge_volume);
+        if (new_extruder_id >= 0 && needs_toolchange) {
+            gcodegen.m_wipe.reset_path(); // We don't want wiping on the ramming lines.
+
+            // add for CFS
+            if (hasToolChange) {
+                toolchange_gcode_str = gcodegen.writer().retract();
+                if (!m_single_extruder_multi_material) {
+                    Vec2d _pos(m_wipe_tower_pos.x(), m_wipe_tower_pos.y());
+                    gcodegen.set_tower_pos((_pos));
+                }
+                toolchange_gcode_str += gcodegen.set_extruder_new(new_extruder_id, z, purge_volume, (start_pos + plate_origin_2d)[0],
+                                                                    (start_pos + plate_origin_2d)[1], m_wipe_max_pos[0],
+                                                                    m_wipe_max_pos[1]); // TODO: toolchange_z vs print_z
+            } else {
+                toolchange_gcode_str = gcodegen.set_extruder_new(new_extruder_id, tcr.print_z, purge_volume,
+                                                                    (start_pos + plate_origin_2d)[0], (start_pos + plate_origin_2d)[1],
+                                                                    m_wipe_max_pos[0],
+                                                                    m_wipe_max_pos[1]); // TODO: toolchange_z vs print_z
+            }
+            if (gcodegen.config().enable_prime_tower)
+                deretraction_str = gcodegen.unretract();
+        }
+
+        // add for CFS
+        if (will_go_down) {
+            // if (changeZ)
+            {
+                // toolchange_gcode_str += gcodegen.writer().retract();
+                // toolchange_gcode_str += gcodegen.writer().travel_to_z(z, "Travel down to the last wipe tower layer.");
+                // toolchange_gcode_str += gcodegen.writer().unretract();
+            }
+            // else
+            {
+                if (!gcodegen.config().wipe_tower_no_sparse_layers) {
+                    toolchange_gcode_str += gcodegen.writer().retract();
+                    toolchange_gcode_str += gcodegen.writer().travel_to_z(z, "Travel down to the last wipe tower layer.");
+                    toolchange_gcode_str += gcodegen.writer().unretract();
+                }
+                current_z = z;
+            }
+        }
+
+        // Insert the toolchange and deretraction gcode into the generated gcode.
+
+        DynamicConfig config;
+        config.set_key_value("change_filament_gcode", new ConfigOptionString(toolchange_gcode_str));
+        config.set_key_value("deretraction_from_wipe_tower_generator", new ConfigOptionString(deretraction_str));
+
+        int previous_extruder_id = gcodegen.writer().extruder() ? (int) gcodegen.writer().extruder()->id() : -1;
+        config.set_key_value("previous_extruder", new ConfigOptionInt(previous_extruder_id));
+        config.set_key_value("next_extruder", new ConfigOptionInt((int) new_extruder_id));
+        config.set_key_value("layer_num", new ConfigOptionInt(gcodegen.m_layer_index));
+        config.set_key_value("layer_z", new ConfigOptionFloat(tcr.print_z));
+        config.set_key_value("toolchange_z", new ConfigOptionFloat(z));
+        GCodeWriter&     gcode_writer = gcodegen.m_writer;
+        FullPrintConfig& full_config  = gcodegen.m_config;
+        float old_retract_length      = gcode_writer.extruder() != nullptr ? full_config.retraction_length.get_at(previous_extruder_id) : 0;
+        float new_retract_length      = full_config.retraction_length.get_at(new_extruder_id);
+        float old_retract_length_toolchange = gcode_writer.extruder() != nullptr ?
+                                                    full_config.retract_length_toolchange.get_at(previous_extruder_id) :
+                                                    0;
+        float new_retract_length_toolchange = full_config.retract_length_toolchange.get_at(new_extruder_id);
+        int   old_filament_temp             = gcode_writer.extruder() != nullptr ?
+                                                    (gcodegen.on_first_layer() ? full_config.nozzle_temperature_initial_layer.get_at(previous_extruder_id) :
+                                                                                full_config.nozzle_temperature.get_at(previous_extruder_id)) :
+                                                    210;
+        int   new_filament_temp = gcodegen.on_first_layer() ? full_config.nozzle_temperature_initial_layer.get_at(new_extruder_id) :
+                                                                full_config.nozzle_temperature.get_at(new_extruder_id);
+        Vec3d nozzle_pos        = gcode_writer.get_position();
+
+        // float purge_volume  = tcr.purge_volume < EPSILON ? 0 : std::max(tcr.purge_volume, g_min_purge_volume);
+        float filament_area = float((M_PI / 4.f) * pow(full_config.filament_diameter.get_at(new_extruder_id), 2));
+        float purge_length  = purge_volume / filament_area;
+
+        int old_filament_e_feedrate = gcode_writer.extruder() != nullptr ?
+                                            (int) (60.0 * full_config.filament_max_volumetric_speed.get_at(previous_extruder_id) /
+                                                    filament_area) :
+                                            200;
+        old_filament_e_feedrate     = old_filament_e_feedrate == 0 ? 100 : old_filament_e_feedrate;
+        int new_filament_e_feedrate = (int) (60.0 * full_config.filament_max_volumetric_speed.get_at(new_extruder_id) / filament_area);
+        new_filament_e_feedrate     = new_filament_e_feedrate == 0 ? 100 : new_filament_e_feedrate;
+
+        config.set_key_value("max_layer_z", new ConfigOptionFloat(gcodegen.m_max_layer_z));
+        config.set_key_value("relative_e_axis", new ConfigOptionBool(full_config.use_relative_e_distances));
+        config.set_key_value("toolchange_count", new ConfigOptionInt((int) gcodegen.m_toolchange_count));
+        config.set_key_value("fan_speed", new ConfigOptionInt((int) 0));
+        config.set_key_value("old_retract_length", new ConfigOptionFloat(old_retract_length));
+        config.set_key_value("new_retract_length", new ConfigOptionFloat(new_retract_length));
+        config.set_key_value("old_retract_length_toolchange", new ConfigOptionFloat(old_retract_length_toolchange));
+        config.set_key_value("new_retract_length_toolchange", new ConfigOptionFloat(new_retract_length_toolchange));
+        config.set_key_value("old_filament_temp", new ConfigOptionInt(old_filament_temp));
+        config.set_key_value("new_filament_temp", new ConfigOptionInt(new_filament_temp));
+        config.set_key_value("x_after_toolchange", new ConfigOptionFloat(start_pos(0)));
+        config.set_key_value("y_after_toolchange", new ConfigOptionFloat(start_pos(1)));
+        config.set_key_value("z_after_toolchange", new ConfigOptionFloat(nozzle_pos(2)));
+        config.set_key_value("first_flush_volume", new ConfigOptionFloat(purge_length / 2.f));
+        config.set_key_value("second_flush_volume", new ConfigOptionFloat(purge_length / 2.f));
+        config.set_key_value("old_filament_e_feedrate", new ConfigOptionInt(old_filament_e_feedrate));
+        config.set_key_value("new_filament_e_feedrate", new ConfigOptionInt(new_filament_e_feedrate));
+        config.set_key_value("travel_point_1_x", new ConfigOptionFloat(float(travel_point_1.x())));
+        config.set_key_value("travel_point_1_y", new ConfigOptionFloat(float(travel_point_1.y())));
+        config.set_key_value("travel_point_2_x", new ConfigOptionFloat(float(travel_point_2.x())));
+        config.set_key_value("travel_point_2_y", new ConfigOptionFloat(float(travel_point_2.y())));
+        config.set_key_value("travel_point_3_x", new ConfigOptionFloat(float(travel_point_3.x())));
+        config.set_key_value("travel_point_3_y", new ConfigOptionFloat(float(travel_point_3.y())));
+        config.set_key_value("wipe_tower_start_position_x", new ConfigOptionFloat(float((start_pos + plate_origin_2d)[0])));
+        config.set_key_value("wipe_tower_start_position_y", new ConfigOptionFloat(float((start_pos + plate_origin_2d)[1])));
+        // config.set_key_value("wipe_tower_random_num", new ConfigOptionFloat(float((start_pos + plate_origin_2d)[1])));
+        int   flush_count = std::min(g_max_flush_count, (int) std::round(purge_volume / g_purge_volume_one_time));
+        float flush_unit  = purge_length / flush_count;
+        int   flush_idx   = 0;
+        for (; flush_idx < flush_count; flush_idx++) {
+            char key_value[64] = {0};
+            snprintf(key_value, sizeof(key_value), "flush_length_%d", flush_idx + 1);
+            config.set_key_value(key_value, new ConfigOptionFloat(flush_unit));
+        }
+
+        for (; flush_idx < g_max_flush_count; flush_idx++) {
+            char key_value[64] = {0};
+            snprintf(key_value, sizeof(key_value), "flush_length_%d", flush_idx + 1);
+            config.set_key_value(key_value, new ConfigOptionFloat(0.f));
+        }
+
+        std::string tcr_gcode,
+            tcr_escaped_gcode = gcodegen.placeholder_parser_process("tcr_rotated_gcode", tcr_rotated_gcode, new_extruder_id, &config);
         unescape_string_cstyle(tcr_escaped_gcode, tcr_gcode);
         gcode += tcr_gcode;
         check_add_eol(toolchange_gcode_str);
@@ -805,10 +1315,12 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         // Let the planner know we are traveling between objects.
         gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
 
-#if ORCA_CHECK_GCODE_PLACEHOLDERS
+    #if ORCA_CHECK_GCODE_PLACEHOLDERS
         gcode += ";creality tool change end ########################################\n\n";
-#endif
+    #endif
         return gcode;
+
+ 
     }
 
     std::string WipeTowerIntegration::append_tcr(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z) const
@@ -1290,10 +1802,135 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         return gcode;
     }
 
-    std::string tranGCode(const std::string& input, const std::string &keyword, double z)
+    Polyline WipeTowerIntegration::generate_path_to_wipe_tower(const Point&       start_pos,
+                                                               const Point&       end_pos,
+                                                               const BoundingBox& avoid_polygon,
+                                                               const BoundingBox& printer_bbx) const
     {
-       // std::string keyword = "relative_zhop_up_for_firmware ";
-        size_t      pos     = input.find(keyword);
+        Polyline    res;
+        coord_t     alpha               = scaled(2.f); // offset distance
+        BoundingBox avoid_polygon_inner = avoid_polygon;
+        avoid_polygon_inner.offset(alpha);
+        coord_t width       = avoid_polygon_inner.max[0] - avoid_polygon_inner.min[0];
+        Polygon bed_polygon = printer_bbx.polygon();
+        Vec2f   v(1, 0); // the first print direction of end_pos.
+        if (abs(end_pos[0] - avoid_polygon_inner.min[0]) < width / 2)
+            v = -v; // judge whether the wipe tower's infill goes to the left or right.
+        // Judge whether the avoid_polygon_inner is outside the printer_bbx.
+        // If so, do nothing and just go directly to the end_pos.
+        bool   is_bbx_in_bed = true;
+        Points avoid_points  = avoid_polygon_inner.polygon().points;
+        for (auto& wipe_tower_bbx_p : avoid_points) {
+            if (ClipperLib::PointInPolygon(wipe_tower_bbx_p, bed_polygon.points) != 1) {
+                is_bbx_in_bed = false;
+                break;
+            }
+        }
+        if (!is_bbx_in_bed) {
+            res.points.push_back(end_pos);
+            return res;
+        }
+        // Ray-Line Segment Intersection
+        auto ray_intersetion_line = [](const Vec2d& a, const Vec2d& v1, const Vec2d& b, const Vec2d& c) -> std::pair<bool, Point> {
+            const Vec2d v2    = c - b;
+            double      denom = cross2(v1, v2);
+            if (fabs(denom) < EPSILON)
+                return {false, Point(0, 0)};
+            const Vec2d v12    = (a - b);
+            double      nume_a = cross2(v2, v12);
+            double      nume_b = cross2(v1, v12);
+            double      t1     = nume_a / denom;
+            double      t2     = nume_b / denom;
+            if (t1 >= 0 && t2 >= 0 && t2 <= 1.) {
+                // Get the intersection point.
+                Vec2d res = a + t1 * v1;
+                return std::pair<bool, Point>(true, scaled(res));
+            }
+            return std::pair<bool, Point>(false, {0, 0});
+        };
+        struct Inter_info
+        {
+            int   inter_idx0 = -1;
+            Point inter_p;
+        };
+        auto calc_path_len = [](Points& points, Inter_info& beg_info, Inter_info& end_info,
+                                bool is_add) -> std::pair<std::vector<Point>, double> {
+            int                beg = is_add ? (beg_info.inter_idx0 + 1) % points.size() : beg_info.inter_idx0;
+            int                end = is_add ? end_info.inter_idx0 : (end_info.inter_idx0 + 1) % points.size();
+            int                i   = beg;
+            double             len = 0;
+            std::vector<Point> path;
+            path.push_back(beg_info.inter_p);
+            len += (unscale(beg_info.inter_p) - unscale(points[beg])).squaredNorm();
+            while (i != end) {
+                int  ni = is_add ? (i + 1) % points.size() : (i - 1 + points.size()) % points.size();
+                auto a  = unscale(points[i]);
+                auto b  = unscale(points[ni]);
+                len += (a - b).squaredNorm();
+                path.push_back(points[i]);
+                i = ni;
+            }
+            path.push_back(points[end]);
+            path.push_back(end_info.inter_p);
+            len += (unscale(end_info.inter_p) - unscale(points[end])).squaredNorm();
+            return {path, len};
+        };
+        // calculate the intersection point of end_pos along vector v with the avoid_polygon.
+        // store in inter_info.
+        // represent this intersection by 'p'.
+        Inter_info inter_info;
+        for (size_t i = 0; i < avoid_points.size(); i++) {
+            const auto& a            = avoid_points[i];
+            const auto& b            = avoid_points[(i + 1) % avoid_points.size()];
+            auto [is_inter, inter_p] = ray_intersetion_line(unscale(end_pos), v.cast<double>(), unscale(a), unscale(b));
+            if (is_inter) {
+                inter_info.inter_idx0 = i;
+                inter_info.inter_p    = inter_p;
+                break;
+            }
+        }
+        if (inter_info.inter_idx0 == -1) {
+            res.points.push_back(end_pos);
+            return res;
+        }
+        // calculate the other intersection of start_to_p with the avoid_polygon.
+        // represent this intersection by 'p_'.
+        Inter_info inter_info2;
+        Linef      start_to_p(unscale(start_pos), unscale(inter_info.inter_p));
+        for (size_t i = 0; i < avoid_points.size(); i++) {
+            if (i == inter_info.inter_idx0)
+                continue;
+            Vec2d a = unscale(avoid_points[i]);
+            Vec2d b = unscale(avoid_points[(i + 1) % avoid_points.size()]);
+            Linef tower_edge(a, b);
+            Vec2d inter;
+            if (line_alg::intersection(start_to_p, tower_edge, &inter)) {
+                inter_info2.inter_p    = scaled(inter);
+                inter_info2.inter_idx0 = i;
+                break;
+            }
+        }
+        // if p_ does not exist, go directly to p.
+        // else p travels along the shorter path on the wipe_tower_offset_polygon to p_
+        if (inter_info2.inter_idx0 == -1) {
+            res.points.push_back(inter_info.inter_p);
+        } else {
+            std::vector<Point> path;
+            auto [path1, len1] = calc_path_len(avoid_points, inter_info2, inter_info, true);
+            auto [path2, len2] = calc_path_len(avoid_points, inter_info2, inter_info, false);
+            path               = len1 < len2 ? path1 : path2;
+            for (size_t i = 0; i < path.size(); i++) {
+                res.points.push_back(path[i]);
+            }
+        }
+        res.points.push_back(end_pos);
+        return res;
+    }
+
+     std::string tranGCode(const std::string& input, const std::string& keyword, double z)
+    {
+        // std::string keyword = "relative_zhop_up_for_firmware ";
+        size_t pos = input.find(keyword);
 
         // 提取 G-code 指令部分
         std::string gcode = (pos != std::string::npos) ? input.substr(pos + keyword.length()) : input;
@@ -1315,6 +1952,155 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
 
         return gcode;
     }
+
+
+    std::string WipeTowerIntegration::post_process_wipe_tower_moves_wipe_head(GCode&                             gcodegen,
+                                                                              const WipeTower::ToolChangeResult& tcr,
+                                                                              const Vec2f&                       translation,
+                                                                              Vec2f&                             end_wipe_pos,
+                                                                              std::string&                       wipe_head_path,
+                                                                              int&                               wipe_block_type,
+                                                                              float                              angle,
+                                                                              float                              z) const
+    {
+        if (z == -1.) {
+            z = tcr.print_z;
+        }
+        Vec2f extruder_offset;
+        if (m_single_extruder_multi_material)
+            extruder_offset = m_extruder_offsets[0].cast<float>();
+        else
+            extruder_offset = m_extruder_offsets[tcr.initial_tool].cast<float>();
+        std::string        line;
+        std::istringstream gcode_str(tcr.gcode);
+        std::string        gcode_out;
+        Vec2f              pos             = tcr.start_pos;
+        Vec2f              transformed_pos = pos;
+        Vec2f              old_pos(-1000.1f, -1000.1f);
+
+        Vec2f last_arc_end_pos = pos;
+        while (gcode_str) {
+            std::getline(gcode_str, line); // we read the gcode line by line
+
+            if (line.find(";avoiding_repeat_unretract") == 0)
+            {
+                wipe_block_type = 1;
+            }
+
+            if (line.find(";will_change_tool") == 0) {
+                // isapp = true;
+                wipe_head_path = gcode_out;
+                gcode_out      = "";
+                end_wipe_pos   = transformed_pos;
+                continue;
+            }
+
+            if (line.find("relative_zhop_up_for_firmware ") == 0) {
+                line = tranGCode(line, "relative_zhop_up_for_firmware ", z);
+            } else if (line.find("relative_zhop_recovery_for_firmware ") == 0) {
+                line = tranGCode(line, "relative_zhop_recovery_for_firmware ", z);
+                gcode_out += line + "\n";
+                continue;
+            }
+
+            // All G1 commands should be translated and rotated. X and Y coords are
+            // only pushed to the output when they differ from last time.
+            // WT generator can override this by appending the never_skip_tag
+            if (line.find("G1 ") == 0 || line.find("G2 ") == 0 || line.find("G3 ") == 0) {
+                std::string cur_gcode_start = line.find("G1 ") == 0 ? "G1 " : (line.find("G2 ") == 0 ? "G2 " : "G3 ");
+                bool        never_skip      = false;
+                auto        it              = line.find(WipeTower::never_skip_tag());
+                if (it != std::string::npos) {
+                    // remove the tag and remember we saw it
+                    never_skip = true;
+                    line.erase(it, it + WipeTower::never_skip_tag().size());
+                }
+                std::ostringstream line_out;
+                std::istringstream line_str(line);
+                line_str >> std::noskipws; // don't skip whitespace
+
+                Vec2f target_pos = pos;
+                Vec2f center_offset(0, 0);
+                float radius = 0;
+                bool  has_IJ = false;
+                bool  has_R  = false;
+
+                char ch = 0;
+                while (line_str >> ch) {
+                    if (ch == 'X' || ch == 'Y')
+                        line_str >> (ch == 'X' ? pos.x() : pos.y());
+                    else if (ch == 'I')
+                        line_str >> center_offset.x(), has_IJ = true;
+                    else if (ch == 'J')
+                        line_str >> center_offset.y(), has_IJ = true;
+                    else if (ch == 'R')
+                        line_str >> radius, has_R = true;
+                    else
+                        line_out << ch;
+                }
+
+                transformed_pos = Eigen::Rotation2Df(angle) * pos + translation;
+                if (cur_gcode_start == "G2 " || cur_gcode_start == "G3 ") {
+                    if (has_IJ) {
+                        center_offset = Eigen::Rotation2Df(angle) * center_offset;
+                    } else if (has_R) {
+                        Vec2f rotated_prev_pos = Eigen::Rotation2Df(angle) * last_arc_end_pos + translation;
+                    }
+                }
+
+                if (transformed_pos != old_pos || never_skip) {
+                    line = line_out.str();
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(3) << cur_gcode_start;
+                    if (transformed_pos.x() != old_pos.x() || never_skip)
+                        oss << " X" << transformed_pos.x() - extruder_offset.x();
+                    if (transformed_pos.y() != old_pos.y() || never_skip)
+                        oss << " Y" << transformed_pos.y() - extruder_offset.y();
+
+                    if (cur_gcode_start == "G2 " || cur_gcode_start == "G3 ") {
+                        if (has_IJ) {
+                            oss << " I" << center_offset.x() << " J" << center_offset.y();
+                        } else if (has_R) {
+                            oss << " R" << radius;
+                        }
+                    }
+
+                    oss << " ";
+                    line.replace(line.find(cur_gcode_start), 3, oss.str());
+                    old_pos = transformed_pos;
+                    if (cur_gcode_start == "G2 " || cur_gcode_start == "G3 ") {
+                        last_arc_end_pos = target_pos;
+                    }
+                }
+            }
+
+            gcode_out += line + "\n";
+
+            // If this was a toolchange command, we should change current extruder offset
+            if (line == "[change_filament_gcode]") {
+                // BBS
+                if (!m_single_extruder_multi_material) {
+                    extruder_offset = m_extruder_offsets[tcr.new_tool].cast<float>();
+
+                    // If the extruder offset changed, add an extra move so everything is continuous
+                    if (extruder_offset != m_extruder_offsets[tcr.initial_tool].cast<float>()) {
+                        std::ostringstream oss;
+                        oss << std::fixed << std::setprecision(3) << "G1 X" << transformed_pos.x() - extruder_offset.x() << " Y"
+                            << transformed_pos.y() - extruder_offset.y() << "\n";
+                        gcode_out += oss.str();
+                    }
+                }
+
+                old_pos          = Vec2f{-1000.1f, -1000.1f};
+                pos              = tcr.tool_change_start_pos;
+                transformed_pos  = pos;
+                last_arc_end_pos = pos;
+            }
+        }
+        return gcode_out;
+    }
+
+   
 
     
     std::string WipeTowerIntegration::post_process_wipe_tower_moves_wipe(
@@ -1767,6 +2553,7 @@ void GCode::PlaceholderParserIntegration::validate_output_vector_variables()
 // object_layer & support_layer are considered to be on the same print_z, if they are not further than EPSILON.
 std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObject& object)
 {
+    const bool belt_machine = object.print()->config().machine_is_belt.value;
     std::vector<GCode::LayerToPrint> layers_to_print;
     layers_to_print.reserve(object.layers().size() + object.support_layers().size());
 
@@ -1824,7 +2611,7 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
         // Check that there are extrusions on the very first layer. The case with empty
         // first layer may result in skirt/brim in the air and maybe other issues.
         if (layers_to_print.size() == 1u) {
-            if (!has_extrusions)
+            if (!has_extrusions && !object.belt())
                 throw Slic3r::SlicingError(_(L("One object has empty initial layer and can't be printed. Please Cut the bottom or enable supports.")), object.id().id);
         }
 
@@ -1860,7 +2647,7 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
             last_extrusion_layer = &layers_to_print.back();
     }
 
-    if (! warning_ranges.empty()) {
+    if (!warning_ranges.empty() && !object.belt()) {
         std::string warning;
         size_t i = 0;
         for (i = 0; i < std::min(warning_ranges.size(), size_t(5)); ++i)
@@ -1961,6 +2748,7 @@ namespace DoExport {
         double total_used_filament   = 0.0;
         double total_weight          = 0.0;
         double total_cost            = 0.0;
+        const bool is_multicolor_method = config.multicolor_method;
 
         auto calc_statistics = [&](const std::map<size_t, double>& total_volumes_per_extruder) {
             for (auto volume : total_volumes_per_extruder) {
@@ -1981,7 +2769,10 @@ namespace DoExport {
         };
 
         calc_statistics(result.print_statistics.total_volumes_per_extruder);
-       // calc_statistics(result.print_statistics.flush_per_filament);
+        // BBS/Creality: flush volume is tracked separately, add it to totals for weight/length/cost
+        // 多色新方案已经在 total_volumes_per_extruder 中包含冲刷体积，避免重复。
+        if (!is_multicolor_method)
+            calc_statistics(result.print_statistics.flush_per_filament);
 
         print_statistics.total_extruded_volume = total_extruded_volume;
         print_statistics.total_used_filament   = total_used_filament;
@@ -2803,6 +3594,19 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     //m_placeholder_parser_integration.context.global_config = std::make_unique<DynamicConfig>();
     print.update_object_placeholders(m_placeholder_parser_integration.parser.config_writable(), ".gcode");
 
+    // Creality: expose per-plate values as scalar placeholders for custom G-code.
+    // This allows expressions like {wipe_tower_x + prime_tower_width*0.5} to work on the current plate.
+    {
+        auto rebind_plate_placeholders = [&print](PlaceholderParser& parser) {
+            const int         plate_idx = print.get_plate_index();
+            const PrintConfig& cfg       = print.config();
+
+            parser.set("wipe_tower_x", cfg.wipe_tower_x.get_at(plate_idx));
+            parser.set("wipe_tower_y", cfg.wipe_tower_y.get_at(plate_idx));
+        };
+        rebind_plate_placeholders(m_placeholder_parser_integration.parser);
+    }
+
     // Get optimal tool ordering to minimize tool switches of a multi-exruder print.
     // For a print by objects, find the 1st printing object.
     ToolOrdering tool_ordering;
@@ -2920,8 +3724,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     }
     print.throw_if_canceled();
 
-    m_cooling_buffer = make_unique<CoolingBuffer>(*this);
-    m_cooling_buffer->set_current_extruder(initial_extruder_id);
+    m_gcode_editor = make_unique<GCodeEditor>(*this);
+    m_gcode_editor->set_current_extruder(initial_extruder_id);
 
     // Emit machine envelope limits for the Marlin firmware.
     this->print_machine_envelope(file, print);
@@ -3160,12 +3964,18 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
             this->placeholder_parser().set("scan_first_layer", new ConfigOptionBool(false));
         }
     }
-    std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value, initial_extruder_id);
+    std::string machine_start_template = print.config().machine_start_gcode.value;
+    if (print.calib_mode() == CalibMode::Calib_Vol_speed_Tower) {
+        // 体积流速校准时，固定进给速度，避免占位符被200替换后过快。
+        boost::replace_all(machine_start_template, "{filament_max_volumetric_speed[initial_extruder]/0.360}", "6000");
+        boost::replace_all(machine_start_template, "{filament_max_volumetric_speed[initial_extruder]/0.3*60}", "6000");
+    }
+    std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", machine_start_template, initial_extruder_id);
     if (print.config().gcode_flavor != gcfKlipper) {
         // Set bed temperature if the start G-code does not contain any bed temp control G-codes.
-        this->_print_first_layer_bed_temperature(file, print, machine_start_gcode, initial_extruder_id, true);
+        this->_print_first_layer_bed_temperature(file, print, machine_start_gcode, initial_extruder_id, false);
         // Set extruder(s) temperature before and after start G-code.
-        this->_print_first_layer_extruder_temperatures(file, print, machine_start_gcode, initial_extruder_id, false);
+        this->_print_first_layer_extruder_temperatures(file, print, machine_start_gcode, initial_extruder_id, true);
     }
 
     // adds tag for processor
@@ -3187,7 +3997,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     //BBS: gcode writer doesn't know where the real position of extruder is after inserting custom gcode
     m_writer.set_current_position_clear(false);
     m_start_gcode_filament = GCodeProcessor::get_gcode_last_filament(machine_start_gcode);
-
+   
     //flush FanMover buffer to avoid modifying the start gcode if it's manual.
     if (!machine_start_gcode.empty() && this->m_fan_mover.get() != nullptr)
         file.write(this->m_fan_mover.get()->process_gcode("", true));
@@ -3329,7 +4139,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
                 if (finished_objects > 0) {
                     // Move to the origin position for the copy we're going to print.
                     // This happens before Z goes down to layer 0 again, so that no collision happens hopefully.
-                    m_enable_cooling_markers = false; // we're not filtering these moves through CoolingBuffer
+                    m_enable_cooling_markers = false; // we're not filtering these moves through GCodeEditor
                     m_avoid_crossing_perimeters.use_external_mp_once();
                     // BBS. change tool before moving to origin point.
                     if (m_writer.need_toolchange(initial_extruder_id)) {
@@ -3357,8 +4167,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
                     file.writeln(printing_by_object_gcode);
                 }
                 // Reset the cooling buffer internal state (the current position, feed rate, accelerations).
-                m_cooling_buffer->reset(this->writer().get_position());
-                m_cooling_buffer->set_current_extruder(initial_extruder_id);
+                m_gcode_editor->reset(this->writer().get_position());
+                m_gcode_editor->set_current_extruder(initial_extruder_id);
                 // Process all layers of a single object instance (sequential mode) with a parallel pipeline:
                 // Generate G-code, run the filters (vase mode, cooling buffer), run the G-code analyser
                 // and export G-code into file.
@@ -3383,6 +4193,9 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
             // Prusa Multi-Material wipe tower.
             if (has_wipe_tower && ! layers_to_print.empty()) {
                 m_wipe_tower.reset(new WipeTowerIntegration(&print, print.config(), print.get_plate_index(), print.get_plate_origin(), * print.wipe_tower_data().priming.get(), print.wipe_tower_data().tool_changes, *print.wipe_tower_data().final_purge.get()));
+
+                m_wipe_tower->set_wipe_tower_depth(print.get_wipe_tower_depth());
+                m_wipe_tower->set_wipe_tower_bbx(print.get_wipe_tower_bbx());
 
                 if (!is_bbl_printers && print.config().single_extruder_multi_material_priming) {
                     file.write(m_wipe_tower->prime(*this));
@@ -3429,6 +4242,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
             // Process all layers of all objects (non-sequential mode) with a parallel pipeline:
             // Generate G-code, run the filters (vase mode, cooling buffer), run the G-code analyser
             // and export G-code into file.
+            // 
+            // wwb: if the first layer is not done, we need to set the extruder to the initial extruder
+            if (print.objects().at(0)->belt()) {
+                this->set_belt(true);
+            }
             this->process_layers(print, tool_ordering, print_object_instances_ordering, layers_to_print, file);
             //BBS: close powerlost recovery
             {
@@ -3503,6 +4321,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     }
     // adds tags for time estimators
     file.write_format(";%s\n", GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Last_Line_M73_Placeholder).c_str());
+    //TIME_ELAPSED
+    file.write(";TIME_ELAPSED:" + std::to_string(m_processor.get_time(PrintEstimatedStatistics::ETimeMode::Normal)) + "\n\n");
     file.write_format("; EXECUTABLE_BLOCK_END\n\n");
 
     print.throw_if_canceled();
@@ -3545,7 +4365,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
         //SF TODO
 //      file.write_format("; variable_layer_height = %d\n", print.ad.adaptive_layer_height ? 1 : 0);
    
-	// use for gcode preview to judge whether all print object has shell
+	// use for gcode preview lite mode to judge whether all print object has shell
 	{
 		auto dynamic_config_value_greather_zero = [](const DynamicPrintConfig& global_config, const t_config_option_key& key) {
             bool result = true;
@@ -3593,8 +4413,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
 
 				//object`s range profile
                 t_layer_config_ranges& range_config = obj->layer_config_ranges;
-                for (auto i = range_config.begin(); i != range_config.end(); ++i) {
-                    const ModelConfig& range_config = i->second;
+                for (auto it = range_config.begin(); it != range_config.end(); ++it) {
+                    const ModelConfig& range_config = it->second;
                     has_surface_layers &= model_config_value_greather_zero(range_config, "top_shell_layers");
                     has_surface_layers &= model_config_value_greather_zero(range_config, "bottom_shell_layers");
                     has_surface_layers &= model_config_value_greather_zero(range_config, "wall_loops");
@@ -3617,7 +4437,43 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
             has_surface_layers &= dynamic_config_value_greather_zero(global_cfg, "wall_loops");
 		}
 
-          file.write_format("; all_surface_with_shell = %d\n", has_surface_layers ? 1 : 0);
+        file.write_format("; all_surface_with_shell = %d\n", has_surface_layers ? 1 : 0);
+	}
+
+	// use for gcode preview lod, find special layers
+	{
+
+		const auto &tool_changes = print.wipe_tower_data().tool_changes;
+        if (!tool_changes.empty()) {
+            std::vector<size_t> layers;
+			layers.push_back(0);
+            
+			int last_tool_change = tool_changes.front().size();
+
+            for (size_t i = 1; i < tool_changes.size(); i++) {
+                int changes = tool_changes.at(i).size();
+                if (changes != last_tool_change) {
+                    layers.push_back(i-1);
+                    last_tool_change = changes;
+                }
+            }
+
+            layers.push_back(tool_changes.size()-1);
+
+			std::string layers_string;
+            for (size_t i = 0; i < layers.size(); i++) {
+                if (i != 0)
+                    layers_string += ",";
+                layers_string += std::to_string(layers[i]);
+			}
+            file.write_format("; wipe_tower_tool_changes_layers = %s\n", layers_string.c_str());
+		}
+	}
+	
+	// use for gcode preview lod, if wipe_tower_no_sparse_layers == true, to disable lod
+    {
+        const bool no_sparse = print.config().wipe_tower_no_sparse_layers.value;
+		file.write_format("; should_enable_preview_lod = %d\n", (!no_sparse) ? 1 : 0);
 	}
 
       file.write("; CONFIG_BLOCK_END\n\n");
@@ -3654,8 +4510,17 @@ void GCode::process_layers(
     GCodeOutputStream                                                   &output_stream)
 {
     bool first_layer = true;
-    // The pipeline is variable: The vase mode filter is optional.
+    // BBS: get object label id
     size_t layer_to_print_idx = 0;
+    std::vector<int> object_label;
+
+    for (const PrintInstance* instance : print_object_instances_ordering)
+        object_label.push_back(instance->model_instance->get_labeled_id());
+
+    std::vector<LayerResult> layers_results;
+    layers_results.resize(layers_to_print.size());
+
+    // The pipeline is variable: The vase mode filter is optional.
     const auto generator = tbb::make_filter<void, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
         [this, &print, &tool_ordering, &print_object_instances_ordering, &layers_to_print, &layer_to_print_idx](tbb::flow_control& fc) -> LayerResult {
             if (layer_to_print_idx >= layers_to_print.size()) {
@@ -3677,7 +4542,9 @@ void GCode::process_layers(
                 //BBS
                 check_placeholder_parser_failed();
                 print.throw_if_canceled();
-                return this->process_layer(print, layer.second, layer_tools, &layer == &layers_to_print.back(), &print_object_instances_ordering, size_t(-1));
+                LayerResult res = this->process_layer(print, layer.second, layer_tools, &layer == &layers_to_print.back(), &print_object_instances_ordering, size_t(-1));
+                res.gcode_store_pos = layer_to_print_idx - 1;
+                return std::move(res);
             }
         });
     if (m_spiral_vase) {
@@ -3692,18 +4559,69 @@ void GCode::process_layers(
                 
             spiral_mode.enable(in.spiral_vase_enable);
             bool last_layer = in.layer_id == layers_to_print.size() - 1;
-            return { spiral_mode.process_layer(std::move(in.gcode), last_layer), in.layer_id, in.spiral_vase_enable, in.cooling_buffer_flush};
+            return { spiral_mode.process_layer(std::move(in.gcode), last_layer), in.layer_id, in.spiral_vase_enable, in.cooling_buffer_flush, in.gcode_store_pos};
         });
     const auto pressure_equalizer = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
         [pressure_equalizer = this->m_pressure_equalizer.get()](LayerResult in) -> LayerResult {
             return pressure_equalizer->process_layer(std::move(in));
         });
-    const auto cooling = tbb::make_filter<LayerResult, std::string>(slic3r_tbb_filtermode::serial_in_order,
-        [&cooling_buffer = *this->m_cooling_buffer.get()](LayerResult in) -> std::string {
-        	if (in.nop_layer_result)
-                return in.gcode;
-            return cooling_buffer.process_layer(std::move(in.gcode), in.layer_id, in.cooling_buffer_flush);
+
+    std::vector<std::vector<PerExtruderAdjustments>> layers_extruder_adjustments(layers_to_print.size());
+
+    const auto parsing = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
+        [&gcode_editor = *this->m_gcode_editor.get(), &layers_extruder_adjustments, object_label](LayerResult in) -> LayerResult {
+            // record gcode
+            in.gcode = gcode_editor.process_layer(std::move(in.gcode), in.layer_id, layers_extruder_adjustments[in.gcode_store_pos],
+                                                  object_label, in.cooling_buffer_flush, false);
+            return std::move(in);
         });
+
+    // step2: cooling
+    std::vector<std::vector<OutwallCollection>> layers_wall_collection(layers_to_print.size());
+
+    CoolingBuffer cooling_processor;
+
+    const auto cooling = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
+        [&cooling_processor, &layers_extruder_adjustments](LayerResult in) -> LayerResult {
+            in.layer_time = cooling_processor.calculate_layer_slowdown(layers_extruder_adjustments[in.gcode_store_pos]);
+            return std::move(in);
+        });
+
+    // step 4.1: record node data
+    SmoothCalculator smooth_calculator(object_label.size());
+
+    const auto build_node = tbb::make_filter<LayerResult, void>(slic3r_tbb_filtermode::serial_in_order,
+        [&smooth_calculator, &layers_wall_collection, &layers_extruder_adjustments, object_label, &layers_results](LayerResult in) {
+            smooth_calculator.build_node(layers_wall_collection[in.gcode_store_pos], object_label, layers_extruder_adjustments[in.gcode_store_pos]);
+            layers_results[in.gcode_store_pos] = std::move(in);
+            return;
+        });
+
+    // step 5: rewrite
+    const auto write_gcode = tbb::make_filter<LayerResult, std::string>(slic3r_tbb_filtermode::serial_in_order,
+        [&gcode_editor = *this->m_gcode_editor.get(), &layers_extruder_adjustments](LayerResult in) -> std::string {
+            return gcode_editor.write_layer_gcode(std::move(in.gcode), in.layer_id, in.layer_time, layers_extruder_adjustments[in.gcode_store_pos]);
+        });
+
+    std::vector<LayerResult> gcode_res;
+
+    // BBS: apply new feedrate of outwall and recalculate layer time
+    int        layer_idx            = 0;
+    const auto calculate_layer_time = tbb::make_filter<void, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
+        [&layer_idx, &smooth_calculator, &layers_extruder_adjustments, &gcode_res](tbb::flow_control& fc) -> LayerResult {
+            if (layer_idx == gcode_res.size()) {
+                fc.stop();
+                return {};
+            } else {
+                if (layer_idx > 0) {
+                    gcode_res[layer_idx].layer_time =
+                        smooth_calculator.recaculate_layer_time(layer_idx,
+                                                                layers_extruder_adjustments[gcode_res[layer_idx].gcode_store_pos]);
+                }
+                return gcode_res[layer_idx++];
+            }
+        });
+
     const auto output = tbb::make_filter<std::string, void>(slic3r_tbb_filtermode::serial_in_order,
         [this, &first_layer,&print,&output_stream,&processor = this->m_processor](std::string s) {
 
@@ -3761,15 +4679,38 @@ void GCode::process_layers(
             for(int i=0; i<n; i++)
             {
                 const std::size_t lines_this_segment = base_lines_per_segment + (static_cast<std::size_t>(i) < extra_lines ? 1 : 0);
-                std::string segment_content;
+                std::vector<std::string> segment_lines;
+                segment_lines.reserve(lines_this_segment);
                 for (std::size_t j = 0; j < lines_this_segment && line_index < total_lines; ++j, ++line_index) {
-                    segment_content += lines[line_index];
+                    segment_lines.emplace_back(lines[line_index]);
                 }
-                if (segment_content.empty() && line_index < total_lines) {
+                if (segment_lines.empty() && line_index < total_lines) {
                     continue;
                 }
-                if(i < n -1)
-                    segment_content += ";TIME_ELAPSED:" + std::to_string(layerTime + segment_time*(i+1)) + "\n";
+                if(i < n -1) {
+                    const std::string time_line = ";TIME_ELAPSED:" + std::to_string(layerTime + segment_time*(i+1)) + "\n";
+                    bool inserted = false;
+                    for (auto it = segment_lines.rbegin(); it != segment_lines.rend(); ++it) {
+                        bool blank = true;
+                        for (char c : *it) {
+                            if (c != '\n' && c != '\r' && c != ' ' && c != '\t') {
+                                blank = false;
+                                break;
+                            }
+                        }
+                        if (blank) {
+                            *it = time_line;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        // No blank line available in this segment, skip inserting to keep line numbers stable.
+                    }
+                }
+                std::string segment_content;
+                for (const auto& l : segment_lines)
+                    segment_content += l;
                 output_stream.write_with_noprocess(segment_content);
             }
         }else{
@@ -3777,7 +4718,7 @@ void GCode::process_layers(
         }
         
 		//output_stream.write(s); 
-
+        layerTime_new = processor.layer_time();
 		if (!s.empty())
 		{
 			std::string strTime = ";TIME_ELAPSED:" + std::to_string(layerTime_new) + "\n\n";
@@ -3806,15 +4747,36 @@ void GCode::process_layers(
         return in;
     });
 
+    // BBS: apply cooling
     // The pipeline elements are joined using const references, thus no copying is performed.
     if (m_spiral_vase && m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & cooling & fan_mover & output);
+        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & parsing & cooling & write_gcode & fan_mover & output);
     else if (m_spiral_vase)
-    	tbb::parallel_pipeline(12, generator & spiral_mode & cooling & fan_mover & output);
-    else if	(m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & fan_mover & output);
-    else
-    	tbb::parallel_pipeline(12, generator & cooling & fan_mover & output);
+        tbb::parallel_pipeline(12, generator & spiral_mode & parsing & cooling & write_gcode & fan_mover & output);
+    else if (!m_config.z_direction_outwall_speed_continuous) {
+        if (m_pressure_equalizer)
+            tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & write_gcode & fan_mover & output);
+        else
+            tbb::parallel_pipeline(12, generator & parsing & cooling & write_gcode & fan_mover & output);
+    } else {
+        if (m_pressure_equalizer)
+            tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & build_node);
+        else
+            tbb::parallel_pipeline(12, generator & parsing & cooling & build_node);
+
+        // append data
+        for (const LayerResult& res : layers_results) {
+            // remove empty gcode layer caused by support independent layers
+            if (res.cooling_buffer_flush) {
+                smooth_calculator.append_data(layers_wall_collection[res.gcode_store_pos]);
+                gcode_res.push_back(std::move(res));
+            }
+        }
+
+        smooth_calculator.smooth_layer_speed();
+
+        tbb::parallel_pipeline(12, calculate_layer_time & write_gcode & fan_mover & output);
+    }
 }
 
 // Process all layers of a single object instance (sequential mode) with a parallel pipeline:
@@ -3831,8 +4793,21 @@ void GCode::process_layers(
 {
     bool first_layer = true;
 
+    // The pipeline should be
+    // generator + (spiral) + (pressure_equalizer) + parse + cooling + (smoothing) + rewrite
+    // rewrite pipeline to get better schu
+
+    // BBS: get object label id
+    size_t           layer_to_print_idx = 0;
+    std::vector<int> object_label;
+    for (LayerToPrint layer : layers_to_print)
+        object_label.push_back(layer.original_object->instances()[single_object_idx].model_instance->get_labeled_id());
+
+    std::vector<LayerResult> layers_results;
+    layers_results.resize(layers_to_print.size());
+
+    // step 1: generator
     // The pipeline is variable: The vase mode filter is optional.
-    size_t layer_to_print_idx = 0;
     const auto generator = tbb::make_filter<void, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
         [this, &print, &tool_ordering, &layers_to_print, &layer_to_print_idx, single_object_idx, prime_extruder](tbb::flow_control& fc) -> LayerResult {
             if (layer_to_print_idx >= layers_to_print.size()) {
@@ -3851,7 +4826,10 @@ void GCode::process_layers(
                 //BBS
                 check_placeholder_parser_failed();
                 print.throw_if_canceled();
-                return this->process_layer(print, { std::move(layer) }, tool_ordering.tools_for_layer(layer.print_z()), &layer == &layers_to_print.back(), nullptr, single_object_idx, prime_extruder);
+                LayerResult res     = this->process_layer(print, {std::move(layer)}, tool_ordering.tools_for_layer(layer.print_z()),
+                                                          &layer == &layers_to_print.back(), nullptr, single_object_idx, prime_extruder);
+                res.gcode_store_pos = layer_to_print_idx - 1;
+                return std::move(res);
             }
         });
     if (m_spiral_vase) {
@@ -3865,18 +4843,73 @@ void GCode::process_layers(
                 return in;
             spiral_mode.enable(in.spiral_vase_enable);
             bool last_layer = in.layer_id == layers_to_print.size() - 1;
-            return { spiral_mode.process_layer(std::move(in.gcode), last_layer), in.layer_id, in.spiral_vase_enable, in.cooling_buffer_flush };
+            return { spiral_mode.process_layer(std::move(in.gcode), last_layer), in.layer_id, in.spiral_vase_enable, in.cooling_buffer_flush, in.gcode_store_pos };
         });
     const auto pressure_equalizer = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
         [pressure_equalizer = this->m_pressure_equalizer.get()](LayerResult in) -> LayerResult {
              return pressure_equalizer->process_layer(std::move(in));
         });
-    const auto cooling = tbb::make_filter<LayerResult, std::string>(slic3r_tbb_filtermode::serial_in_order,
-        [&cooling_buffer = *this->m_cooling_buffer.get()](LayerResult in)->std::string {
-            if (in.nop_layer_result)
-                return in.gcode;
-            return cooling_buffer.process_layer(std::move(in.gcode), in.layer_id, in.cooling_buffer_flush);
+
+    // BBS: get objects and nodes info, for better arrange
+    const ConstPrintObjectPtrsAdaptor& objects = print.objects();
+
+    // step 2: parse
+    std::vector<std::vector<PerExtruderAdjustments>> layers_extruder_adjustments(layers_to_print.size());
+
+    const auto parsing = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
+        [&gcode_editor = *this->m_gcode_editor.get(), &layers_extruder_adjustments, object_label](LayerResult in) -> LayerResult {
+            // record gcode
+            in.gcode = gcode_editor.process_layer(std::move(in.gcode), in.layer_id, layers_extruder_adjustments[in.gcode_store_pos],
+                                                  object_label, in.cooling_buffer_flush, false);
+            return std::move(in);
         });
+
+    // step 3: cooling
+    std::vector<std::vector<OutwallCollection>> layers_wall_collection(layers_to_print.size());
+    CoolingBuffer                               cooling_processor;
+
+    const auto cooling = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
+        [&cooling_processor, &layers_extruder_adjustments](LayerResult in) -> LayerResult {
+            in.layer_time = cooling_processor.calculate_layer_slowdown(layers_extruder_adjustments[in.gcode_store_pos]);
+            return std::move(in);
+        });
+
+    // step 4.1: record node data
+    SmoothCalculator smooth_calculator(object_label.size());
+
+    const auto build_node = tbb::make_filter<LayerResult, void>(slic3r_tbb_filtermode::serial_in_order,
+        [&smooth_calculator, &layers_wall_collection, &layers_extruder_adjustments, object_label, &layers_results](LayerResult in) {
+            smooth_calculator.build_node(layers_wall_collection[in.gcode_store_pos], object_label, layers_extruder_adjustments[in.gcode_store_pos]);
+            layers_results[in.gcode_store_pos] = std::move(in);
+            return;
+        });
+
+    // step 5: rewrite
+    const auto write_gcode = tbb::make_filter<LayerResult, std::string>(slic3r_tbb_filtermode::serial_in_order,
+        [&gcode_editor = *this->m_gcode_editor.get(), &layers_extruder_adjustments](LayerResult in) -> std::string {
+            return gcode_editor.write_layer_gcode(std::move(in.gcode), in.layer_id, in.layer_time, layers_extruder_adjustments[in.gcode_store_pos]);
+        });
+
+    std::vector<LayerResult> gcode_res;
+
+    // BBS: apply new feedrate of outwall and recalculate layer time
+    int        layer_idx            = 0;
+    // restart pipeline
+    const auto calculate_layer_time = tbb::make_filter<void, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
+        [&layer_idx, &gcode_res, &smooth_calculator, &layers_extruder_adjustments](tbb::flow_control& fc) -> LayerResult {
+            if (layer_idx == gcode_res.size()) {
+                fc.stop();
+                return {};
+            } else {
+                if (layer_idx > 0) {
+                    gcode_res[layer_idx].layer_time =
+                        smooth_calculator.recaculate_layer_time(layer_idx,
+                                                                layers_extruder_adjustments[gcode_res[layer_idx].gcode_store_pos]);
+                }
+                return gcode_res[layer_idx++];
+            }
+        });
+
     const auto output = tbb::make_filter<std::string, void>(slic3r_tbb_filtermode::serial_in_order,
         [this, &first_layer, &print, &output_stream, &processor = this->m_processor](std::string s) {
 
@@ -3934,15 +4967,37 @@ void GCode::process_layers(
         return in;
     });
 
+    // BBS: apply cooling
     // The pipeline elements are joined using const references, thus no copying is performed.
     if (m_spiral_vase && m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & cooling & fan_mover & output);
+        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & parsing & cooling & write_gcode & fan_mover & output);
     else if (m_spiral_vase)
-    	tbb::parallel_pipeline(12, generator & spiral_mode & cooling & fan_mover & output);
-    else if	(m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & fan_mover & output);
-    else
-    	tbb::parallel_pipeline(12, generator & cooling & fan_mover & output);
+        tbb::parallel_pipeline(12, generator & spiral_mode & parsing & cooling & write_gcode & fan_mover & output);
+    else if (!m_config.z_direction_outwall_speed_continuous) {
+        if (m_pressure_equalizer)
+            tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & write_gcode & fan_mover & output);
+        else
+            tbb::parallel_pipeline(12, generator & parsing & cooling & write_gcode & fan_mover & output);
+    } else {
+        if (m_pressure_equalizer)
+            tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & build_node);
+        else
+            tbb::parallel_pipeline(12, generator & parsing & cooling & build_node);
+        // step 4.2: smoothing
+        // break pipeline and do z smoothing
+        // append data
+        for (const LayerResult& res : layers_results) {
+            // remove empty gcode layer caused by support independent layers
+            if (res.cooling_buffer_flush) {
+                smooth_calculator.append_data(layers_wall_collection[res.gcode_store_pos]);
+                gcode_res.push_back(res);
+            }
+        }
+
+        smooth_calculator.smooth_layer_speed();
+
+        tbb::parallel_pipeline(12, calculate_layer_time & write_gcode & fan_mover & output);
+    }
 }
 
 std::string GCode::placeholder_parser_process(const std::string &name, const std::string &templ, unsigned int current_extruder_id, const DynamicConfig *config_override)
@@ -4762,6 +5817,7 @@ LayerResult GCode::process_layer(
 
     // BBS: don't use lazy_raise when enable spiral vase
     gcode += this->change_layer(print_z);  // this will increase m_layer_index
+  
     m_layer = &layer;
     m_object_layer_over_raft = false;
     if(is_BBL_Printer()){
@@ -4945,10 +6001,15 @@ LayerResult GCode::process_layer(
         return next_extruder;
     };
     
-    if (m_config.enable_overhang_speed && !m_config.overhang_speed_classic) {
-        for (const auto &layer_to_print : layers) {
-            m_extrusion_quality_estimator.prepare_for_new_layer(layer_to_print.original_object,
-                                                                layer_to_print.object_layer);
+    for (const auto& layer_to_print : layers) {
+        if (layer_to_print.object_layer) {
+            const auto& regions               = layer_to_print.object_layer->regions();
+            const bool  enable_overhang_speed = std::any_of(regions.begin(), regions.end(), [](const LayerRegion* r) {
+                return r->has_extrusions() && r->region().config().enable_overhang_speed;
+            });
+            if (enable_overhang_speed) {
+                m_extrusion_quality_estimator.prepare_for_new_layer(layer_to_print.original_object, layer_to_print.object_layer);
+            }
         }
     }
 
@@ -5096,7 +6157,8 @@ LayerResult GCode::process_layer(
                 // The process is almost the same for perimeters and infills - we will do it in a cycle that repeats twice:
                 std::vector<unsigned int> printing_extruders;
                 for (const ObjectByExtruder::Island::Region::Type entity_type : { ObjectByExtruder::Island::Region::INFILL, ObjectByExtruder::Island::Region::PERIMETERS }) {
-                    for (const ExtrusionEntity *ee : (entity_type == ObjectByExtruder::Island::Region::INFILL) ? layerm->fills.entities : layerm->perimeters.entities) {
+                    bool is_infill = entity_type == ObjectByExtruder::Island::Region::INFILL;
+                    for (const ExtrusionEntity *ee : is_infill ? layerm->fills.entities : layerm->perimeters.entities) {
                         // extrusions represents infill or perimeter extrusions of a single island.
                         assert(dynamic_cast<const ExtrusionEntityCollection*>(ee) != nullptr);
                         const auto *extrusions = static_cast<const ExtrusionEntityCollection*>(ee);
@@ -5305,6 +6367,8 @@ LayerResult GCode::process_layer(
                 if (m_config.reduce_crossing_wall)
                     m_avoid_crossing_perimeters.init_layer(*m_layer);
 
+                // BBS: label object id, prepare for cooling
+                gcode += "; OBJECT_ID: " + std::to_string(instance_to_print.label_object_id) + "\n";
                 if (this->config().gcode_label_objects) {
                     gcode += std::string("; printing object ") + instance_to_print.print_object.model_object()->name +
                              " id:" + std::to_string(instance_to_print.print_object.get_id()) + " copy " + std::to_string(inst.id) + "\n";
@@ -5329,11 +6393,16 @@ LayerResult GCode::process_layer(
                     }
                 }
 
-                if (m_config.enable_overhang_speed && !m_config.overhang_speed_classic)
-                    m_extrusion_quality_estimator.set_current_object(&instance_to_print.print_object);
+                // Orca(#7946): set current obj regardless of the `enable_overhang_speed` value, because
+                // `enable_overhang_speed` is a PrintRegionConfig and here we don't have a region yet.
+                // And no side effect doing this even if `enable_overhang_speed` is off, so don't bother
+                // checking anything here.
+                m_extrusion_quality_estimator.set_current_object(&instance_to_print.print_object);
 
                 // When starting a new object, use the external motion planner for the first travel move.
                 const Point &offset = instance_to_print.print_object.instances()[instance_to_print.instance_id].shift;
+
+                const Transform3d& trafo  = instance_to_print.print_object.instances()[instance_to_print.instance_id].print_object->trafo();
                 std::pair<const PrintObject*, Point> this_object_copy(&instance_to_print.print_object, offset);
                 if (m_last_obj_copy != this_object_copy)
                     m_avoid_crossing_perimeters.use_external_mp_once();
@@ -5442,8 +6511,8 @@ LayerResult GCode::process_layer(
                     gcode += this->extrude_infill(print,by_region_specific, true);
 
                     //CP: analysis large area
-                    if (m_config.smart_cooling_zones.get_at(extruder_id)) {
-                        std::string filament_type = m_config.filament_type.get_at(extruder_id);
+                    auto slowdown_logic = CoolingSlowdownLogicType(m_config.cooling_slowdown_logic.get_at(extruder_id));
+                    if (slowdown_logic == CoolingSlowdownLogicType::SmartCoolingZones) {
                         if (by_region_specific.size() == 0) {
                             continue;
                         }
@@ -5454,15 +6523,11 @@ LayerResult GCode::process_layer(
                             continue;
                         }
                         double_t total_area = 0.0;
-                        double_t slice_threshold = 0.0;
-                        if (filament_type == "PETG") {
-                            slice_threshold = 20.0;
-                        } else{
-                            slice_threshold = 10.0;
-                        }
+                        const std::string filament_type = m_config.filament_type.get_at(extruder_id);
+                        double_t slice_threshold = (filament_type == "PETG") ? 20.0 : 10.0;
                         for (const auto& lslice : layer.lslices) {
                             double slice_area = unscale_(unscale_(area(lslice)));
-                            //CP: small island should coolling slow down, slice_area must be larger than 1 to ignore the print area of ​​a single point
+                            //CP: small island should coolling slow down, slice_area must be larger than 1 to ignore the print area of ??a single point
                             if (slice_area > 1 && slice_area < slice_threshold) {
                                 large_area = false;
                             }
@@ -5493,9 +6558,9 @@ LayerResult GCode::process_layer(
                         if (boost::algorithm::contains(gcode, ";TYPE:Overhang wall") || boost::algorithm::contains(gcode, ";TYPE:Bridge")) {
                             large_area = false;
                         }
-                         if (large_area) {
-                             boost::replace_all(gcode, ";_EXTRUDE_SET_SPEED", ";_EXTRUDE_SET_SPEED;_LARGE_RANGE");
-                         }
+                        if (large_area) {
+                            boost::replace_all(gcode, ";_EXTRUDE_SET_SPEED", ";_EXTRUDE_SET_SPEED;_LARGE_RANGE");
+                        }
                     }
                 }
 
@@ -5544,8 +6609,8 @@ LayerResult GCode::process_layer(
         gcode = m_spiral_vase->process_layer(std::move(gcode));
 
     // Apply cooling logic; this may alter speeds.
-    if (m_cooling_buffer)
-        gcode = m_cooling_buffer->process_layer(std::move(gcode), layer.id(),
+    if (m_gcode_editor)
+        gcode = m_gcode_editor->process_layer(std::move(gcode), layer.id(),
             // Flush the cooling buffer at each object layer or possibly at the last layer, even if it contains just supports (This should not happen).
             object_layer || last_layer);
 
@@ -5657,7 +6722,7 @@ void GCode::append_full_config(const Print &print, std::string &str)
                 tempconfig.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(m_matrix));
                 ss << "; " << key << " = " << tempconfig.opt_serialize(key) << "\n";
                 tempconfig.clear();
-            }
+            } 
             else
                 ss << "; " << key << " = " << cfg.opt_serialize(key) << "\n";
         }
@@ -5678,16 +6743,17 @@ void GCode::set_extruders(const std::vector<unsigned int> &extruder_ids)
         }
 }
 
-void GCode::set_origin(const Vec2d &pointf)
+void GCode::set_origin(const Vec2d& pointf, const Transform3d& trafo)
 {
     // if origin increases (goes towards right), last_pos decreases because it goes towards left
-    const Point translate(
-        scale_(m_origin(0) - pointf(0)),
-        scale_(m_origin(1) - pointf(1))
-    );
-    m_last_pos += translate;
-    m_wipe.path.translate(translate);
-    m_origin = pointf;
+
+    {
+        // if origin increases (goes towards right), last_pos decreases because it goes towards left
+        const Point translate(scale_(m_origin(0) - pointf(0)), scale_(m_origin(1) - pointf(1)));
+        m_last_pos += translate;
+        m_wipe.path.translate(translate);
+        m_origin = pointf;
+    }
 }
 
 std::string GCode::preamble()
@@ -5704,7 +6770,7 @@ std::string GCode::preamble()
 }
 
 // called by GCode::process_layer()
-std::string GCode::change_layer(coordf_t print_z)
+std::string GCode::change_layer(coordf_t print_z, bool toolchange)
 {
     double limitSpeed = getLimitSpeed();
     std::string gcode;
@@ -5716,7 +6782,7 @@ std::string GCode::change_layer(coordf_t print_z)
     if (EXTRUDER_CONFIG(retract_when_changing_layer) && m_writer.will_move_z(z)) {
         LiftType lift_type = this->to_lift_type(ZHopType(EXTRUDER_CONFIG(z_hop_types)));
         //BBS: force to use SpiralLift when change layer if lift type is auto
-        gcode += this->retract(false, false, ZHopType(EXTRUDER_CONFIG(z_hop_types)) == ZHopType::zhtAuto ? LiftType::SpiralLift : lift_type);
+        gcode += this->retract(toolchange, false, ZHopType(EXTRUDER_CONFIG(z_hop_types)) == ZHopType::zhtAuto ? LiftType::SpiralLift : lift_type);
     }
 
     m_writer.add_object_change_labels(gcode);
@@ -6078,8 +7144,18 @@ std::string GCode::extrude_perimeters(const Print &print, const std::vector<Obje
             if (!should_print)
                 continue;
 
-            for (const ExtrusionEntity* ee : region.perimeters)
+            // BBS: output merged node id
+            int curr_node    = 0;
+            int cooling_node = -1;
+            for (size_t perimeter_idx = 0; perimeter_idx < region.perimeters.size(); ++perimeter_idx) {
+                const ExtrusionEntity* ee         = region.perimeters[perimeter_idx];
+                int                    ee_node_id = ee->get_cooling_node();
+                if (ee_node_id != cooling_node) {
+                    gcode += "; COOLING_NODE: " + std::to_string(ee_node_id) + "\n";
+                }
+
                 gcode += this->extrude_entity(*ee, "perimeter", -1., region.perimeters);
+            }
         }
     return gcode;
 }
@@ -6993,21 +8069,27 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
       }
     };
 
-    std::string comment;
+    std::string cooling_marker_setspeed_comments;
     if (m_enable_cooling_markers) {
-        comment = ";_EXTRUDE_SET_SPEED";
+        cooling_marker_setspeed_comments = ";_EXTRUDE_SET_SPEED";
         if (is_external_perimeter(path.role()))
-            comment += ";_EXTERNAL_PERIMETER";
+            cooling_marker_setspeed_comments += ";_EXTERNAL_PERIMETER";
+        else if (is_perimeter(path.role()))
+        {
+            if (path.perimeter_index.has_value())
+            {
+                cooling_marker_setspeed_comments += ";_INTERNAL_PERIMETER" + std::to_string(path.perimeter_index.value());
+            }
+        }
     }
 
     if (!variable_speed) {
-
         if (m_config.acceleration_limit_mess_enable
             || m_config.speed_limit_to_height_enable)
             m_smoothSpeedAcc->detect_speed_min(F, weight, m_last_layer_z);
 
         // F is mm per minute.
-        gcode += m_writer.set_speed(F, "", comment);
+        gcode += m_writer.set_speed(F, "", cooling_marker_setspeed_comments);
         {
             if (m_enable_cooling_markers) {
                 if (enable_overhang_bridge_fan) {
@@ -7140,7 +8222,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
             }
         }
     } else {
-        double last_set_speed = new_points[0].speed * 60.0;
+        double last_set_speed = F/*new_points[0].speed * 60.0*/;
 
         double total_length = 0;
         if (sloped != nullptr) {
@@ -7151,7 +8233,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
             Polyline l(p);
             total_length = l.length() * SCALING_FACTOR;
         }
-        gcode += m_writer.set_speed(last_set_speed, "", comment);
+        //gcode += m_writer.set_speed(last_set_speed, "", cooling_marker_setspeed_comments);
         Vec2d prev = this->point_to_gcode_quantized(new_points[0].p);
         bool pre_fan_enabled = false;
         bool cur_fan_enabled = false;
@@ -7159,7 +8241,8 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
             pre_fan_enabled = check_overhang_fan(new_points[0].overlap, path.role());
 
         double path_length = 0.;
-        for (size_t i = 1; i < new_points.size(); i++) {
+        for (size_t i = 1; i < new_points.size(); i++)
+        {
             std::string tempDescription = description;
             const ProcessedPoint &processed_point = new_points[i];
             const ProcessedPoint &pre_processed_point = new_points[i-1];
@@ -7196,17 +8279,19 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
             const double line_length = (p - prev).norm();
             if(line_length < EPSILON)
                 continue;
+
             path_length += line_length;
             double new_speed = pre_processed_point.speed * 60.0;
             // Ignore small speed variations - emit speed change if the delta between current and new is greater than 60mm/min / 1mm/sec
             // Reset speed to F if delta to F is less than 1mm/sec
             if ((std::abs(last_set_speed - new_speed) > 60)) {
-                gcode += m_writer.set_speed(new_speed, "", comment);
+                gcode += m_writer.set_speed(new_speed, "", cooling_marker_setspeed_comments);
                 last_set_speed = new_speed;
             } else if ((std::abs(F - new_speed) <= 60)) {
-                gcode += m_writer.set_speed(F, "", comment);
+                gcode += m_writer.set_speed(F, "", cooling_marker_setspeed_comments);
                 last_set_speed = F;
             }
+
             auto dE = e_per_mm * line_length;
             if (m_small_area_infill_flow_compensator  && m_config.small_area_infill_flow_compensation.value) {
                 auto oldE = dE;
@@ -7309,7 +8394,7 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
         This is expressed in print coordinates, so it will need to be translated by
         this->origin in order to get G-code coordinates.  */
     Polyline travel { this->last_pos(), point };
-
+   
     // check whether a straight travel move would need retraction
     LiftType lift_type = LiftType::SpiralLift;
     bool needs_retraction = this->needs_retraction(travel, role, lift_type);
@@ -7354,13 +8439,6 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     }
     double limitSpeed = getLimitSpeed();
 
-    if (m_writer.get_gcode_flavor() == gcfKlipper) {
-        gcode += m_writer.set_accel_and_jerk(acceleration_to_set, jerk_to_set);
-    } else {
-        gcode += m_writer.set_travel_acceleration(acceleration_to_set);
-        gcode += m_writer.set_jerk_xy(jerk_to_set);
-    }
-
     // if a retraction would be needed, try to use reduce_crossing_wall to plan a
     // multi-hop travel path inside the configuration space
     if (needs_retraction
@@ -7377,6 +8455,7 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     // Re-allow reduce_crossing_wall for the next travel moves
     m_avoid_crossing_perimeters.reset_once_modifiers();
 
+    std::string wipe_retract_gcode{};
     // generate G-code for the travel move
     if (needs_retraction) {
         // ORCA: Fix scenario where wipe is disabled when avoid crossing perimeters was enabled even though a retraction move was performed.
@@ -7386,6 +8465,7 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
 
         Point last_post_before_retract = this->last_pos();
         gcode += this->retract(false, false, lift_type);
+        //wipe_retract_gcode = this->retract(false, false, lift_type);
         // When "Wipe while retracting" is enabled, then extruder moves to another position, and travel from this position can cross perimeters.
         // Because of it, it is necessary to call avoid crossing perimeters again with new starting point after calling retraction()
         // FIXME Lukas H.: Try to predict if this second calling of avoid crossing perimeters will be needed or not. It could save computations.
@@ -7404,6 +8484,24 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
 
     // if needed, write the gcode_label_objects_end then gcode_label_objects_start
     m_writer.add_object_change_labels(gcode);
+
+    bool use_short_distance_acceleration =
+        is_external_perimeter(role) &&
+        travel.length() < scaled<double>(m_config.travel_short_distance_threshold.value); // Prusa used VFA, -travel
+                                                                                                       // short distance acceleration
+    const unsigned travel_acceleration                = static_cast<unsigned>(m_config.travel_acceleration.value + 0.5);
+    const unsigned travel_short_distance_acceleration = static_cast<unsigned>(m_config.travel_short_distance_acceleration.value + 0.5);
+
+    if (this->config().travel_short_distance_acceleration > 0. &&
+        use_short_distance_acceleration) // Prusa used VFA, -travel short distance acceleration
+        acceleration_to_set = travel_short_distance_acceleration;
+
+    if (m_writer.get_gcode_flavor() == gcfKlipper) {
+        gcode += m_writer.set_accel_and_jerk(acceleration_to_set, jerk_to_set);
+    } else {
+        gcode += m_writer.set_travel_acceleration(acceleration_to_set);
+        gcode += m_writer.set_jerk_xy(jerk_to_set);
+    }
 
     // use G1 because we rely on paths being straight (G0 may make round paths)
     if (travel.size() >= 2) {
@@ -7441,6 +8539,24 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
         }
         this->set_last_pos(travel.points.back());
     }
+
+    //// Prusa used VFA, -travel short distance acceleration
+    //if (this->config().travel_short_distance_acceleration > 0.) {
+    //    // This is mainly for parts of the G-code export that don't take into account that travel acceleration could change during printing.
+    //    // Those parts of the G-code export always use the travel acceleration that was set last.
+    //    if (use_short_distance_acceleration && travel_short_distance_acceleration != travel_acceleration) {
+    //        gcode += this->m_writer.set_travel_acceleration(travel_acceleration);
+    //    }
+
+    //    if (!GCodeWriter::supports_separate_travel_acceleration(config().gcode_flavor)) {
+    //        // In case that this flavor does not support separate print and travel acceleration,
+    //        // reset acceleration to default.
+    //        // TODO: This doesn't seem to perform what the comment describes.
+    //        gcode += this->m_writer.set_travel_acceleration(travel_acceleration);
+    //    }
+    //}
+
+
     return gcode;
 }
 
@@ -7716,7 +8832,8 @@ std::string GCode::set_extruder_new(unsigned int extruder_id,
     m_toolchange_count++;
 
     // prepend retraction on the current extruder
-    std::string gcode = this->retract(true, false);
+    this->retract(true, false);
+    std::string gcode;
 
     // Always reset the extrusion path, even if the tool change retract is set to zero.
     m_wipe.reset_path();
@@ -8140,8 +9257,12 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     dyn_config.set_key_value("travel_point_2_y", new ConfigOptionFloat(float(travel_point_2.y())));
     dyn_config.set_key_value("travel_point_3_x", new ConfigOptionFloat(float(travel_point_3.x())));
     dyn_config.set_key_value("travel_point_3_y", new ConfigOptionFloat(float(travel_point_3.y())));
-    //dyn_config.set_key_value("wipe_tower_start_position_x", new ConfigOptionFloat(float(0.0)));
-    //dyn_config.set_key_value("wipe_tower_start_position_y", new ConfigOptionFloat(float(0.0)));
+    // Provide sane defaults for wipe tower placeholders even when no wipe tower is generated.
+    dyn_config.set_key_value("wipe_tower_start_position_x", new ConfigOptionFloat(nozzle_pos(0)));
+    dyn_config.set_key_value("wipe_tower_start_position_y", new ConfigOptionFloat(nozzle_pos(1)));
+    dyn_config.set_key_value("wipe_tower_random_num", new ConfigOptionFloat(0.f));
+    dyn_config.set_key_value("wipe_tower_outer_wall_x", new ConfigOptionFloat(nozzle_pos(0)));
+    dyn_config.set_key_value("wipe_tower_outer_wall_y", new ConfigOptionFloat(nozzle_pos(1)));
     dyn_config.set_key_value("flush_length", new ConfigOptionFloat(wipe_length));
     /*
     int flush_count = std::min(g_max_flush_count, (int)std::round(wipe_volume / g_purge_volume_one_time));

@@ -10,8 +10,10 @@ public:
 #if wxUSE_WEBVIEW_EDGE
     static bool CheckWebViewRuntime();
     static bool DownloadAndInstallWebViewRuntime();
+    static bool ReInstallWebViewRuntime();
 #endif
     static void LoadUrl(wxWebView * webView, wxString const &url);
+    static void DestroyAll();
 
     static bool RunScript(wxWebView * webView, wxString const & msg);
 

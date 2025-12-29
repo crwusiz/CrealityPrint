@@ -412,6 +412,17 @@ const BoundingBoxf3& ModelObject::bounding_box_exact() const
     return m_bounding_box_exact;
 }
 
+const BoundingBoxf3& ModelObject::belt_bounding_box_exact() const
+{
+   m_belt_bounding_box_exact.reset();
+   for (size_t i = 0; i < this->instances.size(); ++i)
+        m_belt_bounding_box_exact.merge(this->instance_belt_bounding_box(i));
+   return m_belt_bounding_box_exact;
+}
+
+Vec3d ModelObject::get_instances_min_offset() const { return Vec3d(); }
+
+
 double ModelObject::min_z() const
 {
     const_cast<ModelObject*>(this)->update_min_max_z();
@@ -422,6 +433,75 @@ double ModelObject::max_z() const
 {
     const_cast<ModelObject*>(this)->update_min_max_z();
     return m_bounding_box_exact.max.z();
+}
+
+double ModelObject::min_y() const
+{
+    const_cast<ModelObject*>(this)->update_min_max_y();
+    return m_bounding_box_exact.min.y();
+}
+
+double ModelObject::current_min_y() const
+{
+    m_min_max_y_valid = false;
+    const_cast<ModelObject*>(this)->update_min_max_y();
+    return m_bounding_box_exact.min.y();
+}
+
+double ModelObject::max_y() const
+{
+    const_cast<ModelObject*>(this)->update_min_max_y();
+    return m_bounding_box_exact.max.y();
+}
+
+double ModelObject::current_max_y() const
+{
+    m_min_max_y_valid = false;
+    const_cast<ModelObject*>(this)->update_min_max_y();
+    return m_bounding_box_exact.max.y();
+}
+
+double ModelObject::depth() const
+{
+    const_cast<ModelObject*>(this)->update_min_max_y();
+    return (m_bounding_box_exact.max.y() - m_bounding_box_exact.min.y());
+}
+
+  BoundingBoxf3 ModelObject::belt_box() {
+    return m_belt_bounding_box_exact;
+ }
+
+
+void ModelObject::update_min_max_y()
+{
+    assert(!this->instances.empty());
+    if (!m_min_max_y_valid && !this->instances.empty()) {
+        m_min_max_y_valid              = true;
+        const Transform3d mat_instance = this->instances.front()->get_transformation().get_matrix();
+        double            global_min_y = std::numeric_limits<double>::max();
+        double            global_max_y = -std::numeric_limits<double>::max();
+        for (ModelVolume* v : this->volumes)
+            if (v->is_model_part())
+            {
+                const Transform3d m          = mat_instance * v->get_matrix();
+                const Vec3d       row_y      = m.linear().row(1).cast<double>();
+                const double      shift_y    = m.translation().y();
+                double            this_min_y = std::numeric_limits<double>::max();
+                double            this_max_y = -std::numeric_limits<double>::max();
+                for (const Vec3f& p : v->mesh().its.vertices) {
+                    double y   = row_y.dot(p.cast<double>());
+                    this_min_y = std::min(this_min_y, y);
+                    this_max_y = std::max(this_max_y, y);
+                }
+                this_min_y += shift_y;
+                this_max_y += shift_y;
+                v->min_y     = this_min_y;
+                global_min_y = std::min(global_min_y, this_min_y);
+                global_max_y = std::max(global_max_y, this_max_y);
+            }
+        m_bounding_box_exact.min.y() = global_min_y;
+        m_bounding_box_exact.max.y() = global_max_y;
+    }
 }
 
 void ModelObject::update_min_max_z()
@@ -569,6 +649,49 @@ BoundingBoxf3 ModelObject::instance_bounding_box(const ModelInstance &instance, 
     for (ModelVolume *v : this->volumes) {
         if (v->is_model_part())
             bb.merge(v->mesh().transformed_bounding_box(inst_matrix * v->get_matrix()));
+    }
+    return bb;
+}
+
+
+BoundingBoxf3 ModelObject::instance_belt_bounding_box(size_t instance_idx, bool dont_translate) const
+{
+    return instance_belt_bounding_box(*this->instances[instance_idx], dont_translate);
+}
+
+Transform3d beltXForm(const Transform3d& offset, float angle)
+{
+    float theta = angle * PI / 180.0f;
+
+    Transform3d xf0 = offset;
+
+    Transform3d xf1 = Transform3d::Identity();
+    xf1(2, 2)       = 1.0f / sinf(theta);
+    xf1(1, 2)       = -1.0f / tanf(theta);
+
+    Transform3d xf2 = Transform3d::Identity();
+    xf2(2, 2)       = 0.0f;
+    xf2(1, 1)       = 0.0f;
+    xf2(2, 1)       = -1.0f;
+    xf2(1, 2)       = 1.0f;
+
+    Vec3d                    xf3Data(0.0f, 0.0f, 0.0f);
+    Geometry::Transformation _trans;
+    _trans.set_offset(xf3Data);
+    auto xf3 = _trans.get_offset_matrix();
+
+    Transform3d xf = xf3 * xf2 * xf1 * xf0;
+    return xf;
+}
+
+BoundingBoxf3 ModelObject::instance_belt_bounding_box(const ModelInstance& instance, bool dont_translate) const
+{
+    BoundingBoxf3     bb;
+    
+    Transform3d inst_matrix = instance.get_transformation().get_matrix_no_offset();
+    for (ModelVolume* v : this->volumes) {
+        if (v->is_model_part())
+            bb.merge(v->mesh().transformed_bounding_box(inst_matrix * v->get_matrix(), beltXForm(Transform3d::Identity(),45.0f)));
     }
     return bb;
 }
@@ -1240,7 +1363,11 @@ unsigned int ModelObject::update_instances_print_volume_state(const BuildVolume 
                     continue;
                 }
 
-                const Transform3d matrix = model_instance->get_matrix() * vol->get_matrix();
+                /*const*/ Transform3d matrix = model_instance->get_matrix() * vol->get_matrix();
+                if (build_volume.type() == BuildVolume_Type::Belt) {
+                    matrix = model_instance->get_old_matrix() * vol->get_matrix();
+                }
+
                 BuildVolume::ObjectState state = build_volume.object_state(vol->mesh().its, matrix.cast<float>(), true /* may be below print bed */);
                 if (state == BuildVolume::ObjectState::Inside)
                     // Volume is completely inside.

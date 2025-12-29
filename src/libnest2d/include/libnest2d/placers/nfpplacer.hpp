@@ -174,10 +174,10 @@ template<class RawShape> class EdgeCache
 
     void createCache(const RawShape& sh)
     {
-        { // For the contour
-            auto first = shapelike::cbegin(sh);
-            auto next  = std::next(first);
-            auto endit = shapelike::cend(sh);
+        {   // For the contour
+            auto first = sl::cbegin(sh);
+            auto endit = sl::cend(sh);
+            auto next = first == endit ? endit : std::next(first);
 
             contour_.distances.reserve(shapelike::contourVertexCount(sh));
 
@@ -186,18 +186,28 @@ template<class RawShape> class EdgeCache
                 contour_.full_distance += length(contour_.emap.back());
                 contour_.distances.emplace_back(contour_.full_distance);
             }
+            if (*sl::cbegin(sh) != *sl::rcbegin(sh)) {
+                contour_.emap.emplace_back(*std::prev(endit), *sl::cbegin(sh));
+                contour_.full_distance += length(contour_.emap.back());
+                contour_.distances.emplace_back(contour_.full_distance);
+            }
         }
 
         for (auto& h : shapelike::holes(sh)) { // For the holes
-            auto first = h.begin();
-            auto next  = std::next(first);
-            auto endit = h.end();
+            auto first = sl::cbegin(h);
+            auto endit = sl::cend(h);
+            auto next = first == endit ? endit : std::next(first);
 
             ContourCache hc;
-            hc.distances.reserve(endit - first);
+            hc.distances.reserve(sl::contourVertexCount(h));
 
             while (next != endit) {
                 hc.emap.emplace_back(*(first++), *(next++));
+                hc.full_distance += length(hc.emap.back());
+                hc.distances.emplace_back(hc.full_distance);
+            }
+            if (*sl::cbegin(h) != *sl::rcbegin(h)) {
+                hc.emap.emplace_back(*std::prev(endit), *sl::cbegin(h));
                 hc.full_distance += length(hc.emap.back());
                 hc.distances.emplace_back(hc.full_distance);
             }

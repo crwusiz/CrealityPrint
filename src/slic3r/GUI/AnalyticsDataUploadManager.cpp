@@ -592,8 +592,34 @@ void AnalyticsDataUploadManager::uploadPreferencesChangedData()
     js["save_preset_choise"] = wxGetApp().app_config->get("save_preset_choise");
     js["save_project_choise"] = wxGetApp().app_config->get("save_project_choise");
     js["operation_date"] = Slic3r::Utils::utc_timestamp(Slic3r::Utils::get_current_time_utc());
+    js["enable_lod"] = wxGetApp().app_config->get("enable_lod");
+    js["enable_preview_lod"] = wxGetApp().app_config->get("enable_preview_lod");
 
     wxGetApp().track_event("preferences_changed", js.dump());
+}
+
+// Static: upload slice822 click event
+void AnalyticsDataUploadManager::uploadSlice822ClickEvent(const std::string& module, int id)
+{
+    try {
+        nlohmann::json payload;
+        payload["type_code"] = "slice822";
+        payload["event_type"]      = "click_event";
+        payload["function_module"] = module;
+        payload["module_id"]       = id;
+        payload["app_version"]     = GUI_App::format_display_version().c_str();
+        payload["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+        payload["timestamp"]       = Slic3r::Utils::utc_timestamp(Slic3r::Utils::get_current_time_utc());
+
+        //nlohmann::json root;
+        //root["slice822"] = payload;
+
+        wxGetApp().track_event("click_event", payload.dump());
+    } catch (const std::exception& err) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": json create got a generic exception, reason = " << err.what();
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": json create got an unknown exception";
+    }
 }
 
 } // namespace GUI

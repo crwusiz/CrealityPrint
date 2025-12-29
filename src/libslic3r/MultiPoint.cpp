@@ -118,6 +118,22 @@ bool MultiPoint::remove_duplicate_points()
     return false;
 }
 
+bool MultiPoint::remove_colinear_points() {
+    if (points.size() < 3) return false;
+    bool changed = false;
+    for (size_t i = 1; i < points.size() - 1; ) {
+        if (Line::distance_to_infinite_squared(points[i], points[i - 1], points[i + 1]) < SCALED_EPSILON) {
+            points.erase(points.begin() + i);
+            changed = true;
+        }
+        else {
+            ++i;
+        }
+    }
+    if (points.size() < 3) points.clear();
+    return changed;
+}
+
 bool MultiPoint::intersection(const Line& line, Point* intersection) const
 {
     Lines lines = this->lines();
@@ -454,23 +470,32 @@ BoundingBox get_extents_rotated(const MultiPoint &mp, double angle)
     return get_extents_rotated(mp.points, angle);
 }
 
-double length(const Points& pts)
+//double length(const Points& pts)
+//{
+//    double total = 0;
+//    if (!pts.empty()) {
+//        auto it = pts.begin();
+//        for (auto it_prev = it++; it != pts.end(); ++it, ++it_prev)
+//            total += (*it - *it_prev).cast<double>().norm();
+//    }
+//    return total;
+//}
+
+//double area(const Points& polygon)
+//{
+//    double area = 0.;
+//    for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++)
+//        area += double(polygon[i](0) + polygon[j](0)) * double(polygon[i](1) - polygon[j](1));
+//    return area;
+//}
+
+
+void MultiPoint::symmetric_y(const coord_t& x_axis)
 {
-    double total = 0;
-    if (!pts.empty()) {
-        auto it = pts.begin();
-        for (auto it_prev = it++; it != pts.end(); ++it, ++it_prev)
-            total += (*it - *it_prev).cast<double>().norm();
+    for (Point& pt : points) {
+        pt(0) = 2 * x_axis - pt(0);
     }
-    return total;
 }
 
-double area(const Points& polygon)
-{
-    double area = 0.;
-    for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++)
-        area += double(polygon[i](0) + polygon[j](0)) * double(polygon[i](1) - polygon[j](1));
-    return area;
-}
 
 }

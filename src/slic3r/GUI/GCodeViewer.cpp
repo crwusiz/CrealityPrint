@@ -17,6 +17,7 @@
 #include "slic3r/Utils/TestHelper.hpp"
 #include "../Config/DispConfig.h"
 #include "GUI_App.hpp"
+#include "GUI_ObjectList.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
 #include "Camera.hpp"
@@ -45,6 +46,9 @@
 #include <array>
 #include <algorithm>
 #include <chrono>
+
+
+#define ENABLE_FILTERED_STRIDE_DIALOG (0)
 
 namespace Slic3r {
 namespace GUI {
@@ -103,6 +107,7 @@ namespace GUI {
 
     static ColorRGBA Wipe_Color = ColorRGBA::YELLOW();
     static ColorRGBA Neutral_Color = ColorRGBA::DARK_GRAY();
+    static bool s_preview_section_fold = false;
 
 static std::string get_view_type_string(GCodeViewer::EViewType view_type)
 {
@@ -176,6 +181,18 @@ static int find_close_layer_idx(const std::vector<double> &zs, double &z, double
         if (std::min(dist_l, dist_h) < eps) { return (dist_l < dist_h) ? int(it_l - zs.begin()) : int(it_h - zs.begin()); }
     }
     return -1;
+}
+
+static Vec2f calc_pt_in_screen(const Vec3d& pt, const Matrix4d& view_proj_mat, int window_width, int window_height)
+{
+    auto  tran = view_proj_mat;
+    Vec4d temp_center(pt.x(), pt.y(), pt.z(), 1.0);
+    Vec4d temp_ndc          = tran * temp_center;
+    Vec3d screen_box_center = Vec3d(temp_ndc.x(), temp_ndc.y(), temp_ndc.z()) / temp_ndc.w();
+
+    float x = 0.5f * (1 + screen_box_center(0)) * window_width;
+    float y = 0.5f * (1 - screen_box_center(1)) * window_height;
+    return Vec2f(x, y);
 }
 
 void GCodeViewer::VBuffer::reset()
@@ -483,121 +500,163 @@ void GCodeViewer::Marker::render(int canvas_width, int canvas_height, const EVie
        
     imgui.set_next_window_pos(left_widgets_width + remaining_space / 2.0, static_cast<float>(canvas_height), ImGuiCond_Always, 0.5f, 1.0f);
     imgui.push_toolbar_style(m_scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0, 4.0 * m_scale));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0 * m_scale, 6.0 * m_scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0, 2.0 * m_scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0 * m_scale, 3.0 * m_scale));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,  m_is_dark ? 0.0f : 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, text_name_clr);
-    ImGui::PushStyleColor(ImGuiCol_Text, text_value_clr);
-    ImGui::PushStyleColor(ImGuiCol_Border, m_is_dark ? ImVec4(38.0 / 255.0, 38.0 / 255.0, 38.0 / 255.0, 1.0) :
-                                                       ImVec4(203.0 / 255, 203.0 / 255, 204.0 / 255, 1.0));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, m_is_dark ? ImVec4(43.0 / 255, 43.0 / 255, 45.0 / 255, 1.0) : ImGuiWrapper::COL_WINDOW_BG);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                          m_is_dark ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(78.0f / 255.0f, 89.0f / 255.0f, 105.0f / 255.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, m_is_dark ? ImVec4(219.0f / 255.0f, 219.0f / 255.0f, 219.0f / 255.0f, 1.0f) :
+                                                     ImVec4(78.0f / 255.0f, 89.0f / 255.0f, 105.0f / 255.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(225.0f / 255.0f, 228.0f / 255.0f, 233.0f / 255.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, m_is_dark ? ImVec4(34.0f / 255.0f, 34.0f / 255.0f, 34.0f / 255.0f, 0.6f) :
+                                                     ImVec4(1.0f, 1.0f, 1.0f, 0.6f));
 
-    imgui.begin(std::string("ExtruderPosition"), ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
-    ImGui::AlignTextToFramePadding();
-    //BBS: minus the plate offset when show tool position
-    PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
-    PartPlate* plate = partplate_list.get_curr_plate();
-    const Vec3f position = m_world_position + m_world_offset;
-    std::string x = ImGui::ColorMarkerStart + std::string("X: ") + ImGui::ColorMarkerEnd;
-    std::string y = ImGui::ColorMarkerStart + std::string("Y: ") + ImGui::ColorMarkerEnd;
-    std::string z = ImGui::ColorMarkerStart + std::string("Z: ") + ImGui::ColorMarkerEnd;
-    std::string height = ImGui::ColorMarkerStart + _u8L("Height: ") + ImGui::ColorMarkerEnd;
-    std::string width = ImGui::ColorMarkerStart + _u8L("Width: ") + ImGui::ColorMarkerEnd;
-    std::string speed = ImGui::ColorMarkerStart + _u8L("Speed: ") + ImGui::ColorMarkerEnd;
-    std::string flow = ImGui::ColorMarkerStart + _u8L("Flow: ") + ImGui::ColorMarkerEnd;
-    std::string layer_time = ImGui::ColorMarkerStart + _u8L("Layer Time: ") + ImGui::ColorMarkerEnd;
-    std::string fanspeed = ImGui::ColorMarkerStart + _u8L("Fan: ") + ImGui::ColorMarkerEnd;
-    std::string temperature = ImGui::ColorMarkerStart + _u8L("Temperature: ") + ImGui::ColorMarkerEnd;
-    std::string acceleration = ImGui::ColorMarkerStart + _u8L("Acceleration") + ": " + ImGui::ColorMarkerEnd;
-    const float item_size = imgui.calc_text_size(std::string_view{"X: 000.000000  "}).x;
-    const float item_spacing = imgui.get_item_spacing().x;
-    const float window_padding = ImGui::GetStyle().WindowPadding.x;
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const float target_h = (ImGui::GetTextLineHeight() + st.WindowPadding.y * 1.4f) * 2.0f;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, target_h), ImVec2(1e9f, target_h));
+    imgui.begin(std::string("ExtruderPosition"),
+                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    // Use default font size (revert any scaling)
+    ImGui::SetWindowFontScale(1.1f);
 
-    char buf[1024];
-     if (true)
+    std::vector<std::string> position_row_texts;
+    position_row_texts.reserve(6);
+    float       column_width = 0.0f;
+    float       column_step  = 0.0f;
+    const float window_padding = st.WindowPadding.x;
+    const float item_spacing   = imgui.get_item_spacing().x;
+
     {
-        float startx2 = window_padding + item_size + item_spacing;
-        float startx3 = window_padding + 2*(item_size + item_spacing);
+        //BBS: minus the plate offset when show tool position
+        PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
+        PartPlate*     plate          = partplate_list.get_curr_plate();
+        const Vec3f    position       = m_world_position + m_world_offset;
+
+        std::string x = ImGui::ColorMarkerStart + std::string("X: ") + ImGui::ColorMarkerEnd;
+        std::string y = ImGui::ColorMarkerStart + std::string("Y: ") + ImGui::ColorMarkerEnd;
+        std::string z = ImGui::ColorMarkerStart + std::string("Z: ") + ImGui::ColorMarkerEnd;
+        std::string height = ImGui::ColorMarkerStart + _u8L("Height: ") + ImGui::ColorMarkerEnd;
+        std::string width = ImGui::ColorMarkerStart + _u8L("Width: ") + ImGui::ColorMarkerEnd;
+        std::string speed = ImGui::ColorMarkerStart + _u8L("Speed: ") + ImGui::ColorMarkerEnd;
+        std::string flow = ImGui::ColorMarkerStart + _u8L("Flow: ") + ImGui::ColorMarkerEnd;
+        std::string layer_time = ImGui::ColorMarkerStart + _u8L("Layer Time: ") + ImGui::ColorMarkerEnd;
+        std::string fanspeed = ImGui::ColorMarkerStart + _u8L("Fan: ") + ImGui::ColorMarkerEnd;
+        std::string temperature = ImGui::ColorMarkerStart + _u8L("Temperature: ") + ImGui::ColorMarkerEnd;
+        std::string acceleration = ImGui::ColorMarkerStart + _u8L("Acceleration") + ": " + ImGui::ColorMarkerEnd;
+
+        const float base_column_width = imgui.calc_text_size(std::string_view{"X: 000.000000  "}).x;
+        char        buf[1024];
+
         sprintf(buf, "%s%.3f", x.c_str(), position.x() - plate->get_origin().x());
-        ImGui::PushItemWidth(item_size);
-        imgui.text(buf);
-
-        ImGui::SameLine(startx2);
+        position_row_texts.emplace_back(buf);
         sprintf(buf, "%s%.3f", y.c_str(), position.y() - plate->get_origin().y());
-        ImGui::PushItemWidth(item_size);
-        imgui.text(buf);
-
-        ImGui::SameLine(startx3);
+        position_row_texts.emplace_back(buf);
         sprintf(buf, "%s%.3f", z.c_str(), position.z());
-        ImGui::PushItemWidth(item_size);
-        imgui.text(buf);
-
+        position_row_texts.emplace_back(buf);
         sprintf(buf, "%s%.0f", speed.c_str(), m_curr_move.feedrate);
-        ImGui::PushItemWidth(item_size);
-        imgui.text(buf);
+        position_row_texts.emplace_back(buf);
 
         switch (view_type) {
         case EViewType::Height: {
-            ImGui::SameLine(startx2);
             sprintf(buf, "%s%.2f", height.c_str(), m_curr_move.height);
-            ImGui::PushItemWidth(item_size);
-            imgui.text(buf);
+            position_row_texts.emplace_back(buf);
             break;
         }
         case EViewType::Width: {
-            ImGui::SameLine(startx2);
             sprintf(buf, "%s%.2f", width.c_str(), m_curr_move.width);
-            ImGui::PushItemWidth(item_size);
-            imgui.text(buf);
+            position_row_texts.emplace_back(buf);
             break;
         }
-        // case EViewType::Feedrate: {
-        //     ImGui::SameLine(startx2);
-        //     sprintf(buf, "%s%.0f", speed.c_str(), m_curr_move.feedrate);
-        //     ImGui::PushItemWidth(item_size);
-        //     imgui.text(buf);
-        //     break;
-        // }
         case EViewType::VolumetricRate: {
-            ImGui::SameLine(startx2);
             sprintf(buf, "%s%.2f", flow.c_str(), m_curr_move.volumetric_rate());
-            ImGui::PushItemWidth(item_size);
-            imgui.text(buf);
+            position_row_texts.emplace_back(buf);
             break;
         }
         case EViewType::FanSpeed: {
-            ImGui::SameLine(startx2);
             sprintf(buf, "%s%.0f", fanspeed.c_str(), m_curr_move.fan_speed);
-            ImGui::PushItemWidth(item_size);
-            imgui.text(buf);
+            position_row_texts.emplace_back(buf);
             break;
         }
         case EViewType::Temperature: {
-            ImGui::SameLine(startx2);
             sprintf(buf, "%s%.0f", temperature.c_str(), m_curr_move.temperature);
-            ImGui::PushItemWidth(item_size);
-            imgui.text(buf);
+            position_row_texts.emplace_back(buf);
             break;
         }
         case EViewType::LayerTime:
         case EViewType::LayerTimeLog: {
-            ImGui::SameLine(startx2);
             sprintf(buf, "%s%.1f", layer_time.c_str(), m_curr_move.layer_duration);
-            ImGui::PushItemWidth(item_size);
-            imgui.text(buf);
+            position_row_texts.emplace_back(buf);
             break;
         }
-        case EViewType::Acceleration: {
-            ImGui::SameLine(startx2);
+        case EViewType::Acceleration:
             sprintf(buf, "%s%.0f", acceleration.c_str(), m_curr_move.acceleration);
-            ImGui::PushItemWidth(item_size);
-            imgui.text(buf);
+            position_row_texts.emplace_back(buf);
             break;
-        }
         default:
             break;
         }
-        text_line = 2;
+
+        column_width = base_column_width;
+        for (const std::string& text : position_row_texts)
+            column_width = std::max(column_width, ImGui::CalcTextSize(text.c_str()).x);
+
+        column_step = column_width + item_spacing;
+
+        const float first_row_width = window_padding * 2.0f +
+                                      static_cast<float>(position_row_texts.size()) * column_width +
+                                      (static_cast<float>(position_row_texts.size()) - 1.0f) * item_spacing;
+        ImGui::SetWindowSize(ImVec2(first_row_width, target_h));
+    }
+
+
+    {
+        ImVec2 win_pos = ImGui::GetWindowPos();
+        ImVec2 win_sz  = ImGui::GetWindowSize();
+        ImDrawList* bg = ImGui::GetBackgroundDrawList();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        
+        const ImVec4 sh_rgb = ImVec4(118.0f/255.0f, 142.0f/255.0f, 171.0f/255.0f, 1.0f);
+       
+        const float alphas[8] = { 0.050f, 0.040f, 0.032f, 0.026f, 0.020f, 0.014f, 0.010f, 0.006f };
+        
+        const float steps[8]  = { 2.00f, 1.60f, 1.20f, 0.90f, 0.70f, 0.50f, 0.35f, 0.20f };
+        for (int i = 0; i < 8; ++i) {
+            float spread = steps[i] * m_scale;
+            float round  = style.WindowRounding + spread;
+
+            float off_x = spread * 0.10f;
+            float off_y = spread * 0.80f;
+            ImU32 col = ImGui::ColorConvertFloat4ToU32(ImVec4(sh_rgb.x, sh_rgb.y, sh_rgb.z, alphas[i]));
+            bg->AddRectFilled(ImVec2(win_pos.x - off_x, win_pos.y + off_y),
+                              ImVec2(win_pos.x + win_sz.x + off_x, win_pos.y + win_sz.y + spread + off_y),
+                              col, round);
+        }
+    }
+    ImGui::AlignTextToFramePadding();
+
+    {
+        const ImGuiStyle& st        = ImGui::GetStyle();
+        float             content_h = ImGui::GetWindowHeight() - st.WindowPadding.y * 2.0f;
+        float             line_h    = ImGui::GetFrameHeight();
+        float             y_offset  = std::max(0.0f, (content_h - line_h) * 0.5f);
+        ImGui::SetCursorPosY(st.WindowPadding.y + y_offset);
+    }
+
+    if (true) {
+        auto draw_value = [&](const std::string& text) {
+            ImGui::PushItemWidth(column_width);
+            imgui.text(text.c_str());
+        };
+
+        for (size_t idx = 0; idx < position_row_texts.size(); ++idx) {
+            if (idx > 0)
+                ImGui::SameLine(window_padding + static_cast<float>(idx) * column_step);
+            draw_value(position_row_texts[idx]);
+        }
+        ImGui::NewLine();
+        text_line = 1;
     }
     // else {
     //     sprintf(buf, "%s%.3f", x.c_str(), position.x() - plate->get_origin().x());
@@ -627,8 +686,10 @@ void GCodeViewer::Marker::render(int canvas_width, int canvas_height, const EVie
 #endif // ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
     }
 
+
+    ImGui::SetWindowFontScale(1.0f);
     imgui.end();
-    ImGui::PopStyleVar(3);
+    ImGui::PopStyleVar(4);
     ImGui::PopStyleColor(4);
     imgui.pop_toolbar_style();
 }
@@ -867,6 +928,77 @@ void GCodeViewer::GCodeWindow::stop_mapping_file()
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": finished mapping file " << m_filename;
     }
 }
+
+const std::vector<double>& GCodeViewer::FilterLayerResult::rebuild_filter_layers_z_offset(
+    const GCodeViewer* viewer, const int dynamic_stride, const std::array<unsigned int, 2>& layers_z_range, const Layers& layers)
+{
+    double              filtered_z = 0.0;
+    std::vector<size_t> filtered_layers;
+
+    m_layers_z_offset.resize(layers.size(), 0.0);
+    m_layers_z_offset.shrink_to_fit();
+
+    for (size_t i = layers_z_range[0]; i <= layers_z_range[1]; i++) {
+        if (viewer->should_be_filtered_of_layer(dynamic_stride, i)) {
+            filtered_z += layers.get_z_at(i) - layers.get_z_at(i - 1);
+            filtered_layers.push_back(i);
+        }
+    }
+
+    double gap   = filtered_z / (layers_z_range[1] - layers_z_range[0] - filtered_layers.size()); // gap between retain layers
+    double acc_z = layers.get_z_at(layers_z_range[0] - 1);
+
+    // calculate the offset of each retain layers
+    size_t xxd = 0;
+    for (size_t i = layers_z_range[0]; i <= layers_z_range[1]; i++) {
+#if 0
+            auto it = std::find_if(filtered_layers.begin(), filtered_layers.end(), [i](size_t layer) { return layer == i; });
+            
+			if (it == filtered_layers.end()) {
+                //layer i be retain, otherwise will be filtered
+                double origin_z = layers.get_z_at(i);
+                acc_z += origin_z - layers.get_z_at(i - 1);  
+				
+				double offset = acc_z - origin_z;
+				
+				acc_z += gap;
+                m_layers_z_offset[i] = offset;
+            }
+#else
+        bool be_filter = false;
+        for (size_t j = xxd; j < filtered_layers.size(); j++) {
+            const size_t& x = filtered_layers[j];
+            if (x == i) {
+                be_filter = true;
+                xxd       = j + 1;
+                break;
+            } else if (x > i) {
+                break;
+            }
+        }
+
+        if (!be_filter) {
+            double origin_z = layers.get_z_at(i);
+            acc_z += origin_z - layers.get_z_at(i - 1);
+
+            /*double offset = acc_z - origin_z;
+            acc_z += gap;
+            m_layers_z_offset[i] = offset;*/
+
+            m_layers_z_offset[i] = acc_z - origin_z;
+            acc_z += gap;
+        }
+#endif
+    }
+
+    // capture build parameters, it may include layers, but layers may to big
+    m_dynamic_stride = dynamic_stride;
+    m_layers_z_range = layers_z_range;
+    m_valid          = true;
+
+    return m_layers_z_offset;
+}	
+
 
 GCodeViewer::GCodeViewer()
 {
@@ -1113,6 +1245,7 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
 {
     BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " start";
     system_memory_stats(__FUNCTION__);
+    m_is_belt = gcode_result.machine_is_belt;
 
     // avoid processing if called with the same gcode_result
     if (m_last_result_id == gcode_result.id) {
@@ -1174,6 +1307,11 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
         m_custom_gcode_per_print_z = gcode_result.custom_gcode_per_print_z;
 
     m_max_print_height = gcode_result.printable_height;
+    PresetBundle* preset_bundle   = wxGetApp().preset_bundle;
+    bool          machine_is_belt = preset_bundle->printers.get_edited_preset().config.opt_bool("machine_is_belt");
+    if (machine_is_belt) {
+        m_max_print_height = 0.0f;
+    }
 
     load_toolpaths(gcode_result, build_volume, exclude_bounding_box);
 
@@ -1271,6 +1409,15 @@ void GCodeViewer::refresh(const GCodeProcessorResult& gcode_result, const std::v
     if (!m_bLoaded) {
         return;
     }
+
+	if (m_gcode_result == nullptr) {
+		return;
+	}
+
+	if (m_last_result_id != gcode_result.id || m_gcode_result != &gcode_result) {
+		return;
+	}
+
 #if ENABLE_GCODE_VIEWER_STATISTICS
     auto start_time = std::chrono::high_resolution_clock::now();
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
@@ -1397,6 +1544,7 @@ void GCodeViewer::reset()
     m_last_result_id = -1;
     //BBS: add only gcode mode
     m_only_gcode_in_preview = false;
+	m_gcode_result = nullptr;
     m_is_lite_mode = false;
 
     m_moves_count = 0;
@@ -1428,6 +1576,8 @@ void GCodeViewer::reset()
     m_statistics.reset_all();
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
     m_contained_in_bed = true;
+    m_filter_layer_result.reset();
+    m_top_surface_layer.clear();
 }
 
 
@@ -1517,7 +1667,7 @@ void GCodeViewer::_render_calibration_thumbnail_internal(ThumbnailData& thumbnai
     };
 
 #if ENABLE_GCODE_VIEWER_STATISTICS
-    auto render_as_batched_model = [this](TBuffer& buffer, GLShaderProgram& shader) {
+    auto render_as_batched_model = [this](TBuffer& buffer, GLShaderProgram& shader, int position_id, int normal_id) {
 #else
     auto render_as_batched_model = [](TBuffer& buffer, GLShaderProgram& shader, int position_id, int normal_id) {
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
@@ -2521,8 +2671,25 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
 
     m_extruders_count = gcode_result.extruders_count;
 
-    //import gcode file, preview using normal mode(no lite mode) 
-    const bool is_lite_mode = m_is_lite_mode = (wxGetApp().app_config->get_bool("gcode_preview_lite_mode") && (!m_only_gcode_in_preview));
+    // Import gcode file, preview using normal mode (no lite mode)
+    bool is_lite_mode_cfg = (wxGetApp().app_config->get_bool("gcode_preview_lite_mode") && (!m_only_gcode_in_preview));
+
+    // Auto enable lite mode on Linux if memory is tight or preview is huge.
+#if defined(__linux__)
+    {
+        size_t avail_bytes = Slic3r::available_physical_memory();
+        size_t total_bytes = Slic3r::total_physical_memory();
+        const size_t moves_count_local = gcode_result.moves.size();
+        const size_t avail_threshold_bytes = size_t(2) * size_t(1024) * size_t(1024) * size_t(1024); // 2 GB
+        const bool low_available = (avail_bytes > 0 && avail_bytes < avail_threshold_bytes);
+        const bool low_ratio     = (total_bytes > 0 && avail_bytes > 0 && (double)avail_bytes / (double)total_bytes < 0.125);
+        const bool huge_preview  = (moves_count_local > 2000000);
+        if (!m_only_gcode_in_preview && (low_available || low_ratio || huge_preview))
+            is_lite_mode_cfg = true;
+    }
+#endif
+
+    const bool is_lite_mode = m_is_lite_mode = is_lite_mode_cfg;
 
     unsigned int progress_count = 0;
     unsigned int progress_threshold = 1;
@@ -3191,9 +3358,14 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
         if (i_multibuffer.back().size() * sizeof(IBufferType) >= IBUFFER_THRESHOLD_BYTES - indiced_size_to_add) {
             i_multibuffer.push_back(IndexBuffer());
             vbo_index_list.push_back(t_buffer.vertices.vbos[curr_vertex_buffer.first]);
-            if (t_buffer.render_primitive_type != TBuffer::ERenderPrimitiveType::BatchedModel) {
+            //if (t_buffer.render_primitive_type != TBuffer::ERenderPrimitiveType::BatchedModel) {
+            //    Path& last_path = t_buffer.paths.back();
+            //    last_path.add_sub_path(prev, static_cast<unsigned int>(i_multibuffer.size()) - 1, 0, move_id - 1);
+            //}
+            if (t_buffer.render_primitive_type == TBuffer::ERenderPrimitiveType::Triangle) {
                 Path& last_path = t_buffer.paths.back();
-                last_path.add_sub_path(prev, static_cast<unsigned int>(i_multibuffer.size()) - 1, 0, move_id - 1);
+                if (prev.type == curr.type && last_path.matches(curr))
+                    last_path.add_sub_path(prev, static_cast<unsigned int>(i_multibuffer.size()) - 1, 0, move_id - 1);
             }
         }
 
@@ -3207,10 +3379,14 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
             ++curr_vertex_buffer.first;
             curr_vertex_buffer.second = 0;
             vbo_index_list.push_back(t_buffer.vertices.vbos[curr_vertex_buffer.first]);
-
-            if (t_buffer.render_primitive_type != TBuffer::ERenderPrimitiveType::BatchedModel) {
+            //if (t_buffer.render_primitive_type != TBuffer::ERenderPrimitiveType::BatchedModel) {
+            //     Path& last_path = t_buffer.paths.back();
+            //    last_path.add_sub_path(prev, static_cast<unsigned int>(i_multibuffer.size()) - 1, 0, move_id - 1);
+            //}
+            if (t_buffer.render_primitive_type == TBuffer::ERenderPrimitiveType::Triangle) {
                 Path& last_path = t_buffer.paths.back();
-                last_path.add_sub_path(prev, static_cast<unsigned int>(i_multibuffer.size()) - 1, 0, move_id - 1);
+                if (prev.type == curr.type && last_path.matches(curr))
+                    last_path.add_sub_path(prev, static_cast<unsigned int>(i_multibuffer.size()) - 1, 0, move_id - 1);
             }
         }
 
@@ -3314,7 +3490,7 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
     size_t last_travel_s_id = 0;
     seams_count = 0;
     std::vector<size_t> move_ids_mapper;
-    std::vector<const GCodeProcessorResult::MoveVertex*> vertices_mapper;
+    //std::vector<const GCodeProcessorResult::MoveVertex*> vertices_mapper;
     system_memory_stats("move_ids_mapper.resize ");
     if(m_moves_count > 0)
         move_ids_mapper.resize(m_moves_count, -1);
@@ -3323,8 +3499,8 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
         const GCodeProcessorResult::MoveVertex& move = gcode_result.moves[i];
         if (move.type == EMoveType::Seam)
             ++seams_count;
-        else
-            vertices_mapper.push_back(&move);
+        //else
+            //vertices_mapper.push_back(&move);
 
         size_t move_id = i - seams_count;
         if(move_ids_mapper[move_id] == -1)
@@ -3499,9 +3675,13 @@ void GCodeViewer::load_shells(const Print& print, bool initialized, bool force_p
         m_shells.volumes.load_object(model_obj, object_idx, instance_ids, "object", initialized, enable_lod);
 
         // adjust shells' z if raft is present
+        bool machine_is_belt = false;
+        if (wxGetApp().preset_bundle) {
+            machine_is_belt = wxGetApp().preset_bundle->machine_is_belt();
+        }
         const SlicingParameters& slicing_parameters = obj->slicing_parameters();
         if (slicing_parameters.object_print_z_min != 0.0) {
-            const Vec3d z_offset = slicing_parameters.object_print_z_min * Vec3d::UnitZ();
+            const Vec3d z_offset = slicing_parameters.object_print_z_min * (machine_is_belt ? Vec3d{0.0f, 0.0f, 0.0f} : Vec3d::UnitZ());
             for (size_t i = current_volumes_count; i < m_shells.volumes.volumes.size(); ++i) {
                 GLVolume* v = m_shells.volumes.volumes[i];
                 v->set_volume_offset(v->get_volume_offset() + z_offset);
@@ -3567,6 +3747,11 @@ void GCodeViewer::refresh_render_paths(bool keep_sequential_current_first, bool 
     if (!m_bLoaded){
         return;
     }
+
+    if (!m_gcode_result) {
+        return;
+    }
+
 #if ENABLE_GCODE_VIEWER_STATISTICS
     auto start_time = std::chrono::high_resolution_clock::now();
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
@@ -3662,7 +3847,8 @@ void GCodeViewer::refresh_render_paths(bool keep_sequential_current_first, bool 
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
 
     const bool top_layer_only = true;
-
+    const bool enable_preview_lod = GUI::wxGetApp().app_config->get_bool("enable_preview_lod") && m_gcode_result->should_enable_preview_lod;
+    const_cast<bool&>(m_is_lod) = enable_preview_lod;
     //BBS
     SequentialView::Endpoints global_endpoints = { m_sequential_view.gcode_ids.size() , 0 };
     SequentialView::Endpoints top_layer_endpoints = global_endpoints;
@@ -3671,11 +3857,17 @@ void GCodeViewer::refresh_render_paths(bool keep_sequential_current_first, bool 
     //BBS
     if (!keep_sequential_current_last) sequential_view->current.last = m_sequential_view.gcode_ids.size();
 
+	BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format("before call show_gcode_surface");
     bool show_surface = show_gcode_surface();
-    
-    // first pass: collect visible paths and update sequential view data
-    std::vector<std::tuple<unsigned char, unsigned int, unsigned int, unsigned int>> paths;
+    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format("after call show_gcode_surface");
 
+    // first pass: collect visible paths and update sequential view data
+    // Store layer index as signed int to preserve sentinel values (e.g. -1) and avoid narrowing later.
+    std::vector<std::tuple<unsigned char, unsigned int, unsigned int, unsigned int, int>> paths;
+
+	std::set<int>& special_surface_layer = const_cast<std::set<int>&>(m_top_surface_layer);
+    special_surface_layer.clear();
+    
     for (size_t b = 0; b < m_buffers.size(); ++b) {
         TBuffer& buffer = const_cast<TBuffer&>(m_buffers[b]);
         // reset render paths
@@ -3703,7 +3895,9 @@ void GCodeViewer::refresh_render_paths(bool keep_sequential_current_first, bool 
             }
         }
         else {
-            for (size_t i = 0; i < buffer.paths.size(); ++i) {
+			int ref_layer_idx = 0;
+            
+			for (size_t i = 0; i < buffer.paths.size(); ++i) {
                 const Path& path = buffer.paths[i];
                 if (path.type == EMoveType::Travel) {
                     if (!is_travel_in_layers_range(i, m_layers_z_range[0], m_layers_z_range[1]))
@@ -3724,9 +3918,29 @@ void GCodeViewer::refresh_render_paths(bool keep_sequential_current_first, bool 
 				if (show_surface && role_been_filtered_in_lite_mode(path.role))
                     continue;
 
+
+                if (enable_preview_lod) {
+                    Layers::Endpoints endpoints = m_layers.get_endpoints_at(ref_layer_idx);
+
+                    int layer_idx = -1; // get path layer index
+                    if (endpoints.first <= path.sub_paths.front().first.s_id && path.sub_paths.back().last.s_id <= endpoints.last) {
+                        layer_idx = ref_layer_idx;
+                    } else {
+                        layer_idx     = get_layer_index(path);
+                        ref_layer_idx = layer_idx;
+                    }
+
+                    /*if (layer_idx > -1 && stride > 0 && should_be_filtered_of_layer(stride, layer_idx))
+                        continue;*/
+
+                    if (path.role == ExtrusionRole::erTopSolidInfill || path.role == ExtrusionRole::erBrim) {
+                        special_surface_layer.insert(ref_layer_idx);
+                    }
+				}
+
                 // store valid path
                 for (size_t j = 0; j < path.sub_paths.size(); ++j) {
-                    paths.push_back({ static_cast<unsigned char>(b), path.sub_paths[j].first.b_id, static_cast<unsigned int>(i), static_cast<unsigned int>(j) });
+                    paths.push_back({ static_cast<unsigned char>(b), path.sub_paths[j].first.b_id, static_cast<unsigned int>(i), static_cast<unsigned int>(j), ref_layer_idx });
                 }
 
                 global_endpoints.first = std::min(global_endpoints.first, path.sub_paths.front().first.s_id);
@@ -3747,6 +3961,10 @@ void GCodeViewer::refresh_render_paths(bool keep_sequential_current_first, bool 
             }
         }
     }
+
+	for (const int& x : m_gcode_result->wipe_tower_tool_changes_layers) {
+        special_surface_layer.insert(x);
+	}
 
     // update current sequential position
     sequential_view->current.first = !top_layer_only && keep_sequential_current_first ? std::clamp(sequential_view->current.first, global_endpoints.first, global_endpoints.last) : global_endpoints.first;
@@ -3837,7 +4055,7 @@ m_no_render_path = false;
 
     // second pass: filter paths by sequential data and collect them by color
     RenderPath* render_path = nullptr;
-    for (const auto& [tbuffer_id, ibuffer_id, path_id, sub_path_id] : paths) {
+    for (const auto& [tbuffer_id, ibuffer_id, path_id, sub_path_id, layer_idx] : paths) {
         TBuffer& buffer = const_cast<TBuffer&>(m_buffers[tbuffer_id]);
         const Path& path = buffer.paths[path_id];
         const Path::Sub_Path& sub_path = path.sub_paths[sub_path_id];
@@ -3876,12 +4094,19 @@ m_no_render_path = false;
         default: { color = { 0.0f, 0.0f, 0.0f, 1.0f }; break; }
         }
 
-        RenderPath key{ tbuffer_id, color, static_cast<unsigned int>(ibuffer_id), path_id };
-        if (render_path == nullptr || !RenderPathPropertyEqual()(*render_path, key)) {
-            buffer.render_paths.emplace_back(key);
-            render_path = const_cast<RenderPath*>(&buffer.render_paths.back());
-        }
-
+        RenderPath key{ tbuffer_id, color, static_cast<unsigned int>(ibuffer_id), path_id, layer_idx};
+        if (enable_preview_lod) {
+            if (render_path == nullptr || !RenderPathPropertyEqual_WithLayerNo()(*render_path, key)) {
+                buffer.render_paths.emplace_back(key);
+                render_path = const_cast<RenderPath*>(&buffer.render_paths.back());
+            }
+        } else {
+            if (render_path == nullptr || !RenderPathPropertyEqual()(*render_path, key)) {
+                buffer.render_paths.emplace_back(key);
+                render_path = const_cast<RenderPath*>(&buffer.render_paths.back());
+            }
+		}
+		
         unsigned int delta_1st = 0;
         if (sub_path.first.s_id < m_sequential_view.current.first && m_sequential_view.current.first <= sub_path.last.s_id)
             delta_1st = static_cast<unsigned int>(m_sequential_view.current.first - sub_path.first.s_id);
@@ -4007,7 +4232,7 @@ m_no_render_path = false;
     (*sequential_range_caps)[1].reset();
 
     if (m_sequential_view.current.first != m_sequential_view.current.last) {
-        for (const auto& [tbuffer_id, ibuffer_id, path_id, sub_path_id] : paths) {
+        for (const auto& [tbuffer_id, ibuffer_id, path_id, sub_path_id, layer_idx] : paths) {
             TBuffer& buffer = const_cast<TBuffer&>(m_buffers[tbuffer_id]);
             if (buffer.render_primitive_type != TBuffer::ERenderPrimitiveType::Triangle)
                 continue;
@@ -4112,6 +4337,8 @@ m_no_render_path = false;
         }
     }
 
+	const_cast<FilterLayerResult &>(m_filter_layer_result).reset();
+
     //BBS
     enable_moves_slider(!paths.empty());
 
@@ -4169,6 +4396,59 @@ void GCodeViewer::render_toolpaths()
             assert(! path.offsets.empty());
             shader.set_uniform(uniform_color, path.color);
             glsafe(::glMultiDrawElements(GL_TRIANGLES, (const GLsizei*)path.sizes.data(), GL_UNSIGNED_SHORT, (const void* const*)path.offsets.data(), (GLsizei)path.sizes.size()));
+#if ENABLE_GCODE_VIEWER_STATISTICS
+            ++m_statistics.gl_multi_triangles_calls_count;
+#endif // ENABLE_GCODE_VIEWER_STATISTICS
+        }
+    };
+
+
+	auto render_as_triangles_2 = [this, render_as_triangles](std::vector<RenderPath>::iterator it_path, std::vector<RenderPath>::iterator it_end, GLShaderProgram& shader, int uniform_color, const int dynamic_stride, const Camera& camera) {
+		
+		/*const std::vector<double>& z_offsets = get_filtered_layers_z_offset(dynamic_stride); 
+
+		if (z_offsets.size() != m_layers.size()) {
+            render_as_triangles(it_path, it_end, shader, uniform_color);
+			return;
+		}*/
+
+		//int last_layer_no = -1;
+        int last_filtered_layer = -1;
+        bool last_filtered_layer_result = false;
+	
+        for (auto it = it_path; it != it_end && it_path->ibuffer_id == it->ibuffer_id; ++it) {
+            
+			const RenderPath& path = *it;
+            // Some OpenGL drivers crash on empty glMultiDrawElements, see GH #7415.
+            assert(!path.sizes.empty());
+            assert(!path.offsets.empty());
+
+			int current_layer = path.layer_no;
+            /*if (should_be_filtered_of_layer(dynamic_stride, current_layer))
+                continue;*/
+
+			if (last_filtered_layer == current_layer) {
+                if (last_filtered_layer_result)
+                    continue;
+            } else {
+                last_filtered_layer        = current_layer;
+                last_filtered_layer_result = should_be_filtered_of_layer(dynamic_stride, current_layer);
+                if (last_filtered_layer_result)
+                    continue;
+			}
+			
+            shader.set_uniform(uniform_color, path.color);
+
+			/*if (last_layer_no != current_layer && dynamic_stride > 2) {
+                last_layer_no = current_layer;
+                float z_offset = z_offsets[current_layer];
+
+                const Transform3d model_matrix = Geometry::assemble_transform((z_offset * Vec3f::UnitZ()).cast<double>());
+                shader.set_uniform("view_model_matrix", camera.get_view_matrix() * model_matrix);
+			}*/
+			
+            glsafe(::glMultiDrawElements(GL_TRIANGLES, (const GLsizei*)path.sizes.data(), GL_UNSIGNED_SHORT,
+                                         (const void* const*) path.offsets.data(), (GLsizei) path.sizes.size()));
 #if ENABLE_GCODE_VIEWER_STATISTICS
             ++m_statistics.gl_multi_triangles_calls_count;
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
@@ -4264,9 +4544,13 @@ void GCodeViewer::render_toolpaths()
         return (zoom < 5.0) ? 1.0 : (1.0 + 5.0 * (zoom - 5.0) / (100.0 - 5.0));
     };
 
+	double pixes  = estimate_pixels_of_one_layer();
+    int    stride = get_dynamic_stride(pixes);
+
     const unsigned char begin_id = buffer_id(EMoveType::Retract);
     const unsigned char end_id   = buffer_id(EMoveType::Count);
 
+    Transform3d transform = wxGetApp().plater()->get_current_canvas3D()->get_preview_extra_transform();
     for (unsigned char i = begin_id; i < end_id; ++i) {
 
         if (m_is_lite_mode && !(i == buffer_id(EMoveType::Extrude) || i == buffer_id(EMoveType::Seam) || i == buffer_id(EMoveType::Unretract) || i == buffer_id(EMoveType::Pause_Print)))
@@ -4281,8 +4565,7 @@ void GCodeViewer::render_toolpaths()
             continue;
 
         shader->start_using();
-
-        shader->set_uniform("view_model_matrix", camera.get_view_matrix());
+        shader->set_uniform("view_model_matrix", camera.get_view_matrix() * transform);
         shader->set_uniform("projection_matrix", camera.get_projection_matrix());
         shader->set_uniform("view_normal_matrix", (Matrix3d)Matrix3d::Identity());
 
@@ -4336,7 +4619,11 @@ void GCodeViewer::render_toolpaths()
                     break;
                 }
                 case TBuffer::ERenderPrimitiveType::Triangle: {
-                    render_as_triangles(it_path, buffer.render_paths.end(), *shader, uniform_color);
+                    if (!m_is_lod) {
+                        render_as_triangles(it_path, buffer.render_paths.end(), *shader, uniform_color);
+                    } else {
+                        render_as_triangles_2(it_path, buffer.render_paths.end(), *shader, uniform_color, stride, camera);
+                    }
                     break;
                 }
                 default: { break; }
@@ -4438,7 +4725,10 @@ void GCodeViewer::render_shells(int canvas_width, int canvas_height)
         std::vector<std::string> filament_colors = (config->option<ConfigOptionStrings>("filament_colour"))->values;
         GLVolumeCollection::apply_custom_gcode(shader, info, filament_colors);
     }
-    m_shells.volumes.render(GUI::ERenderPipelineStage::Normal,GLVolumeCollection::ERenderType::Transparent, false, camera.get_view_matrix(), camera.get_projection_matrix());
+
+    Transform3d transform = wxGetApp().plater()->get_current_canvas3D()->get_preview_extra_transform();
+    m_shells.volumes.render(GUI::ERenderPipelineStage::Normal, GLVolumeCollection::ERenderType::Transparent, false,
+                            camera.get_view_matrix() * transform, camera.get_projection_matrix());
     shader->set_uniform("emission_factor", 0.0f);
     shader->stop_using();
 
@@ -4817,28 +5107,28 @@ public:
 
     DispConfig::WindowConfig prepare(bool fold, float contentWidth) {
         std::string btn_name = fold ? ">>" : "<<";
-        auto btnsz = ImGui::CalcTextSize(">>");
         auto wsz = config.getWindowSize(DispConfig::e_wt_gcode, wxGetApp().plater()->get_current_canvas3D()->get_scale());
-        if (fold)
-            wsz = ImVec2(btnsz.x + window_padding * 2, btnsz.y + window_padding * 2);
-        //auto bias = config.getWindowBias(DispConfig::e_wt_gcode);
 
         GLCanvas3D* canvas = wxGetApp().plater()->get_current_canvas3D();
 
         ImVec2 pos = canvas->get_printer_objects_panel_pos();
         ImVec2 size = canvas->get_printer_objects_panel_size();
 
-        ImVec2 bias = ImVec2(pos.x, pos.y + size.y + 8);
+        ImVec2 bias = ImVec2(pos.x + 1.0f * m_scale, pos.y + size.y + 8);
 
         ImGui::SetNextWindowPos(bias, ImGuiCond_Always);
 
+        float min_width = std::max(wsz.x, 280.0f * m_scale);
         if (fold || contentWidth < (wsz.x - 2 * window_padding))
         {
-            ImGui::SetNextWindowSize(wsz);
+            ImGui::SetNextWindowSize(ImVec2(min_width, wsz.y));
         }
         else
         {         
-            auto size = ImVec2(std::max(contentWidth, 300.0f), -1.0f);
+            float target_width = std::max(contentWidth, 300.0f);
+            const float max_window_width = std::max(min_width, ImGui::GetIO().DisplaySize.x - bias.x - 2.0f * m_scale);
+            target_width = std::min(target_width, max_window_width);
+            auto size = ImVec2(target_width, -1.0f);
             ImGui::SetNextWindowSize(size);
         }
 
@@ -4930,16 +5220,61 @@ public:
 
         std::string btn_name = fold ? ">>" : "<<";
         auto btnsz = ImGui::CalcTextSize(btn_name.c_str());
-        DispConfig::ButtonConfig bcfg;
-        bcfg.size = { btnsz.x,0 };
-        bcfg.border = 0;
-        bcfg.tips = fold ? _u8L("Expand") : _u8L("Collapse");
-        if (!fold) {
-            config.boldText(_u8L("G-code Preview"), 1.2);
-            ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - btnsz.x - window_padding, window_padding));
+
+        float title_y = ImGui::GetCursorPosY();
+        config.boldText(_u8L("G-code Preview"), 1.2);
+        ImGui::SameLine();
+
+        float arrow_size = 22.0f * view_scale * 1.4f;
+        ImVec2 btn_size{arrow_size, arrow_size};
+        float   btn_y_offset = fold ? 2.0f * view_scale : -2.0f * view_scale;
+
+        float right       = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
+        float btn_start_x = right - btn_size.x;
+        float baseline_y  = title_y + (ImGui::GetTextLineHeight() - btn_size.y) * 0.5f + btn_y_offset;
+
+        ImVec2 btn_pos_local = ImVec2(btn_start_x, baseline_y);
+        ImGui::SetCursorPos(btn_pos_local);
+
+        ImVec2 btn_pos = ImGui::GetCursorScreenPos();
+        bool pressed = false;
+
+        ImTextureID collapse_id;
+        ImVec2 collapse_uv0, collapse_uv1;
+        if (wxGetApp().obj_list()->get_collapse_icon(collapse_id, collapse_uv0, collapse_uv1, fold)) {
+            pressed = ImGui::InvisibleButton("##gcode_fold_btn", btn_size);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 p0 = btn_pos;
+            ImVec2 p1 = ImVec2(btn_pos.x + btn_size.x, btn_pos.y);
+            ImVec2 p2 = ImVec2(btn_pos.x + btn_size.x, btn_pos.y + btn_size.y);
+            ImVec2 p3 = ImVec2(btn_pos.x, btn_pos.y + btn_size.y);
+            // rotate 90 deg clockwise: uv_bl, uv_tl, uv_tr, uv_br
+            ImVec2 uv_tl = collapse_uv0;
+            ImVec2 uv_tr = ImVec2(collapse_uv1.x, collapse_uv0.y);
+            ImVec2 uv_br = collapse_uv1;
+            ImVec2 uv_bl = ImVec2(collapse_uv0.x, collapse_uv1.y);
+            dl->AddImageQuad(collapse_id, p0, p1, p2, p3, uv_bl, uv_tl, uv_tr, uv_br);
+        } else {
+            bool btn = ImGui::InvisibleButton("##gcode_fold_btn", btn_size);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 center = ImVec2(btn_pos.x + btn_size.x * 0.5f, btn_pos.y + btn_size.y * 0.5f);
+            float r = btn_size.y * 0.32f;
+            ImVec2 dir = fold ? ImVec2(1, 0) : ImVec2(-1, 0);
+            ImVec2 perp = ImVec2(-dir.y, dir.x);
+            ImVec2 dir_r  = ImVec2(dir.x * r, dir.y * r);
+            ImVec2 perp_r = ImVec2(perp.x * r * 0.8f, perp.y * r * 0.8f);
+            ImVec2 p1 = ImVec2(center.x + dir_r.x, center.y + dir_r.y);
+            ImVec2 p2 = ImVec2(center.x - dir_r.x + perp_r.x, center.y - dir_r.y + perp_r.y);
+            ImVec2 p3 = ImVec2(center.x - dir_r.x - perp_r.x, center.y - dir_r.y - perp_r.y);
+            ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+            dl->AddTriangleFilled(p1, p2, p3, col);
+            pressed = btn;
         }
-        if (config.normalButton(btn_name, bcfg))
+
+        if (pressed) {
             fold = !fold;
+            wxGetApp().imgui()->set_requires_extra_frame();
+        }
         if (!fold)
         {
 //             ImGui::Dummy(ImVec2(0, 5));
@@ -4964,36 +5299,178 @@ public:
             ::sprintf(buf, "%s:%.2f", _u8L("Material Cost").c_str(), ps.total_cost);
             imgui->text(buf);
             ImGui::Dummy(ImVec2(0, 5));
-            ImGui::Separator();
+            if (!s_preview_section_fold)
+                ImGui::Separator();
+        } else if (fold) {
+            ImGui::Dummy(ImVec2(0, 4));
         }
         return fold;
     }
 
-    void showOption(bool& showmark, bool& showbed, bool& showcolor) {
+    bool showOption(bool& showmark, bool& showbed, bool& showcolor) {
 
         float view_scale = wxGetApp().plater()->get_current_canvas3D()->get_scale();
 
         ImGui::Dummy(ImVec2(0, 5));
-        config.boldText(_u8L("Show in Preview"), 1.2);
+        if (s_preview_section_fold) {
+            std::string folded_title = _u8L("Details");
+            ImVec2 sz = ImGui::CalcTextSize(folded_title.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGuiWrapper::COL_CREALITY);
+            ImVec4 transparent(0, 0, 0, 0);
+            ImGui::PushStyleColor(ImGuiCol_Header, transparent);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, transparent);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, transparent);
+            if (ImGui::Selectable(folded_title.c_str(), false, 0, sz)) {
+                s_preview_section_fold = false;
+                wxGetApp().imgui()->set_requires_extra_frame();
+            }
+            ImGui::PopStyleColor(3);
+            ImRect txt_rect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(txt_rect.Min.x, txt_rect.Max.y - 1.0f),
+                                                ImVec2(txt_rect.Max.x, txt_rect.Max.y - 1.0f),
+                                                ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, 5));
+            return true;
+        }
+
+        std::string title       = _u8L("Show in Preview");
+        std::string toggle_txt  = _u8L("Collapse");
+        ImVec2       title_size = ImGui::CalcTextSize(title.c_str());
+        ImVec2       toggle_sz  = ImGui::CalcTextSize(toggle_txt.c_str());
+        float        line_y     = ImGui::GetCursorPosY();
+
+        config.boldText(title, 1.2);
+        ImGui::SameLine();
+        ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - toggle_sz.x, line_y));
+        ImVec4 transparent(0, 0, 0, 0);
+        ImGui::PushStyleColor(ImGuiCol_Header, transparent);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, transparent);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, transparent);
+        if (ImGui::Selectable(toggle_txt.c_str(), false, 0, toggle_sz)) {
+            s_preview_section_fold = true;
+            wxGetApp().imgui()->set_requires_extra_frame();
+        }
+        ImGui::PopStyleColor(3);
+        ImRect txt_rect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(txt_rect.Min.x, txt_rect.Max.y - 1.0f), ImVec2(txt_rect.Max.x, txt_rect.Max.y - 1.0f),
+                                            ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
         DispConfig::ButtonConfig cfg;
         cfg.border = 1;
 
         ImGui::Dummy(ImVec2(0, 5));
+        if (s_preview_section_fold) {
+            return true;
+        }
+
+        ImGuiWindow* window            = ImGui::GetCurrentWindow();
+        float        prev_font_scale   = window->FontWindowScale;
+        float        enlarged_font     = prev_font_scale * 1.1f;
+        ImVec2       enlarged_padding  = ImVec2(4.0f * view_scale, 3.0f * view_scale);
+        ImGui::SetWindowFontScale(enlarged_font);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, enlarged_padding);
         showbed = config.checkBox(_u8L("Print Platform"), showbed, cfg);
-        ImGui::SameLine(160 * view_scale);
-        showmark = config.checkBox(_u8L("Nozzle"), showmark, cfg);
-
-        ImGui::Dummy(ImVec2(0, 5));
-        ImGui::Separator();
-
-        cfg.boldScale = 1.2;
-        cfg.size      = {100 * view_scale, 30 * view_scale};
-        ImGui::Dummy(ImVec2(0, 5));
-        if (config.normalButton(_u8L("Color Show"), cfg, showcolor ? 2 : 0))
-            showcolor = true;
         ImGui::SameLine();
-        if (config.normalButton(_u8L("G-code"), cfg, showcolor ? 0 : 2))
+        showmark = config.checkBox(_u8L("Nozzle"), showmark, cfg);
+        ImGui::PopStyleVar(1);
+        ImGui::SetWindowFontScale(prev_font_scale);
+
+        // capsule toggle: Color Show (left) / G-code (right)
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * view_scale));
+        ImVec2 pill_pos   = ImGui::GetCursorScreenPos();
+        float  pill_h     = 30.0f * view_scale;
+        float  pill_w     = 200.0f * view_scale;
+        float  rounding   = pill_h * 0.5f;
+        ImVec2 pill_size  = {pill_w, pill_h};
+        ImVec2 left_size  = {pill_w * 0.5f, pill_h};
+        ImVec2 right_size = left_size;
+
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        bool   is_dark        = wxGetApp().dark_mode();
+        ImVec4 inactive_bg    = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        ImVec4 inactive_border= is_dark ? ImVec4(0.30f, 0.33f, 0.36f, 1.0f) : ImVec4(0.82f, 0.86f, 0.90f, 1.0f);
+        ImVec4 active_bg      = ImGuiWrapper::COL_CREALITY;
+        ImVec4 active_text    = ImVec4(1, 1, 1, 1);
+        ImVec4 inactive_text  = is_dark ? ImVec4(0.78f, 0.80f, 0.82f, 1.0f) : ImVec4(0.36f, 0.36f, 0.40f, 1.0f);
+
+        // pill border
+        draw_list->AddRectFilled(pill_pos, ImVec2(pill_pos.x + pill_w, pill_pos.y + pill_h),
+                                 ImGui::ColorConvertFloat4ToU32(inactive_bg), rounding);
+        draw_list->AddRect(pill_pos, ImVec2(pill_pos.x + pill_w, pill_pos.y + pill_h),
+                           ImGui::ColorConvertFloat4ToU32(inactive_border), rounding, 0, 1.0f);
+
+        // left (Color Show)
+        bool left_active  = showcolor;
+        ImVec2 left_min   = pill_pos;
+        ImVec2 left_max   = ImVec2(pill_pos.x + left_size.x, pill_pos.y + left_size.y);
+        if (left_active) {
+            draw_list->AddRectFilled(left_min, left_max, ImGui::ColorConvertFloat4ToU32(active_bg), rounding,
+                                     ImDrawFlags_RoundCornersLeft);
+        }
+        const float text_pad = 8.0f * view_scale;
+        std::string left_full_txt = _u8L("Color Show");
+        std::string left_draw_txt = left_full_txt;
+        bool left_truncated = false;
+        bool bold_pushed = wxGetApp().imgui()->push_bold_font();
+        {
+            const float max_text_w = left_size.x - 1.0f * text_pad;
+            if (max_text_w > 0.0f) {
+                left_draw_txt  = ImGuiWrapper::trunc(left_full_txt, max_text_w, "...");
+                left_truncated = (left_draw_txt != left_full_txt);
+            } else {
+                left_draw_txt  = "...";
+                left_truncated = true;
+            }
+            ImVec2 left_txt_sz  = ImGui::CalcTextSize(left_draw_txt.c_str());
+            ImVec2 left_txt_pos = ImVec2(left_min.x + (left_size.x - left_txt_sz.x) * 0.5f,
+                                         left_min.y + (left_size.y - left_txt_sz.y) * 0.5f);
+            draw_list->PushClipRect(left_min, left_max, true);
+            draw_list->AddText(left_txt_pos, ImGui::ColorConvertFloat4ToU32(left_active ? active_text : inactive_text), left_draw_txt.c_str());
+            draw_list->PopClipRect();
+        }
+        if (bold_pushed)
+            wxGetApp().imgui()->pop_bold_font();
+
+        // right (G-code)
+        bool right_active = !showcolor;
+        ImVec2 right_min  = ImVec2(pill_pos.x + left_size.x, pill_pos.y);
+        ImVec2 right_max  = ImVec2(pill_pos.x + left_size.x + right_size.x, pill_pos.y + right_size.y);
+        if (right_active) {
+            draw_list->AddRectFilled(right_min, right_max, ImGui::ColorConvertFloat4ToU32(active_bg), rounding,
+                                     ImDrawFlags_RoundCornersRight);
+        }
+        std::string right_txt = _u8L("G-Code");
+        ImVec2 right_txt_sz   = ImGui::CalcTextSize(right_txt.c_str());
+        ImVec2 right_txt_pos  = ImVec2(right_min.x + (right_size.x - right_txt_sz.x) * 0.5f,
+                                       right_min.y + (right_size.y - right_txt_sz.y) * 0.5f);
+        bold_pushed = wxGetApp().imgui()->push_bold_font();
+        draw_list->AddText(right_txt_pos, ImGui::ColorConvertFloat4ToU32(right_active ? active_text : inactive_text), right_txt.c_str());
+        if (bold_pushed)
+            wxGetApp().imgui()->pop_bold_font();
+
+        ImGui::SetCursorScreenPos(left_min);
+        ImGui::InvisibleButton("##color_show", left_size);
+        if (ImGui::IsItemClicked() && !showcolor) {
+            showcolor = true;
+            wxGetApp().imgui()->set_requires_extra_frame();
+        }
+        if (ImGui::IsItemHovered() && left_truncated) {
+            ImGui::PushStyleColor(ImGuiCol_PopupBg, ImGuiWrapper::COL_WINDOW_BACKGROUND);
+            ImGui::PushStyleColor(ImGuiCol_Border, {0, 0, 0, 0});
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 1.00f, 1.00f, 1.00f));
+            ImGui::SetTooltip("%s", left_full_txt.c_str());
+            ImGui::PopStyleColor(3);
+        }
+        ImGui::SetCursorScreenPos(right_min);
+        ImGui::InvisibleButton("##gcode_toggle", right_size);
+        if (ImGui::IsItemClicked() && showcolor) {
             showcolor = false;
+            wxGetApp().imgui()->set_requires_extra_frame();
+        }
+
+        ImGui::SetCursorScreenPos(ImVec2(pill_pos.x, pill_pos.y + pill_h));
+
+        return false;
     }
 
     void showColorHeader( GCodeViewer::EViewType m_view_type,float& contentWidth) {
@@ -5048,6 +5525,19 @@ public:
                 //{_u8L("Used filament"), offsets[3]},
                 //{_u8L("Display"), offsets[5]} 
                 });
+
+            {
+                const ImGuiStyle& style = ImGui::GetStyle();
+                const float checkbox_width = ImGui::GetFrameHeight();
+                const float checkbox_right_margin = 6.0f * m_scale;
+                const float reserved_right_width = checkbox_width + checkbox_right_margin + 2.0f * window_padding + style.ScrollbarSize + style.ItemSpacing.x;
+                const float percent_column_width = max_width(percents, _u8L("Percent"));
+                const float required_window_width = offsets[2] + percent_column_width + reserved_right_width;
+                if (required_window_width > contentWidth) {
+                    contentWidth = required_window_width;
+                    imgui->set_requires_extra_frame();
+                }
+            }
             break;
         }
         case GCodeViewer::EViewType::Height: { imgui->title(_u8L("Layer Height (mm)")); break; }
@@ -5456,6 +5946,7 @@ private:
         const std::vector<std::pair<std::string, float>>& columns_offsets,
         bool checkbox = true,bool visible = true,std::function<void()> callback = nullptr)
     {
+        float row_start_y = ImGui::GetCursorPosY();
         auto draw_list = ImGui::GetWindowDrawList();
         // render icon
         ImVec2 pos = ImVec2(ImGui::GetCursorScreenPos().x + window_padding, ImGui::GetCursorScreenPos().y);
@@ -5494,14 +5985,26 @@ private:
                 if (ImGui::CalcTextSize(column_offset.first.c_str()).y > max_height)
                     max_height = ImGui::CalcTextSize(column_offset.first.c_str()).y;
             }
-            bool b_menu_item = ImGui::BBLMenuItem(("##" + columns_offsets[0].first).c_str(), nullptr, false, true, max_height);
+            bool   b_menu_item = ImGui::BBLMenuItem(("##" + columns_offsets[0].first).c_str(), nullptr, false, true, max_height);
+            ImRect row_rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             ImGui::PopStyleVar(1);
             if (b_menu_item)
                 callback();
             if (checkbox) {
-                float bias = ImGui::GetWindowWidth()- ImGui::GetFrameHeight() / 2 - 2.0 * window_padding;
+                const float checkbox_width = ImGui::GetFrameHeight();
+                const float checkbox_right_margin = 6.0f * m_scale;
+                float bias = ImGui::GetWindowContentRegionMax().x - checkbox_width - checkbox_right_margin;
+                bias = std::max(0.0f, bias);
                 ImGui::SameLine(bias);
+                float  check_height  = ImGui::GetFrameHeight();
+                float  target_y      = row_start_y + icon_size * 0.5f - check_height * 0.5f;
+                target_y             = std::max(row_start_y, target_y);
+                ImVec2 checkbox_pos  = ImGui::GetCursorPos();
+                ImGui::SetCursorPos(ImVec2(checkbox_pos.x, target_y));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * m_scale, 3.0f * m_scale));
                 visible = config.checkBox("##" + columns_offsets[0].first, visible);
+                ImGui::PopStyleVar(1);
+                ImGui::SetCursorPos(checkbox_pos);
             }
         }
 
@@ -5524,6 +6027,7 @@ private:
                      bool                                              visible  = true,
                      std::function<void()>                             callback = nullptr)
     {
+        float row_start_y = ImGui::GetCursorPosY();
         auto draw_list = ImGui::GetWindowDrawList();
 
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(20.0 * m_scale, 6.0 * m_scale));
@@ -5584,14 +6088,26 @@ private:
                 if (ImGui::CalcTextSize(column_offset.first.c_str()).y > max_height)
                     max_height = ImGui::CalcTextSize(column_offset.first.c_str()).y;
             }
-            bool b_menu_item = ImGui::BBLMenuItem(("##" + columns_offsets[0].first).c_str(), nullptr, false, true, max_height);
+            bool   b_menu_item = ImGui::BBLMenuItem(("##" + columns_offsets[0].first).c_str(), nullptr, false, true, max_height);
+            ImRect row_rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             ImGui::PopStyleVar(1);
             if (b_menu_item)
                 callback();
             if (checkbox) {
-                float bias = ImGui::GetWindowWidth() - ImGui::GetFrameHeight() / 2 - 2.0 * window_padding;
+                const float checkbox_width = ImGui::GetFrameHeight();
+                const float checkbox_right_margin = 6.0f * m_scale;
+                float bias = ImGui::GetWindowContentRegionMax().x - checkbox_width - checkbox_right_margin;
+                bias = std::max(0.0f, bias);
                 ImGui::SameLine(bias);
+                float  check_height  = ImGui::GetFrameHeight();
+                float  target_y      = row_start_y + icon_size * 0.5f - check_height * 0.5f;
+                target_y             = std::max(row_start_y, target_y);
+                ImVec2 checkbox_pos  = ImGui::GetCursorPos();
+                ImGui::SetCursorPos(ImVec2(checkbox_pos.x, target_y));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * m_scale, 3.0f * m_scale));
                 visible = config.checkBox("##" + columns_offsets[0].first, visible);
+                ImGui::PopStyleVar(1);
+                ImGui::SetCursorPos(checkbox_pos);
             }
         }
 
@@ -5690,16 +6206,26 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
 
     glsafe(::glEnable(GL_DEPTH_TEST));
 
-    if (!m_roles.empty() && m_layers_slider && m_layers_slider->is_higher_at_max() && m_layers_slider->is_lower_at_min()) {
-    } else {
-        render_shells(canvas_width, canvas_height); 
+    bool empty_roles = m_roles.empty();
+    bool ban_shells_render = false;
+    if (wxGetApp().preset_bundle->machine_is_belt() && empty_roles) // 路径没渲染完成时，cr30禁止显示半透明轮廓
+        ban_shells_render = true;
+
+    if (!ban_shells_render)
+    {
+        if (!m_roles.empty() && m_layers_slider && m_layers_slider->is_higher_at_max() && m_layers_slider->is_lower_at_min()) {
+        } else {
+            render_shells(canvas_width, canvas_height);
+        }
     }
 
-    if (m_roles.empty())
+    if (empty_roles)
         return;
 
     if (!m_no_render_path) {
-        marker.set_world_position(m_sequential_view.current_position);
+        Transform3d transform = wxGetApp().plater()->get_current_canvas3D()->get_preview_extra_transform();
+        auto pos = transform * m_sequential_view.current_position.cast<double>();
+        marker.set_world_position(pos.cast<float>());
         marker.set_world_offset(m_sequential_view.current_offset);
         float sc = wxGetApp().plater()->get_current_canvas3D()->get_scale();
         int bottom_margin = 120 * GCODE_VIEWER_SLIDER_SCALE*sc;
@@ -5729,6 +6255,26 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
         auto wcfg = helper.prepare(m_fold,m_contentWidth);
         //wcfg.bgalpha = 5/100.f;
         DispConfig().processWindows("gcode_legend", [&]() {
+            {
+                const ImGuiStyle& style = ImGui::GetStyle();
+                ImVec2 win_pos = ImGui::GetWindowPos();
+                ImVec2 win_sz  = ImGui::GetWindowSize();
+                ImDrawList* bg = ImGui::GetBackgroundDrawList();
+                const ImVec4 sh_rgb = ImVec4(118.0f/255.0f, 142.0f/255.0f, 171.0f/255.0f, 1.0f);
+                const float alphas[8] = { 0.050f, 0.040f, 0.032f, 0.026f, 0.020f, 0.014f, 0.010f, 0.006f };
+                const float steps[8]  = { 2.00f, 1.60f, 1.20f, 0.90f, 0.70f, 0.50f, 0.35f, 0.20f };
+                for (int i = 0; i < 8; ++i) {
+                    float spread = steps[i] * m_scale;
+                    float round  = style.WindowRounding + spread;
+                    float off_x = spread * 0.10f;
+                    float off_y = spread * 0.80f;
+                    ImU32 col = ImGui::ColorConvertFloat4ToU32(ImVec4(sh_rgb.x, sh_rgb.y, sh_rgb.z, alphas[i]));
+                    bg->AddRectFilled(ImVec2(win_pos.x - off_x, win_pos.y + off_y),
+                                      ImVec2(win_pos.x + win_sz.x + off_x, win_pos.y + win_sz.y + spread + off_y),
+                                      col, round);
+                }
+            }
+
             bool old = m_fold;
             m_fold = helper.showTitle(old);
             if (m_fold != old) {
@@ -5749,7 +6295,9 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
             }
 
 
-            helper.showOption(m_showMark, m_showBed, m_showColor);
+            bool option_folded = helper.showOption(m_showMark, m_showBed, m_showColor);
+            if (option_folded)
+                return;
             if (m_showColor) {
                 ImGui::Dummy(ImVec2(0, 5));
                 int ret = DispConfig().combo(view_type_items_str, m_view_type_sel);
@@ -5819,10 +6367,17 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
                             ImGui::PushStyleColor(ImGuiCol_PopupBg, ImGuiWrapper::COL_WINDOW_BACKGROUND);
                             ImGui::PushStyleColor(ImGuiCol_Border, {0, 0, 0, 0});
                             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 1.00f, 1.00f, 1.00f));
-                            ImGui::SetTooltip(_u8L("In lite mode, only the essential toolpath data is displayed.\n"
+                            
+							std::string tooltip = _u8L(
+                                "In lite mode, only the essential toolpath data is displayed.\n"
+                                "If you need to view internal parameters such as infill, please disable this mode and "
+                                "re-slice the model.");
+                            ImGui::SetTooltip(tooltip.c_str());
+
+                            /*ImGui::SetTooltip(_u8L("In lite mode, only the essential toolpath data is displayed.\n"
                                                    "If you need to view internal parameters such as infill, please disable this mode and "
                                                    "re-slice the model.")
-                                                  .c_str());
+                                                  .c_str());*/
                             ImGui::PopStyleColor(3);
                         }
 
@@ -5912,8 +6467,22 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
 
             else if (!m_no_render_path)
             {
-                auto line = m_sequential_view.gcode_ids[m_sequential_view.current.last];
-                gcode_window.renderGcode(line, canvas_width, canvas_height,isReduceHeight);
+                uint64_t line = 0;
+                if (!m_sequential_view.gcode_ids.empty()) {
+                    const size_t idx = std::min<size_t>(static_cast<size_t>(m_sequential_view.current.last), m_sequential_view.gcode_ids.size() - 1);
+                    line = m_sequential_view.gcode_ids[idx];
+                    if (line == 0) {
+                        // Try to find the closest mapped G-code line id (some moves may not map to a line).
+                        const size_t max_scan = 2048;
+                        for (size_t j = idx; j > 0 && (idx - j) < max_scan && line == 0; --j)
+                            line = m_sequential_view.gcode_ids[j];
+                        for (size_t j = idx + 1; j < m_sequential_view.gcode_ids.size() && (j - idx) < max_scan && line == 0; ++j)
+                            line = m_sequential_view.gcode_ids[j];
+                    }
+                }
+                if (line == 0)
+                    line = 1;
+                gcode_window.renderGcode(line, canvas_width, canvas_height, isReduceHeight);
             }
             }, wcfg);
 
@@ -5925,12 +6494,26 @@ void GCodeViewer::render(int canvas_width, int canvas_height)
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
 
     //BBS render slider
-    if (!is_capture_mode)
-    {
+    if (!is_capture_mode) {
         if (m_moves_slider->render(canvas_width, canvas_height))
             m_layers_slider->switch_one_layer_mode();
         m_layers_slider->render(canvas_width, canvas_height);
     }
+
+#if ENABLE_FILTERED_STRIDE_DIALOG
+
+    ImGui::SetNextWindowPos(ImVec2(canvas_width - 50, 100), ImGuiCond_Always, ImVec2(1, 0));
+    ImGuiWrapper& imgui = *wxGetApp().imgui();
+    imgui.begin(std::string("Adjust Stride factor"),
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+    imgui.text("Stride factor:");
+    ImGui::SameLine();
+    // ImGui::SetNextItemWidth(100.0f);
+    bool toogle = ImGui::SliderFloat("##Stride slider", &m_stride_factor, 1.0f, 20.0f, "%.3f", ImGuiSliderFlags_None);
+    ImGui::Text("Dynamic Stride:%d", get_dynamic_stride(estimate_pixels_of_one_layer()));
+    imgui.end();
+
+#endif //ENABLE_FILTERED_STRIDE_DIALOG
 }
 
 #if ENABLE_GCODE_VIEWER_STATISTICS
@@ -6080,10 +6663,16 @@ void GCodeViewer::_on_set_fold(bool fold_value)
 
 bool GCodeViewer::show_gcode_surface() const { 
 	
+	BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format("verify m_gcode_result begin");
+    boost::log::core::get()->flush();
+
 	if (m_gcode_result) {
         if (m_gcode_result->all_surface_with_shell == false) 
 			return false;
 	}	
+
+	BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format("verify m_gcode_result end");
+    boost::log::core::get()->flush();
 
 	bool full_range   = m_layers_slider->is_higher_at_max() && m_layers_slider->is_lower_at_min() && m_moves_slider->is_higher_at_max();
     bool show_surface = full_range && is_visible(ExtrusionRole::erExternalPerimeter);  //show outer wall
@@ -6116,12 +6705,100 @@ bool GCodeViewer::show_gcode_surface() const {
 	return show_surface;
 }
 
+double GCodeViewer::estimate_pixels_of_one_layer() const
+{ 
+	auto                      camera        = GUI::wxGetApp().plater()->get_camera();
+    auto                      zoom          = camera.get_zoom();
+    Transform3d               vier_mat      = camera.get_view_matrix();
+    Matrix4d                  vier_proj_mat = camera.get_projection_matrix().matrix() * vier_mat.matrix();
+    const std::array<int, 4>& viewport      = camera.get_viewport();
+
+    size_t       layers_num = m_layers.size();
+    const double h          = m_paths_bounding_box.max.z();
+    const double average_h  = h / layers_num;
+    Vec3d target = camera.get_target();
+	Vec3d up = camera.get_dir_up();
+    Vec3d t = target + up.normalized() * average_h;
+
+    auto  s_min = calc_pt_in_screen(target, vier_proj_mat, viewport[2], viewport[3]);
+    auto  s_max = calc_pt_in_screen(t, vier_proj_mat, viewport[2], viewport[3]);
+    double dist = (s_min - s_max).norm();
+
+	return dist;
+}
+
+int GCodeViewer::get_dynamic_stride(double layer_height_of_pixel) const
+{
+    if (layer_height_of_pixel <= 0.1) return 2;
+    //int s = std::max((int) (m_stride_factor * layer_height_of_pixel), 3);
+	int s = std::max((int)ceilf(m_stride_factor * layer_height_of_pixel), 3);
+    if (s > 6) {
+		return 0;
+	}
+	return s;
+}
+
+inline bool GCodeViewer::should_be_filtered_of_layer(int stride, int layer) const
+{
+    size_t layers_num = m_layers.size();
+    
+	if (layers_num == 0 || layer < m_layers_z_range[0] || layer > m_layers_z_range[1] || layer < 0 || layer > layers_num)
+        return true;
+
+	if (stride <= 0 || layer == m_layers_z_range[0] || layer == m_layers_z_range[1]) 
+		return false;	
+	
+	if (m_top_surface_layer.find(layer) != m_top_surface_layer.end()) 
+		return false;
+
+	//const Camera& camera = wxGetApp().plater()->get_camera();
+
+	
+	//if (!camera.is_looking_downward()) {
+        /*if ((layer - m_layers_z_range[0]) % stride == 0) {
+            return true;
+        }*/
+ //   } else {
+	//	// from top to bottom
+        if ((m_layers_z_range[1] - layer) % stride == 0) {
+            return true;
+        }
+	//}
+	
+	return false;
+}
+
+int GCodeViewer::get_layer_index(const Path& path) const 
+{
+    if (m_layers.empty()) return -1;
+    assert(m_layers.size() == m_layers.get_endpoints().size());
+    const std::vector<Layers::Endpoints>& endpoints = m_layers.get_endpoints();
+    size_t length    = endpoints.size();
+    for (size_t i = 0; i < length; i++) {
+        const auto& ep = endpoints.at(i);
+        if (ep.first <= path.sub_paths.front().first.s_id && path.sub_paths.back().last.s_id <= ep.last) 
+			return i;
+	}
+	return -1;
+}
+
 void GCodeViewer::set_fold(bool fold)
 { 
     m_fold = fold;
     _on_set_fold(fold);
 }
 
+
+const std::vector<double>& GCodeViewer::get_filtered_layers_z_offset(const int dynamic_stride)
+{
+	
+	bool valid = m_filter_layer_result.check_valid(dynamic_stride, m_layers_z_range);
+    if (valid){
+		return m_filter_layer_result.get_layers_z_offset();
+	}
+
+	return m_filter_layer_result.rebuild_filter_layers_z_offset(this, dynamic_stride, m_layers_z_range, m_layers);
+}
+
 } // namespace GUI
 } // namespace Slic3r
-

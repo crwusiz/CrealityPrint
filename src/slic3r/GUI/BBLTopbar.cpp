@@ -12,9 +12,11 @@
 #include "PartPlate.hpp"
 
 #include <boost/log/trivial.hpp>
+#include <vector>
 #include <wx/dcgraph.h>
 #include "Notebook.hpp"
 #include "libslic3r/common_header/common_header.h"
+#include "AnalyticsDataUploadManager.hpp"
 #define TOPBAR_ICON_SIZE  17
 
 // original is 300, in some screen scale setting case(for example 175%), make the topbar too long
@@ -197,12 +199,39 @@ void ButtonsCtrl::RefreshColor()
 }
 void ButtonsCtrl::reLayout()
 {
+    // Recompute DIP-aware metrics so buttons adapt to new DPI.
+    m_btn_margin  = FromDIP(5);
+    m_line_margin = FromDIP(1);
+
+    // Update sizer item borders to the new margin.
+    for (unsigned int idx = 0; idx < m_sizer->GetItemCount(); ++idx) {
+        if (auto* item = m_sizer->GetItem(idx)) {
+            item->SetBorder(m_btn_margin);
+        }
+    }
+
     for (auto& it : m_mapPageButtons)
     {
-        it.second->Rescale();
-    }
-    m_sizer->Layout();
+        Button* btn = it.second;
+        if (!btn) continue;
 
+        // Reset DIP-based visuals.
+        btn->SetCornerRadius(FromDIP(3));
+
+        // Update min size based on whether the button has text.
+        const wxString label = btn->GetLabel();
+        const bool has_text = !label.IsEmpty();
+        const wxSize min_size(has_text ? FromDIP(100) : FromDIP(40), FromDIP(30));
+        btn->SetMinSize(min_size);
+
+        btn->Rescale();
+    }
+
+    m_sizer->Layout();
+    m_sizer->Fit(this);
+    InvalidateBestSize();
+    SetMinSize(GetBestSize());
+    Refresh();
 }
 bool ButtonsCtrl::InsertPage(
     size_t index, const wxString& text, bool bSelect /* = false*/, const std::string& bmp_name /* = ""*/, const std::string& inactive_bmp_name)
@@ -217,7 +246,7 @@ bool ButtonsCtrl::InsertPage(
     bool is_dark = Slic3r::GUI::wxGetApp().dark_mode();
     wxColour   hover_bg = is_dark ? wxColour(76, 213, 130) : wxColour(68, 205, 122);
     StateColor bg_color = StateColor(std::pair{hover_bg, (int) StateColor::Hovered},
-                                     std::pair{is_dark ? wxColour(1, 1, 1) : wxColour(214, 214, 220), (int) StateColor::Normal});
+                                     std::pair{is_dark ? wxColour("1, 1, 1") : wxColour(214, 214, 220), (int) StateColor::Normal});
 
     btn->SetBackgroundColor(bg_color);
     StateColor text_color = StateColor(std::pair{ is_dark ? wxColour(254, 254, 254) : wxColour(255,255,255), (int)StateColor::Hovered },
@@ -261,6 +290,7 @@ enum CUSTOM_ID
     ID_CONFIG_RELATE,
     ID_DOWNMANAGER,
     ID_LOGIN,
+    ID_FEEDBACK_BTN,
     ID_TOOL_BAR = 3200,
     ID_AMS_NOTEBOOK,
     ID_UPLOAD3MF,
@@ -535,7 +565,13 @@ void BBLTopbar::Init(wxFrame* parent)
     wxInitAllImageHandlers();
     //auto  = [=](int x) {return x * em_unit(this) / 10; };
     //this->SetMargins(wxSize(10, 10));
-    this->AddSpacer(FromDIP(5));
+    m_spacer_items.clear();
+    auto addDipSpacer = [this](int logical_px) {
+        wxAuiToolBarItem* item = this->AddSpacer(FromDIP(logical_px));
+        if (item) m_spacer_items.emplace_back(item, logical_px);
+        return item;
+    };
+    addDipSpacer(5);
 
     bool is_dark = Slic3r::GUI::wxGetApp().dark_mode();
     wxBitmap logo_bitmap = create_scaled_bitmap("logo", nullptr, (20));
@@ -543,7 +579,7 @@ void BBLTopbar::Init(wxFrame* parent)
     logo_item   = this->AddTool(ID_LOGO, "", logo_bitmap);
     logo_item->SetHoverBitmap(logo_bitmap_checked);
 
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
     this->AddSeparator(); 
 #ifndef __APPLE__
     wxBitmap file_bitmap = create_scaled_bitmap(is_dark ? "file_down" : "file_down_light", this, (TOPBAR_ICON_SIZE));
@@ -558,26 +594,26 @@ void BBLTopbar::Init(wxFrame* parent)
     wxBitmap dropdown_bitmap = create_scaled_bitmap(is_dark ? "menu_down" : "menu_down_light", this, (8));
     m_dropdown_menu_item = this->AddTool(ID_TOP_DROPDOWN_MENU, "", dropdown_bitmap);
  
-    this->AddSpacer(FromDIP(5));
+    addDipSpacer(5);
     this->AddSeparator();
-    this->AddSpacer(FromDIP(5));
+    addDipSpacer(5);
 #endif
-    wxBitmap open_bitmap = create_scaled_bitmap(is_dark ? "open_file" : "open_file_light" , this, (TOPBAR_ICON_SIZE));
-    tool_item            = this->AddTool(wxID_OPEN, "", open_bitmap, _L("Open Project"));
+/*   wxBitmap open_bitmap = create_scaled_bitmap(is_dark ? "open_file" : "open_file_light" , this, (TOPBAR_ICON_SIZE));
+    tool_item            = this->AddTool(wxID_OPEN, "", open_bitmap, _L("Open Project"));*/
 
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
 
     wxBitmap save_bitmap = create_scaled_bitmap(is_dark ? "topbar_save" : "topbar_save_light", this, (TOPBAR_ICON_SIZE));
     wxBitmap save_inactive_bitmap = create_scaled_bitmap(is_dark ? "topbar_save_disabled" : "topbar_save_disabled_light", this, (TOPBAR_ICON_SIZE));
     m_save_project_item = this->AddTool(wxID_SAVE, "", save_bitmap, _L("Save the project file"));
     m_save_project_item->SetDisabledBitmap(save_inactive_bitmap);
 
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
 
-    m_preference_item = this->AddTool(ID_PREFERENCES, "", create_scaled_bitmap(is_dark ? "preferences" : "preferences_light", this, (TOPBAR_ICON_SIZE)), _L("Preferences"));
+    //m_preference_item = this->AddTool(ID_PREFERENCES, "", create_scaled_bitmap(is_dark ? "preferences" : "preferences_light", this, (TOPBAR_ICON_SIZE)), _L("Preferences"));
 
 #ifdef __APPLE__
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
     this->AddTool(ID_CONFIG_RELATE, "", create_scaled_bitmap(is_dark ? "config_relate" : "config_relate_light", nullptr, TOPBAR_ICON_SIZE), _L("Relations"));
     auto item = this->FindTool(ID_CONFIG_RELATE);
     if (item)
@@ -585,7 +621,7 @@ void BBLTopbar::Init(wxFrame* parent)
         wxBitmap bitmap("");
         item->SetDisabledBitmap(bitmap);
     }
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
 #endif
 
     wxBitmap undo_bitmap = create_scaled_bitmap(is_dark ? "topbar_undo" : "topbar_undo_light", this, (TOPBAR_ICON_SIZE));
@@ -593,14 +629,14 @@ void BBLTopbar::Init(wxFrame* parent)
     m_undo_item                   = this->AddTool(wxID_UNDO, "", undo_bitmap, _L("Undo"));   
     m_undo_item->SetDisabledBitmap(undo_inactive_bitmap);
 
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
 
     wxBitmap redo_bitmap = create_scaled_bitmap(is_dark ? "topbar_redo" : "topbar_redo_light", this, (TOPBAR_ICON_SIZE));
     wxBitmap redo_inactive_bitmap = create_scaled_bitmap(is_dark ? "topbar_redo_disabled" : "topbar_redo_disabled_light", this, (TOPBAR_ICON_SIZE));
     m_redo_item                   = this->AddTool(wxID_REDO, "", redo_bitmap, _L("Redo"));
     m_redo_item->SetDisabledBitmap(redo_inactive_bitmap);
     /*
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
 
     
     wxBitmap calib_bitmap          = create_scaled_bitmap("calib_sf", nullptr, TOPBAR_ICON_SIZE);
@@ -608,16 +644,17 @@ void BBLTopbar::Init(wxFrame* parent)
     m_calib_item                   = this->AddTool(ID_CALIB, _L("Calibration"), calib_bitmap);
     m_calib_item->SetDisabledBitmap(calib_bitmap_inactive);*/
 
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
     this->AddStretchSpacer(1);
     //CX
     ButtonsCtrl* pCtr = new ButtonsCtrl(this);
+    pCtr->InsertPage(MainFrame::tpOnlineModel, _L("Online Models"), 0);
     pCtr->InsertPage(MainFrame::tp3DEditor, _L("Prepare"), 0);
     pCtr->InsertPage(MainFrame::tpPreview, _L("Preview"), 0);
     pCtr->InsertPage(MainFrame::tpDeviceMgr, _L("Device"), 0);
     //pCtr->InsertPage(3, _L("Project"), 0);
     m_tabCtrol = (wxControl*)pCtr;
-    wxAuiToolBarItem* item_ctrl = this->AddControl( m_tabCtrol);
+    item_ctrl = this->AddControl( m_tabCtrol);
     item_ctrl->SetAlignment(wxALIGN_CENTRE);
  
     this->Bind(wxCUSTOMEVT_NOTEBOOK_SEL_CHANGED, [this](wxCommandEvent& evt) {
@@ -649,35 +686,47 @@ void BBLTopbar::Init(wxFrame* parent)
     m_title_LabelItem->SetBackgroundColour(bgColor);
     m_title_item = this->AddControl(m_title_LabelItem);
 
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
     wxAuiToolBarItem * tool_sep = this->AddSeparator();
-    this->AddSpacer(FromDIP(10));
+    addDipSpacer(10);
+
+    {
+        wxSize   feedbackSize(FromDIP(24), FromDIP(24));
+        wxBitmap feedback_bitmap = create_scaled_bitmap3(is_dark ? "user_feedback" : "user_feedback_light", this, (TOPBAR_ICON_SIZE), feedbackSize);
+        wxBitmap feedback_disable_bitmap = create_scaled_bitmap3("user_feedback_disable", this, (TOPBAR_ICON_SIZE), feedbackSize);
+        wxBitmap feedback_hover_bitmap = create_scaled_bitmap3("user_feedback_hover", this, (TOPBAR_ICON_SIZE), feedbackSize);
+        m_feedback_item = this->AddTool(ID_FEEDBACK_BTN, "", feedback_bitmap, _L("User Feedback"));
+        m_feedback_item->SetDisabledBitmap(feedback_disable_bitmap);
+        m_feedback_item->SetHoverBitmap(feedback_hover_bitmap);
+        addDipSpacer(10);
+    }
+
 #if CUSTOM_CXCLOUD  
-    wxSize   targetSize(FromDIP(40), FromDIP(24));
-    wxBitmap upload_bitmap = create_scaled_bitmap3("toolbar_upload3mf", this, (TOPBAR_ICON_SIZE),targetSize);
-    wxImage  upload_image  = upload_bitmap.ConvertToImage();
-    upload_image.Rescale(targetSize.GetWidth(), targetSize.GetHeight(), wxIMAGE_QUALITY_BICUBIC);
-    wxBitmap upload_bitmap1(upload_image);
-    m_upload_btn = this->AddTool(ID_UPLOAD3MF, "", upload_bitmap1, _L("upload 3mf to crealitycloud"));
-    m_upload_btn->SetUserData(UPLOAD_BTN_CODE);
+    //wxSize   targetSize(FromDIP(40), FromDIP(24));
+    //wxBitmap upload_bitmap = create_scaled_bitmap3("toolbar_upload3mf", this, (TOPBAR_ICON_SIZE),targetSize);
+    //wxImage  upload_image  = upload_bitmap.ConvertToImage();
+    //upload_image.Rescale(targetSize.GetWidth(), targetSize.GetHeight(), wxIMAGE_QUALITY_BICUBIC);
+    //wxBitmap upload_bitmap1(upload_image);
+    //m_upload_btn = this->AddTool(ID_UPLOAD3MF, "", upload_bitmap1, _L("upload 3mf to crealitycloud"));
+    //m_upload_btn->SetUserData(UPLOAD_BTN_CODE);
 
-    wxBitmap upload_disable_bitmap = create_scaled_bitmap3("toolbar_upload3mf_disable", this, (TOPBAR_ICON_SIZE), targetSize);
-    upload_image = upload_disable_bitmap.ConvertToImage();
-    upload_image.Rescale(targetSize.GetWidth(), targetSize.GetHeight(), wxIMAGE_QUALITY_HIGH);
-    wxBitmap upload_bitmap2(upload_image);
-    m_upload_btn->SetDisabledBitmap(upload_bitmap2);
+    //wxBitmap upload_disable_bitmap = create_scaled_bitmap3("toolbar_upload3mf_disable", this, (TOPBAR_ICON_SIZE), targetSize);
+    //upload_image = upload_disable_bitmap.ConvertToImage();
+    //upload_image.Rescale(targetSize.GetWidth(), targetSize.GetHeight(), wxIMAGE_QUALITY_HIGH);
+    //wxBitmap upload_bitmap2(upload_image);
+    //m_upload_btn->SetDisabledBitmap(upload_bitmap2);
 
-    wxBitmap upload_hover_bitmap = create_scaled_bitmap3("toolbar_upload3mf_hover", this, (TOPBAR_ICON_SIZE), targetSize);
-    upload_image                 = upload_hover_bitmap.ConvertToImage();
-    upload_image.Rescale(targetSize.GetWidth(), targetSize.GetHeight(), wxIMAGE_QUALITY_HIGH);
-    wxBitmap upload_bitmap3(upload_image);
-    m_upload_btn->SetHoverBitmap(upload_bitmap3);
+    //wxBitmap upload_hover_bitmap = create_scaled_bitmap3("toolbar_upload3mf_hover", this, (TOPBAR_ICON_SIZE), targetSize);
+    //upload_image                 = upload_hover_bitmap.ConvertToImage();
+    //upload_image.Rescale(targetSize.GetWidth(), targetSize.GetHeight(), wxIMAGE_QUALITY_HIGH);
+    //wxBitmap upload_bitmap3(upload_image);
+    //m_upload_btn->SetHoverBitmap(upload_bitmap3);
 
-    this->AddSpacer(FromDIP(5));
-    wxAuiToolBarItem* tool_sep1 = this->AddSeparator();
-    this->AddSpacer(FromDIP(5));
+    //AddDipSpacer(this, 5);
+    //wxAuiToolBarItem* tool_sep1 = this->AddSeparator();
+    //AddDipSpacer(this, 5);
 
-    EnableUpload3mf();
+    //EnableUpload3mf();
 #endif
 #ifdef __WIN32__
     wxBitmap iconize_bitmap = create_scaled_bitmap(is_dark ? "topbar_min" : "topbar_min_light", this, (TOPBAR_ICON_SIZE));
@@ -694,7 +743,7 @@ void BBLTopbar::Init(wxFrame* parent)
 
     wxBitmap close_bitmap = create_scaled_bitmap(is_dark ? "topbar_close" : "topbar_close_light", this, (TOPBAR_ICON_SIZE));
     wxAuiToolBarItem* close_btn    = this->AddTool(wxID_CLOSE_FRAME, "", close_bitmap, wxString("Models"));
-    //this->AddSpacer(FromDIP(5));
+    //AddDipSpacer(this, 5);
 #endif
 
     Realize();
@@ -710,22 +759,23 @@ void BBLTopbar::Init(wxFrame* parent)
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnFileToolItem, this, ID_TOP_FILE_MENU);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnDropdownToolItem, this, ID_TOP_DROPDOWN_MENU);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnCalibToolItem, this, ID_CALIB);
-    this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnUpload3mf, this, ID_UPLOAD3MF);
+    //this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnUpload3mf, this, ID_UPLOAD3MF);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnIconize, this, ID_MINBTN);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnFullScreen, this, wxID_MAXIMIZE_FRAME);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnCloseFrame, this, wxID_CLOSE_FRAME);
+    this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnFeedback, this, ID_FEEDBACK_BTN);
     this->Bind(wxEVT_LEFT_DCLICK, &BBLTopbar::OnMouseLeftDClock, this);
     #ifdef WIN32
     this->Bind(wxEVT_LEFT_DOWN, &BBLTopbar::OnMouseLeftDown, this);
     this->Bind(wxEVT_LEFT_UP, &BBLTopbar::OnMouseLeftUp, this);
     #endif
-    this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnOpenProject, this, wxID_OPEN);
+    //this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnOpenProject, this, wxID_OPEN);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnSaveProject, this, wxID_SAVE);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnRedo, this, wxID_REDO);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnUndo, this, wxID_UNDO);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnModelStoreClicked, this, ID_MODEL_STORE);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnPublishClicked, this, ID_PUBLISH);
-    this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnPreferences, this, ID_PREFERENCES);
+    //this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnPreferences, this, ID_PREFERENCES);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnConfigRelate, this, ID_CONFIG_RELATE);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnLogo, this, ID_LOGO);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnDownMgr, this, ID_DOWNMANAGER);
@@ -811,10 +861,10 @@ void BBLTopbar::OnRedo(wxAuiToolBarEvent& event)
 void BBLTopbar::EnableUpload3mf()
 {
 #if CUSTOM_CXCLOUD
-    if (wxGetApp().plater()) { 
-        this->EnableTool(m_upload_btn->GetId(), wxGetApp().plater()->can_arrange());
-        Refresh();
-    }
+    //if (wxGetApp().plater()) { 
+    //    this->EnableTool(m_upload_btn->GetId(), wxGetApp().plater()->can_arrange());
+    //    Refresh();
+    //}
 #endif
 }
 bool BBLTopbar::GetSaveProjectItemEnabled()
@@ -859,10 +909,12 @@ void BBLTopbar::DisableGuideModeItems()
     if (!res) {
         m_dropdown_menu_item->SetUserData(0);
     }
-
-    res = this->GetToolEnabled(tool_item->GetId());
-    if (!res) {
-        tool_item->SetUserData(0);
+    if(tool_item)
+    {
+        res = this->GetToolEnabled(tool_item->GetId());
+        if (!res) {
+            tool_item->SetUserData(0);
+        }
     }
 
     res = this->GetToolEnabled(m_save_project_item->GetId());
@@ -870,10 +922,10 @@ void BBLTopbar::DisableGuideModeItems()
         m_save_project_item->SetUserData(0);
     }
 
-    res = this->GetToolEnabled(m_preference_item->GetId());
-    if (!res) {
-        m_preference_item->SetUserData(0);
-    }
+    //res = this->GetToolEnabled(m_preference_item->GetId());
+    //if (!res) {
+    //    m_preference_item->SetUserData(0);
+    //}
 
     res = this->GetToolEnabled(m_undo_item->GetId());
     if (!res) {
@@ -888,14 +940,15 @@ void BBLTopbar::DisableGuideModeItems()
     this->EnableTool(logo_item->GetId(), false);
     this->EnableTool(m_file_menu_item->GetId(), false);
     this->EnableTool(m_dropdown_menu_item->GetId(), false);
-    this->EnableTool(tool_item->GetId(), false);
+    if(tool_item)
+        this->EnableTool(tool_item->GetId(), false);
     this->EnableTool(m_save_project_item->GetId(), false);
-    this->EnableTool(m_preference_item->GetId(), false);
+    //this->EnableTool(m_preference_item->GetId(), false);
     this->EnableTool(m_undo_item->GetId(), false);
     this->EnableTool(m_redo_item->GetId(), false);
     m_tabCtrol->Enable(false);
     m_title_LabelItem->Enable(false);
-    this->EnableTool(m_upload_btn->GetId(), false);
+    //this->EnableTool(m_upload_btn->GetId(), false);
 
     Refresh();
 }
@@ -946,12 +999,12 @@ void BBLTopbar::EnableGuideModeItems()
         m_file_menu_item->SetUserData(-1);
     if (m_dropdown_menu_item->GetUserData() != 0)
         m_dropdown_menu_item->SetUserData(-1);
-    if (tool_item->GetUserData() != 0)
+    if (tool_item&&tool_item->GetUserData() != 0)
         tool_item->SetUserData(-1);
     if (m_save_project_item->GetUserData() != 0)
         m_save_project_item->SetUserData(-1);
-    if (m_preference_item->GetUserData() != 0)
-        m_preference_item->SetUserData(-1);
+    //if (m_preference_item->GetUserData() != 0)
+    //    m_preference_item->SetUserData(-1);
     if (m_undo_item->GetUserData() != 0)
         m_undo_item->SetUserData(-1);
     if (m_redo_item->GetUserData() != 0)
@@ -960,15 +1013,16 @@ void BBLTopbar::EnableGuideModeItems()
     this->EnableTool(logo_item->GetId(), true);
     this->EnableTool(m_file_menu_item->GetId(), true);
     this->EnableTool(m_dropdown_menu_item->GetId(), true);
-    this->EnableTool(tool_item->GetId(), true);
+    if(tool_item)
+        this->EnableTool(tool_item->GetId(), true);
     this->EnableTool(m_save_project_item->GetId(), true);
-    this->EnableTool(m_preference_item->GetId(), true);
+    //this->EnableTool(m_preference_item->GetId(), true);
     this->EnableTool(m_undo_item->GetId(), true);
     this->EnableTool(m_redo_item->GetId(), true);
 
     m_tabCtrol->Enable(true);
     m_title_LabelItem->Enable(true);
-    this->EnableTool(m_upload_btn->GetId(), true);
+    //this->EnableTool(m_upload_btn->GetId(), true);
 
     Refresh();
 }
@@ -1099,6 +1153,23 @@ void BBLTopbar::OnDownMgr(wxAuiToolBarEvent& evt) {}
 
 void BBLTopbar::OnLogin(wxAuiToolBarEvent& evt) {}
 
+void BBLTopbar::OnFeedback(wxAuiToolBarEvent& evt)
+{
+    //try {
+    //    // Test the recommended goods interface via feedback button
+    //    wxGetApp().OpenEshopRecommendedGoods("#000000", "PLA", "Hyper PLA");
+    //    return;
+    //} catch (...) {
+    //    // fall through to default feedback page
+    //}
+    AnalyticsDataUploadManager::uploadSlice822ClickEvent("user_feedback",2);
+    try {
+        wxLaunchDefaultBrowser(user_feedback_website(), wxBROWSER_NEW_WINDOW);
+    } catch (...) {
+        // Fallback: ignore errors silently
+    }
+}
+
 void BBLTopbar::SetFileMenu(wxMenu* file_menu)
 {
     m_file_menu = file_menu;
@@ -1180,15 +1251,15 @@ void BBLTopbar::Rescale(bool isResize) {
     item = this->FindTool(ID_TOP_DROPDOWN_MENU);
     item->SetBitmap(create_scaled_bitmap(is_dark ? "menu_down" : "menu_down_light", this, (8)));
 #endif
-    item = this->FindTool(wxID_OPEN);
-    item->SetBitmap(create_scaled_bitmap(is_dark ? "open_file" : "open_file_light", this, (TOPBAR_ICON_SIZE)));
+    //item = this->FindTool(wxID_OPEN);
+    //item->SetBitmap(create_scaled_bitmap(is_dark ? "open_file" : "open_file_light", this, (TOPBAR_ICON_SIZE)));
 
     item = this->FindTool(wxID_SAVE);
     item->SetBitmap(create_scaled_bitmap(is_dark ? "topbar_save" : "topbar_save_light", this, (TOPBAR_ICON_SIZE)));
     item->SetDisabledBitmap(create_scaled_bitmap(is_dark ? "topbar_save_disabled" : "topbar_save_disabled_light", this, (TOPBAR_ICON_SIZE)));
 
-    item = this->FindTool(ID_PREFERENCES);
-    item->SetBitmap(create_scaled_bitmap(is_dark ? "preferences" : "preferences_light", this, (TOPBAR_ICON_SIZE)));
+    //item = this->FindTool(ID_PREFERENCES);
+    //item->SetBitmap(create_scaled_bitmap(is_dark ? "preferences" : "preferences_light", this, (TOPBAR_ICON_SIZE)));
 
 #ifdef __APPLE__
      item = this->FindTool(ID_CONFIG_RELATE);
@@ -1218,8 +1289,8 @@ void BBLTopbar::Rescale(bool isResize) {
     /*item = this->FindTool(ID_MODEL_STORE);
     item->SetBitmap(create_scaled_bitmap("topbar_store", this, TOPBAR_ICON_SIZE));
     */
-    
 #ifdef __WIN32__
+    
     item = this->FindTool(ID_MINBTN);
     item->SetBitmap(create_scaled_bitmap(is_dark ? "topbar_min" : "topbar_min_light", this, (TOPBAR_ICON_SIZE)));
     item = this->FindTool(wxID_MAXIMIZE_FRAME);
@@ -1235,22 +1306,43 @@ void BBLTopbar::Rescale(bool isResize) {
     item = this->FindTool(wxID_CLOSE_FRAME);
     item->SetBitmap(create_scaled_bitmap(is_dark ? "topbar_close" : "topbar_close_light", this, (TOPBAR_ICON_SIZE)));
 #endif
+    // Update User Feedback button bitmaps to match current theme
+    {
+        wxAuiToolBarItem* feedback_item = this->FindTool(ID_FEEDBACK_BTN);
+        if (feedback_item) {
+            wxSize feedbackSize(FromDIP(24), FromDIP(24));
+            wxBitmap feedback_bitmap         = create_scaled_bitmap3(is_dark ? "user_feedback" : "user_feedback_light", this, (TOPBAR_ICON_SIZE), feedbackSize);
+            wxBitmap feedback_disable_bitmap = create_scaled_bitmap3("user_feedback_disable", this, (TOPBAR_ICON_SIZE), feedbackSize);
+            wxBitmap feedback_hover_bitmap   = create_scaled_bitmap3("user_feedback_hover", this, (TOPBAR_ICON_SIZE), feedbackSize);
+            feedback_item->SetBitmap(feedback_bitmap);
+            feedback_item->SetDisabledBitmap(feedback_disable_bitmap);
+            feedback_item->SetHoverBitmap(feedback_hover_bitmap);
+        }
+    }
     if (m_tabCtrol) {
         ButtonsCtrl* pCtr = dynamic_cast<ButtonsCtrl*>(m_tabCtrol);
         pCtr->RefreshColor();
     }
-    Refresh();
+
     //refresh layout
     if (isResize)
     {
         ButtonsCtrl* pCtr = dynamic_cast<ButtonsCtrl*>(m_tabCtrol);
-
-        pCtr->Layout();
         pCtr->Centre();
         pCtr->reLayout();
+        if (item_ctrl && pCtr) {
+            item_ctrl->SetMinSize(pCtr->GetBestSize());
+        }
+        // Update spacer sizes based on stored logical DIP values.
+        for (auto& pair : m_spacer_items) {
+            if (pair.first) {
+                pair.first->SetSpacerPixels(FromDIP(pair.second));
+            }
+        }
         Realize();
     }
-
+    Layout();
+    Refresh();
     wxColour bgColor = Slic3r::GUI::wxGetApp().dark_mode() ? wxColour("#010101") : wxColour(214, 214, 220);
     m_title_LabelItem->SetBackgroundColour(bgColor);
 }

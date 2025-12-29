@@ -28,8 +28,8 @@
     "enable_special_area_additional_cooling_fan": "0",
     "eng_plate_temp": "50",
     "eng_plate_temp_initial_layer": "55",
-    "epoxy_resin_plate_temp": "0",
-    "epoxy_resin_plate_temp_initial_layer": "0",
+    "epoxy_resin_plate_temp": "60",
+    "epoxy_resin_plate_temp_initial_layer": "60",
     "fan_cooling_layer_time": "30",
     "fan_max_speed": "80",
     "fan_min_speed": "40",
@@ -37,7 +37,7 @@
     "filament_cooling_initial_speed": "2.2",
     "filament_cooling_moves": "4",
     "filament_cost": "70",
-    "filament_density": "1.24",
+    "filament_density": "1.26",
     "filament_deretraction_speed": "nil",
     "filament_diameter": "1.75",
     "filament_end_gcode": [
@@ -72,7 +72,7 @@
     ],
     "filament_toolchange_delay": "0",
     "filament_type": [
-        "PETG"
+        "PETG-CF"
     ],
     "filament_unload_time": "0",
     "filament_unloading_speed": "90",

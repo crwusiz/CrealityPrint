@@ -682,7 +682,7 @@ void reGroupingLayerPolygons(std::vector<groupedVolumeSlices>& gvss, ExPolygons 
 std::string fix_slicing_errors(PrintObject* object, LayerPtrs &layers, const std::function<void()> &throw_if_canceled, int &firstLayerReplacedBy)
 {
     std::string error_msg;//BBS
-
+    
     if (layers.size() == 0) return error_msg;
 
     // Collect layers with slicing errors.
@@ -780,13 +780,18 @@ std::string fix_slicing_errors(PrintObject* object, LayerPtrs &layers, const std
     if(is_replaced)
         error_msg = L("Empty layers around bottom are replaced by nearest normal layers.");
 
-    // remove empty layers from bottom
-    while (! layers.empty() && (layers.front()->lslices.empty() || layers.front()->empty())) {
-        delete layers.front();
-        layers.erase(layers.begin());
-        layers.front()->lower_layer = nullptr;
-        for (size_t i = 0; i < layers.size(); ++ i)
-            layers[i]->set_id(layers[i]->id() - 1);
+    //修复bug  https://zentao.creality.com/zentao/bug-view-13060.html
+    if (object->config().enable_support/* && object->belt()*/) {
+        //if CR30 used support Do not remove empty layers 
+    } else {
+        // remove empty layers from bottom
+        while (!layers.empty() && (layers.front()->lslices.empty() || layers.front()->empty())) {
+            delete layers.front();
+            layers.erase(layers.begin());
+            layers.front()->lower_layer = nullptr;
+            for (size_t i = 0; i < layers.size(); ++i)
+                layers[i]->set_id(layers[i]->id() - 1);
+        }
     }
 
     //BBS

@@ -966,6 +966,7 @@ bool contains(const BuildVolume& volume, const GLModel& model, bool ignore_botto
 {
     static constexpr const double epsilon = BuildVolume::BedEpsilon;
     switch (volume.type()) {
+    case BuildVolume_Type::Belt:
     case BuildVolume_Type::Rectangle:
     {
         BoundingBox3Base<Vec3d> build_volume = volume.bounding_volume().inflated(epsilon);

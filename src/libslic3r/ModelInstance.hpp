@@ -15,8 +15,11 @@ class ModelInstance final : public ObjectBase
 {
 private:
     Geometry::Transformation m_transformation;
+    Geometry::Transformation m_belt_transformation;
+    Geometry::Transformation m_old_transformation;
     Geometry::Transformation m_assemble_transformation;
     Vec3d m_offset_to_assembly{ 0.0, 0.0, 0.0 };
+    bool m_old_transformation_valid { false };
     bool m_assemble_initialized;
 
 public:
@@ -38,8 +41,26 @@ public:
 
     ModelObject* get_object() const { return this->object; }
 
-    const Geometry::Transformation& get_transformation() const { return m_transformation; }
+    const Geometry::Transformation& get_transformation() const { 
+            return m_transformation;
+    }
+
+    void restore_belt_transformation() {
+         m_transformation = m_belt_transformation;
+    }
+    void restore_transformation() {
+         m_transformation = m_old_transformation;
+    }
     void set_transformation(const Geometry::Transformation& transformation) { m_transformation = transformation; }
+    void set_belt_transformation(const Geometry::Transformation& transformation) { 
+        m_belt_transformation = transformation; 
+    }
+    void set_old_transformation(const Geometry::Transformation& transformation) { 
+        m_old_transformation = transformation; 
+        m_old_transformation_valid = true;
+    }
+    bool has_old_transformation() const { return m_old_transformation_valid; }
+    const Geometry::Transformation& get_old_transformation() const { return m_old_transformation; }
 
     const Geometry::Transformation& get_assemble_transformation() const { return m_assemble_transformation; }
     void set_assemble_transformation(const Geometry::Transformation& transformation) {
@@ -100,6 +121,8 @@ public:
     // To be called on an external polygon. It does not translate the polygon, only rotates and scales.
     void transform_polygon(Polygon* polygon) const;
 
+    const Transform3d& get_old_matrix() const { return m_old_transformation.get_matrix(); }
+
     const Transform3d& get_matrix() const { return m_transformation.get_matrix(); }
     Transform3d get_matrix_no_offset() const { return m_transformation.get_matrix_no_offset(); }
 
@@ -138,7 +161,8 @@ private:
     explicit ModelInstance(ModelObject* object) : print_volume_state(ModelInstancePVS_Inside), printable(true), object(object), m_assemble_initialized(false) { assert(this->id().valid()); }
     // Constructor, which assigns a new unique ID.
     explicit ModelInstance(ModelObject *object, const ModelInstance &other) :
-        m_transformation(other.m_transformation)
+        m_transformation(other.m_transformation),
+        m_belt_transformation(other.m_belt_transformation)
         , m_assemble_transformation(other.m_assemble_transformation)
         , m_offset_to_assembly(other.m_offset_to_assembly)
         , print_volume_state(ModelInstancePVS_Inside)

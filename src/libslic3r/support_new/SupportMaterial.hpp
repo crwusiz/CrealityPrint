@@ -77,7 +77,10 @@ private:
 	// Generate top contact layers supporting overhangs.
 	// For a soluble interface material synchronize the layer heights with the object, otherwise leave the layer height undefined.
 	// If supports over bed surface only are requested, don't generate contact layers over an object.
-	SupportGeneratorLayersPtr top_contact_layers(const PrintObject &object, const std::vector<Polygons> &buildplate_covered, SupportGeneratorLayerStorage &layer_storage) const;
+    SupportGeneratorLayersPtr top_contact_layers(const PrintObject&            object,
+                                                 const std::vector<Polygons>&  buildplate_covered,
+                                                 SupportGeneratorLayerStorage& layer_storage,
+                                                 std::vector<Polygons>&        layer_support_areas);
 
 	// Generate bottom contact layers supporting the top contact layers.
 	// For a soluble interface material synchronize the layer heights with the object, 
@@ -104,6 +107,15 @@ private:
 	    SupportGeneratorLayersPtr         &intermediate_layers,
 	    const std::vector<Polygons> &layer_support_areas) const;
 
+
+
+
+
+    void prune_unbacked_top_contacts(const PrintObject&               object,
+                                     const SupportGeneratorLayersPtr& bottom_contacts,
+                                     const SupportGeneratorLayersPtr& intermediate_layers,
+                                     const std::vector<Polygons>&     layer_support_areas,
+                                     SupportGeneratorLayersPtr&       top_contacts) const;
 
 
 	// Trim support layers by an object to leave a defined gap between

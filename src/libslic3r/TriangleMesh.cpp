@@ -246,6 +246,36 @@ void TriangleMesh::WriteOBJFile(const char* output_file) const
 {
     its_write_obj(this->its, output_file);
 }
+void TriangleMesh::repair()
+{
+    if (this->its.indices.empty())
+        return;
+
+    stl_file stl;
+    stl.stats.reset_header(LABEL_SIZE);
+    stl.stats.type               = inmemory;
+    stl.stats.number_of_facets   = static_cast<uint32_t>(this->its.indices.size());
+    stl.stats.original_num_facets = stl.stats.number_of_facets;
+    stl_allocate(&stl);
+
+    bool first = true;
+    for (size_t i = 0; i < this->its.indices.size(); ++i) {
+        stl_facet &facet         = stl.facet_start[i];
+        const auto &face_indices = this->its.indices[i];
+        facet.vertex[0]          = this->its.vertices[face_indices[0]];
+        facet.vertex[1]          = this->its.vertices[face_indices[1]];
+        facet.vertex[2]          = this->its.vertices[face_indices[2]];
+        facet.extra[0]           = 0;
+        facet.extra[1]           = 0;
+        stl_calculate_normal(facet.normal, &facet);
+        stl_normalize_vector(facet.normal);
+        stl_facet_stats(&stl, facet, first);
+    }
+
+    stl_get_size(&stl);
+    trianglemesh_repair_on_import(stl);
+    this->from_stl(stl, /*repair=*/false);
+}
 
 void TriangleMesh::scale(float factor)
 {
@@ -450,6 +480,14 @@ BoundingBoxf3 TriangleMesh::transformed_bounding_box(const Transform3d &trafo) c
     BoundingBoxf3 bbox;
     for (const stl_vertex &v : this->its.vertices)
         bbox.merge(trafo * v.cast<double>());
+    return bbox;
+}
+
+BoundingBoxf3 TriangleMesh::transformed_bounding_box(const Transform3d& trafo, const Transform3d& belt_trafo) const
+{
+    BoundingBoxf3 bbox;
+    for (const stl_vertex& v : this->its.vertices)
+        bbox.merge(belt_trafo * (trafo * v.cast<double>()));
     return bbox;
 }
 

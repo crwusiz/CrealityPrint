@@ -214,6 +214,8 @@ public:
     // update params tip
     void push_update_params_tip(const std::string& tipInfo);
     void close_update_params_tip(const std::string& tipInfo);
+    void push_checked_3rd_filament_vendor_tip(const std::string& tipInfo);
+    void close_checked_3rd_filament_vendor_tip(const std::string& tipInfo);
 	// Creates Slicing Error notification with a custom text and no fade out.
     void push_slicing_error_notification(const std::string &text, std::vector<ModelObject const *> objs);
 	// Creates Slicing Warning notification with a custom text and no fade out.

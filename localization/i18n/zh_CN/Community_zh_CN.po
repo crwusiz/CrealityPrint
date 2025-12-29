@@ -1467,3 +1467,19 @@ msgstr "模型未下载，点击下载模型"
 
 msgid "Download the model"
 msgstr "下载模型"
+
+msgid ""
+"Creality Print requires the Microsoft WebView2 Runtime,But it has been found that the abnormal operation of Microsoft WebView2 may be related to the installation of Microsoft Edge. \n"
+"Click the Yes to reinstall Microsoft Edge"
+msgstr ""
+"Creality Print 需要 Microsoft WebView2 Runtime，但已发现其异常运行可能与安装 Microsoft Edge 有关。\n"
+"点击“是”重新安装 Microsoft Edge。"
+
+msgid "Failed to reinstall the Microsoft WebView2 Runtime. Please reinstall it manually."
+msgstr "Microsoft WebView2 Runtime 重新安装失败。请手动重新安装。"
+
+msgid "tutorial: %s"
+msgstr "教程：%s"
+
+msgid "The Microsoft WebView2 Runtime has been reinstalled successfully. The application will restart now."
+msgstr "Microsoft WebView2 Runtime 已成功重新安装，应用将立即重启。"

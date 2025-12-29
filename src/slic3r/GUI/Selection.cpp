@@ -7,10 +7,12 @@
 #include "GUI.hpp"
 #include "GUI_ObjectList.hpp"
 #include "Gizmos/GLGizmoBase.hpp"
+#include "Gizmos/GizmoObjectManipulation.hpp"
 #include "Camera.hpp"
 #include "Plater.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/Config/DispConfig.h"
 #include "Widgets/NumberEntryDialog.hpp"
 
 #include "libslic3r/PrintConfig.hpp"
@@ -501,7 +503,8 @@ void Selection::center()
 void Selection::center_plate(const int plate_idx) {
 
     PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
-
+    if(plate==nullptr)
+        return;
 
     Vec3d src_pos = this->get_bounding_box().center();
     Vec3d tar_pos = plate->get_center_origin();
@@ -1450,8 +1453,33 @@ void Selection::scale_legacy(const Vec3d& scale, TransformationType transformati
     if (!m_valid)
         return;
 
+    auto manipul_obj = wxGetApp().obj_manipul();
+    if (!manipul_obj)
+        return;
+
+    bool is_uniform_scaling = manipul_obj->get_uniform_scaling();
     for (unsigned int i : m_list) {
         GLVolume &v = *(*m_volumes)[i];
+
+        // 如果进行均匀缩放，同时又发现变换矩阵受到了类shear变换，那么认为这个模型是外部进行了剪切变换，
+        // 此时如果继续做均匀缩放，会使得旋转、缩放变换互相紊乱耦合，那么就把当前变换烘焙进mesh
+        // 处理方法参考void GizmoObjectManipulation::set_uniform_scaling(const bool new_value)
+        if (is_uniform_scaling)
+        {
+            Matrix3d rotation;
+            Matrix3d scale;
+            auto     trafo = v.get_instance_transformation();
+            trafo.get_matrix().computeRotationScaling(&rotation, &scale);
+            if (Geometry::hasShearContamination(scale.cast<float>())) {
+                // Bake the rotation into the meshes of the object.
+                wxGetApp().model().objects[v.composite_id.object_id]->bake_xy_rotation_into_meshes(v.composite_id.instance_id);
+                // Update the 3D scene, selections etc.
+                wxGetApp().plater()->update();
+                // Recalculate cached values at this panel, refresh the screen.
+                wxGetApp().obj_manipul()->UpdateAndShow(true);
+            }
+        }
+
         if (is_single_full_instance()) {
             if (transformation_type.relative()) {
                 Transform3d m = Geometry::assemble_transform(Vec3d::Zero(), Vec3d::Zero(), scale);
@@ -1854,7 +1882,12 @@ void Selection::notify_instance_update(int object_idx, int instance_idx)
     if (object_idx == -1)
     {
         std::set<std::pair<int, int>> notify_set;
-        for (unsigned int i : m_list)
+        // Take a snapshot of current selection to avoid iterator invalidation
+        std::vector<unsigned int> selection_snapshot;
+        selection_snapshot.reserve(m_list.size());
+        for (unsigned int idx : m_list)
+            selection_snapshot.push_back(idx);
+        for (unsigned int i : selection_snapshot)
         {
             int obj_index = (*m_volumes)[i]->object_idx();
             //-1 means all the instance in this object
@@ -2025,11 +2058,13 @@ void Selection::render(float scale_factor)
         return;
 
     m_scale_factor = scale_factor;
+    const ImVec4 bbox_color_vec = DispConfig().getColor(DispConfig::e_ct_selectBox);
+    const ColorRGB bbox_color(bbox_color_vec.x, bbox_color_vec.y, bbox_color_vec.z);
 
     if (m_select_bbox_visible) {
         // render cumulative bounding box of selected volumes
         const auto& [box, trafo] = get_bounding_box_in_current_reference_system();
-        render_bounding_box(box, trafo, ColorRGB::WHITE());
+        render_bounding_box(box, trafo, bbox_color);
     }
 
     /*  Draw bounding boxes one by one
@@ -2037,7 +2072,7 @@ void Selection::render(float scale_factor)
     for (int i=0; i< bnds.size(); i++) 
     {
         const auto& [box, trafo] = bnds[i];
-        render_bounding_box(box, trafo, ColorRGB::WHITE());
+        render_bounding_box(box, trafo, bbox_color);
     }
     */
     render_synchronized_volumes();
@@ -2049,7 +2084,83 @@ void Selection::calculate_clone_preview_offsets(int numbers)
         calculate_volume_clone_preview_offsets(numbers);
     }
     else if (Selection::Instance == m_mode) {
-        calculate_model_object_clone_preview_offsets(numbers);
+        if (wxGetApp().preset_bundle->machine_is_belt())
+            calculate_model_object_clone_preview_offsets_cr30(numbers);
+        else
+            calculate_model_object_clone_preview_offsets(numbers);
+    }
+}
+
+void Selection::calculate_model_object_clone_preview_offsets_cr30(int numbers)
+{
+    // [int] -- (volume_idx) in m_list;  [std::vector<Vec3f>] -- all clone offsets in world space
+    std::unordered_map<int, std::vector<Vec3f>> preview_offsets;
+
+    for (unsigned int volume_idx : m_list) {
+        preview_offsets.insert({volume_idx, std::vector<Vec3f>()});
+    }
+
+    m_clone_offsets.clear();
+
+    const ModelObjectPtrs& src_objects      = m_clipboard.get_objects();
+    size_t                 src_objects_size = src_objects.size();
+    if (src_objects_size <= 0)
+        return;
+
+    m_clone_offsets.reserve(src_objects_size);
+
+    PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
+    PartPlate*     plate          = partplate_list.get_curr_plate();
+
+    auto cur_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    double    cur_y      = cur_plate->get_objects_bounding_box().max.y();
+    double    half_bed_x = unscaled(scaled(cur_plate->get_shape()[2].x()) / 2.0);
+    const int GAP   = 50;
+    for (int num = 0; num < numbers; ++num) 
+    {
+        for (size_t k = 0; k < src_objects.size(); k++) 
+        {
+            const auto& src_object = src_objects[k];
+            float       extra_offset = 1.0f;
+            extra_offset = this->get_layout_extra_offset(src_object); // expand
+            double fixed_offset      = GAP + (extra_offset > 1.0f ? extra_offset:0.0f);
+            auto obj_convex_hull_box = src_object->instance_convex_hull_bounding_box(src_object->instances[0]);
+            Vec2f next_cell = {half_bed_x, cur_y + fixed_offset + unscaled(scaled(obj_convex_hull_box.size().cast<float>().y()) / 2.0f)};
+            cur_y += fixed_offset + obj_convex_hull_box.size().cast<float>().y();
+            Vec3f cell_box_start_pos = obj_convex_hull_box.center().cast<float>();
+            
+            for (unsigned int volume_idx : m_list) {
+                GLVolume& volume = *(*m_volumes)[volume_idx];
+                if (m_volume_idx_to_object_idx[volume_idx] != k)
+                    continue;
+                Vec3f world_translation = volume.world_matrix().translation().cast<float>();
+                Vec3f volume_rel_object_offset = world_translation - cell_box_start_pos; // volume translation relative object 
+
+                Vec3f instance_render_offset = {next_cell.x(), next_cell.y(), world_translation.z()};
+                instance_render_offset       = instance_render_offset - world_translation + volume_rel_object_offset;
+                instance_render_offset = volume.world_matrix().matrix().block(0, 0, 3, 3).inverse().cast<float>() * instance_render_offset;
+                preview_offsets[volume_idx].emplace_back(instance_render_offset);
+            }
+            // calc box rel pos
+            coord_t halfx           = scaled((double) obj_convex_hull_box.size().x()) / 2.0f;
+            coord_t halfy           = scaled((double) obj_convex_hull_box.size().y()) / 2.0f;
+            float   box_center_x    = unscaled(halfx) + obj_convex_hull_box.min.x();
+            float   box_center_y    = unscaled(halfy) + obj_convex_hull_box.min.y();
+            auto    ins_offset      = src_objects[k]->instances[0]->get_offset().cast<float>();
+            float   biasx           = ins_offset.x() - box_center_x;
+            float   biasy           = ins_offset.y() - box_center_y;
+            m_clone_offsets[k].emplace_back(Vec3f{
+                next_cell.x() + biasx, 
+                next_cell.y() + biasy, 
+                src_object->instances.front()->get_offset().cast<float>().z()});
+        }
+    }
+
+    for (unsigned int volume_idx : m_list) {
+        GLVolume& volume = *(*m_volumes)[volume_idx];
+
+        // send offsets data to gpu for instance rendering
+        volume.setup_instance_offsets(preview_offsets[volume_idx]);
     }
 }
 
@@ -2134,20 +2245,17 @@ void Selection::calculate_model_object_clone_preview_offsets(int numbers)
 
             Vec2f step = Vec2f(bbox_all.size()(0) + extra_offset, bbox_all.size()(1) + extra_offset);
 
-            // only need to call "get_empty_cells" once
             std::vector<Vec2f> all_empty_cells;
+            // only need to call "get_empty_cells" once
             if (object_plate_idx >= 0) {
                 all_empty_cells = wxGetApp().plater()->canvas3D()->get_empty_cells({start_point(0), start_point(1)},
-                                                                                   {bbox_all.size()(0), bbox_all.size()(1)},
-                                                                                   extra_offset,
-                                                                                   object_plate_idx);
+                                                                                    {bbox_all.size()(0), bbox_all.size()(1)},
+                                                                                    extra_offset, object_plate_idx);
             } else {
-                all_empty_cells = wxGetApp().plater()->canvas3D()->get_expand_cells(Vec2f(start_point.x(), start_point.y()), 
-                                                                                    100,
+                all_empty_cells = wxGetApp().plater()->canvas3D()->get_expand_cells(Vec2f(start_point.x(), start_point.y()), 100,
                                                                                     {bbox_all.size()(0), bbox_all.size()(1)},
                                                                                     extra_offset);
             }
-            
 
             // 如果当前找到的空单元格不足，则沿着 boundingbox 周围一圈一圈扩展
             if (object_plate_idx >= 0 && all_empty_cells.size() < numbers) {
@@ -2155,8 +2263,7 @@ void Selection::calculate_model_object_clone_preview_offsets(int numbers)
                 auto expanded_cells = wxGetApp().plater()->canvas3D()->get_expand_cells(Vec2f(start_point.x(), start_point.y()),
                                                                                         numbers,
                                                                                         {bbox_all.size()(0), bbox_all.size()(1)},
-                                                                                        extra_offset,
-                                                                                        &object_plate_bbox);
+                                                                                        extra_offset, &object_plate_bbox);
                 all_empty_cells.insert(all_empty_cells.end(), expanded_cells.begin(), expanded_cells.end());
             }
 
@@ -4061,82 +4168,18 @@ void Selection::paste_objects_from_clipboard()
     PartPlateList& plate_list = wxGetApp().plater()->get_partplate_list();
     PartPlate*     plate      = plate_list.get_curr_plate();
 
-    //BBS: if multiple objects are selected, move them as a whole after copy
-    BoundingBoxf3 bbox_all;
-    if (src_objects.size() > 1) {
-        for (const ModelObject *src_object : src_objects) {
-            BoundingBoxf3 bbox = src_object->instance_convex_hull_bounding_box(size_t(0));
-            bbox_all.merge(bbox);
-        }
-    } else {
-        bbox_all = src_objects[0]->instance_convex_hull_bounding_box(size_t(0));
-    }
-
-    bool  in_current   = plate->intersects(bbox_all);
-    auto  start_point  = in_current ? bbox_all.center() : plate->get_build_volume().center();
-
-    float extra_offset = 1.0f;
-    for(size_t i=0;i<src_objects.size();i++) {
-        float tmp_offset = this->get_layout_extra_offset(src_objects[i]);
-        if(tmp_offset >= extra_offset) {
-            extra_offset = tmp_offset;
-        }
-    }
-
-
-    // ======== find empty cells ========
     std::vector<Vec3f> all_displacements;
-    // only need to call "get_empty_cells" once
-    std::vector<Vec2f> all_empty_cells;
-
-    for(size_t i=0;i<src_objects.size();i++){
-
-        BoundingBoxf3 src_object_bbox = src_objects[i]->instance_convex_hull_bounding_box(size_t(0));
-
-        // the src_objects are possiblly not intersecting any plate or not in the current plate
-        int        object_plate_idx = plate_list.find_instance(bbox_all);
-        PartPlate* object_plate     = nullptr;
-        Vec3d      object_plate_center_offset = Vec3d(0, 0, 0);
-
-        object_plate_center_offset = src_object_bbox.center() - bbox_all.center();
-
-        if (object_plate_idx >= 0 && object_plate_idx < plate_list.get_plate_count()) {
-            object_plate = plate_list.get_plate(object_plate_idx);
-        }
-
-        // BBS: if only one object is copied, find an empty cell to put it
-        auto start_offset = in_current ? src_objects[i]->instances.front()->get_offset() : (plate->get_build_volume().center() + object_plate_center_offset);
-
-        auto point_offset = start_offset - start_point;
-
-        all_empty_cells = wxGetApp().plater()->canvas3D()->get_empty_cells({start_point(0), start_point(1)},
-                                                                {bbox_all.size()(0), bbox_all.size()(1)}, extra_offset,
-                                                                plate->get_index());
-
-        // If the currently found empty cells are insufficient, expand around the bounding box layer by layer.
-        if (all_empty_cells.size() < 1) {
-            BoundingBoxf3 plate_bbox = plate->get_build_volume();
-            auto expanded_cells = wxGetApp().plater()->canvas3D()->get_expand_cells(Vec2f(start_point.x(), start_point.y()),
-                                                                                    1,
-                                                                                    {bbox_all.size()(0), bbox_all.size()(1)},
-                                                                                    extra_offset,
-                                                                                    &plate_bbox);
-            all_empty_cells.insert(all_empty_cells.end(), expanded_cells.begin(), expanded_cells.end());
-        }
-
-        if (!all_empty_cells.empty() && all_empty_cells.size() >= 1) {
-            // get the nearest numbers empty cells
-            Vec3f a_displacement     = {all_empty_cells[0].x() + static_cast<float>(point_offset.x()),
-                                        all_empty_cells[0].y() + static_cast<float>(point_offset.y()), static_cast<float>(start_offset(2))};
-
-            all_displacements.push_back(a_displacement);
-        }
+    if (wxGetApp().preset_bundle->machine_is_belt()) 
+    {
+        cr30_find_displacements(all_displacements);
     }
-    // ======== find empty cells ========
+    else
+    {
+        find_displacements(all_displacements);
+    }
 
-    if (all_empty_cells.empty()) {
+    if (all_displacements.empty())
         return;
-    }
 
     for (size_t i=0;i<src_objects.size();i++)
     {
@@ -4169,6 +4212,122 @@ void Selection::paste_objects_from_clipboard()
 #ifdef _DEBUG
     check_model_ids_validity(*m_model);
 #endif /* _DEBUG */
+}
+
+void Selection::find_displacements(std::vector<Vec3f>& all_displacements)
+{
+    const ModelObjectPtrs& src_objects = m_clipboard.get_objects();
+    if (src_objects.size() <= 0) {
+        return;
+    }
+
+    PartPlateList& plate_list = wxGetApp().plater()->get_partplate_list();
+    PartPlate*     plate      = plate_list.get_curr_plate();
+
+    // BBS: if multiple objects are selected, move them as a whole after copy
+    BoundingBoxf3 bbox_all;
+    if (src_objects.size() > 1) {
+        for (const ModelObject* src_object : src_objects) {
+            BoundingBoxf3 bbox = src_object->instance_convex_hull_bounding_box(size_t(0));
+            bbox_all.merge(bbox);
+        }
+    } else {
+        bbox_all = src_objects[0]->instance_convex_hull_bounding_box(size_t(0));
+    }
+
+    bool in_current  = plate->intersects(bbox_all);
+    auto start_point = in_current ? bbox_all.center() : plate->get_build_volume().center();
+
+    float extra_offset = 1.0f;
+    for (size_t i = 0; i < src_objects.size(); i++) {
+        float tmp_offset = this->get_layout_extra_offset(src_objects[i]);
+        if (tmp_offset >= extra_offset) {
+            extra_offset = tmp_offset;
+        }
+    }
+
+    // ======== find empty cells ========
+    // only need to call "get_empty_cells" once
+    std::vector<Vec2f> all_empty_cells;
+
+    for (size_t i = 0; i < src_objects.size(); i++) {
+        BoundingBoxf3 src_object_bbox = src_objects[i]->instance_convex_hull_bounding_box(size_t(0));
+
+        // the src_objects are possiblly not intersecting any plate or not in the current plate
+        int        object_plate_idx           = plate_list.find_instance(bbox_all);
+        PartPlate* object_plate               = nullptr;
+        Vec3d      object_plate_center_offset = Vec3d(0, 0, 0);
+
+        object_plate_center_offset = src_object_bbox.center() - bbox_all.center();
+
+        if (object_plate_idx >= 0 && object_plate_idx < plate_list.get_plate_count()) {
+            object_plate = plate_list.get_plate(object_plate_idx);
+        }
+
+        // BBS: if only one object is copied, find an empty cell to put it
+        auto start_offset = in_current ? src_objects[i]->instances.front()->get_offset() :
+                                         (plate->get_build_volume().center() + object_plate_center_offset);
+
+        auto point_offset = start_offset - start_point;
+
+        all_empty_cells = wxGetApp().plater()->canvas3D()->get_empty_cells({start_point(0), start_point(1)},
+                                                                           {bbox_all.size()(0), bbox_all.size()(1)}, extra_offset,
+                                                                           plate->get_index());
+
+        // If the currently found empty cells are insufficient, expand around the bounding box layer by layer.
+        if (all_empty_cells.size() < 1) {
+            BoundingBoxf3 plate_bbox     = plate->get_build_volume();
+            auto          expanded_cells = wxGetApp().plater()->canvas3D()->get_expand_cells(Vec2f(start_point.x(), start_point.y()), 1,
+                                                                                             {bbox_all.size()(0), bbox_all.size()(1)}, extra_offset,
+                                                                                             &plate_bbox);
+            all_empty_cells.insert(all_empty_cells.end(), expanded_cells.begin(), expanded_cells.end());
+        }
+
+        if (!all_empty_cells.empty() && all_empty_cells.size() >= 1) {
+            // get the nearest numbers empty cells
+            Vec3f a_displacement = {all_empty_cells[0].x() + static_cast<float>(point_offset.x()),
+                                    all_empty_cells[0].y() + static_cast<float>(point_offset.y()), static_cast<float>(start_offset(2))};
+
+            all_displacements.push_back(a_displacement);
+        }
+    }
+    // ======== find empty cells ========
+}
+
+void Selection::cr30_find_displacements(std::vector<Vec3f>& all_displacements)
+{
+    const ModelObjectPtrs& src_objects = m_clipboard.get_objects();
+    if (src_objects.size() <= 0) {
+        return;
+    }
+    PartPlateList&         plate_list = wxGetApp().plater()->get_partplate_list();
+    PartPlate*             plate      = plate_list.get_curr_plate();
+    
+    auto shape = plate->get_shape();
+
+    BoundingBoxf3 fixed_bounding = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_objects_bounding_box();
+    float        cur_y          = fixed_bounding.max.cast<double>().y();
+    const float  gap            = 50.0f;
+    for (size_t i = 0; i < src_objects.size(); i++)
+    {
+        auto ins_offset = src_objects[i]->instances[0]->get_offset().cast<float>();
+        float displace_z  = ins_offset.z();
+        // calc box rel pos
+        auto  obj_convex_hull = src_objects[i]->instance_convex_hull_bounding_box((size_t) 0);
+        coord_t halfx = scaled((double) obj_convex_hull.size().x()) / 2.0f;
+        coord_t halfy = scaled((double) obj_convex_hull.size().y()) / 2.0f;
+        float  box_center_x = unscaled(halfx) + obj_convex_hull.min.x();
+        float  box_center_y = unscaled(halfy) + obj_convex_hull.min.y();
+        float   biasx           = ins_offset.x() - box_center_x;
+        float   biasy           = ins_offset.y() - box_center_y;
+        // calc displace x,y
+        float half_bed_x = scaled(shape[2].cast<float>().x()) / 2.0f;
+        float displace_x = unscaled(half_bed_x) + biasx;
+        float displace_y = cur_y + gap + unscaled(halfy) + biasy;
+        // iteror
+        cur_y += gap + unscaled(halfy * 2.0);
+        all_displacements.push_back({displace_x, displace_y, displace_z});
+    }
 }
 
 void Selection::transform_instance_relative(GLVolume& volume, const VolumeCache& volume_data, TransformationType transformation_type,

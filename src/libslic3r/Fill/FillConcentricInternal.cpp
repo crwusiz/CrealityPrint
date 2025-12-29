@@ -87,7 +87,7 @@ void FillConcentricInternal::fill_surface_extrusion(const Surface* surface, cons
     if (!thick_polylines_out.empty()) {
         Flow new_flow = params.flow.with_spacing(float(this->spacing));
         ExtrusionEntityCollection gap_fill;
-        variable_width(thick_polylines_out, params.extrusion_role, new_flow, gap_fill.entities);
+        variable_width(thick_polylines_out, params.extrusion_role, new_flow, 0, gap_fill.entities);
         coll_nosort->append(std::move(gap_fill.entities));
     }
 

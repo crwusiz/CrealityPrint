@@ -9,6 +9,7 @@ class FillTetrahedral : public Fill
 {
 public:
     ~FillTetrahedral() override = default;
+     bool is_self_crossing() override { return false; }
 
 protected:
     Fill* clone() const override { return new FillTetrahedral(*this); };

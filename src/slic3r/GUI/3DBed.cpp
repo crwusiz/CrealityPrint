@@ -17,6 +17,7 @@
 #include "Camera.hpp"
 
 #include <GL/glew.h>
+#include <array>
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem/operations.hpp>
@@ -29,7 +30,7 @@
 #endif
 
 static const float GROUND_Z = -0.04f;
-static const Slic3r::ColorRGBA DEFAULT_MODEL_COLOR             = { 0.607f, 0.607f, 0.6313f, 1.0f };
+static const Slic3r::ColorRGBA DEFAULT_MODEL_COLOR             = { 0.8157f, 0.8314f, 0.8706f, 1.0f };
 static const Slic3r::ColorRGBA DEFAULT_MODEL_COLOR_DARK        = { 0.2901f, 0.2901f, 0.3098, 1.0f };
 
 namespace Slic3r {
@@ -308,7 +309,14 @@ bool Bed3D::set_shape(const Pointfs& printable_area, const double printable_heig
 
     // Set the origin and size for rendering the coordinate system axes.
     m_axes.set_origin({ 0.0, 0.0, static_cast<double>(GROUND_Z) });
-    m_axes.set_stem_length(0.1f * static_cast<float>(m_build_volume.bounding_volume().max_size()));
+    float scale_factor = 0.1f;
+    if (wxGetApp().preset_bundle->machine_is_belt())
+    {
+        m_type       = Type::Custom;
+        m_model_filename.clear();
+        scale_factor = 200.0f / m_build_volume.bounding_volume().max_size() * 0.1f;
+    }
+    m_axes.set_stem_length(scale_factor * static_cast<float>(m_build_volume.bounding_volume().max_size()));
 
     //BBS: add part plate logic
     m_extended_bounding_box = this->calc_extended_bounding_box(false);
@@ -411,7 +419,13 @@ bool Bed3D::set_gcode_shape(const Pointfs& printable_area,  const double printab
 
     // Set the origin and size for rendering the coordinate system axes.
     m_axes.set_origin({0.0, 0.0, static_cast<double>(GROUND_Z)});
-    m_axes.set_stem_length(0.1f * static_cast<float>(m_build_volume.bounding_volume().max_size()));
+    float scale_factor = 0.1f;
+    if (wxGetApp().preset_bundle->machine_is_belt()) {
+        m_type = Type::Custom;
+        m_model_filename.clear();
+        scale_factor = 200.0f / m_build_volume.bounding_volume().max_size() * 0.1f;
+    }
+    m_axes.set_stem_length(scale_factor * static_cast<float>(m_build_volume.bounding_volume().max_size()));
 
     // unregister from picking
     // BBS: remove the bed picking logic
@@ -780,19 +794,31 @@ void Bed3D::render_model(const Transform3d& view_matrix, const Transform3d& proj
     //shader = wxGetApp().get_shader("flat");
     if (shader != nullptr) {
         shader->start_using();
-        shader->set_uniform("emission_factor", 0.0f);
+        // Theme-aware emission to balance contrast
+        float emission = m_is_dark ? 0.0f : 0.2f;
+        shader->set_uniform("emission_factor", emission);
         auto  bed_ext                  = get_extents(m_bed_shape);
         Vec3d scale                    = Vec3d::Ones();
-        // For Creality F022, use dedicated buildplate model without scaling.
-        bool is_f022_model = false;
+        // For certain Creality printers, dedicated buildplate STL already has the correct size.
+        bool has_native_scale_model = false;
         {
-            const std::string &fname = m_model_filename;
+            const std::string& fname = m_model_filename;
             if (!fname.empty()) {
-                // Detect by filename to avoid heavy preset lookups.
-                is_f022_model = boost::algorithm::iends_with(fname, "Creality F022_buildplate_model.stl");
+                static const std::array<const char*, 4> kCrealityNativeModels = {
+                    "Creality F022_buildplate_model.stl",
+                    "Creality K2_buildplate_model.stl",
+                    "Creality K2 Pro_buildplate_model.stl",
+                    "Creality K2 Plus_buildplate_model.stl"
+                };
+                for (const char* suffix : kCrealityNativeModels) {
+                    if (boost::algorithm::iends_with(fname, suffix)) {
+                        has_native_scale_model = true;
+                        break;
+                    }
+                }
             }
         }
-        if (!is_f022_model) {
+        if (!has_native_scale_model) {
             if (!m_is_gcode) {
                 if (wxGetApp().preset_bundle->get_current_vendor_type() == VendorType::Creality) {
                     scale(0) = bed_ext.size()(0) / 220.0;

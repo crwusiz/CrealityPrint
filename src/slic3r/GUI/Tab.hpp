@@ -368,6 +368,7 @@ public:
 	void		update_ui_from_settings();
 	void		update_label_colours();
 	void		decorate();
+    void        update_support_options_visibility();
 	void		update_changed_ui();
 	void		get_sys_and_mod_flags(const std::string& opt_key, bool& sys_page, bool& modified_page);
 	void		update_changed_tree_ui();

@@ -10,6 +10,7 @@ namespace GUI {
 
 static bool s_isDark = true;
 static GLTexture* s_texture[DispConfig::e_tt_count][4] = {nullptr};
+static GLTexture* s_texture_scale[DispConfig::e_tt_count][2] = {nullptr};
 
 static int Loc_roundStyle(float rd)
 {
@@ -91,6 +92,13 @@ void DispConfig::setDarkMode(bool dark)
                 tx = nullptr;
             }
         }
+        for (auto& txu : s_texture_scale) {
+            for (auto& tx : txu) {
+                if (tx)
+                    delete tx;
+                tx = nullptr;
+            }
+        }
     }
     s_isDark = dark;
     Slic3r::CxBuildInfo::setDarkMode(dark);
@@ -105,8 +113,8 @@ void* DispConfig::getTextureId(TextureType tt, bool hover, bool sel) {
     return nullptr;
 }
 
-GLTexture* DispConfig::getTexture(TextureType tt, bool hover, bool sel) {
-    auto& tex = s_texture[tt][(sel?1:0)+(hover?2:0)];
+GLTexture* DispConfig::getTexture(TextureType tt, bool hover, bool sel, int half_top) {
+    auto& tex = (half_top == -1) ? (s_texture[tt][(sel ? 1 : 0) + (hover ? 2 : 0)]) : s_texture_scale[tt][half_top];
     // tuple0:base name
     // tuple1:needDarkLight
     // tuple2:needHover
@@ -140,27 +148,39 @@ GLTexture* DispConfig::getTexture(TextureType tt, bool hover, bool sel) {
             {e_tt_normal_tip_block_notification_close, {"block_notification_close.svg", true, false, false}},
             {e_tt_normal_tip_block_notification_close_hover, {"block_notification_close_hover.svg", true, false, false}}
         };
-    std::string path = resources_dir() + "/images/";
-    const auto &[name,needDark,needHover,needSel] = s_names[tt];
-    // Creality F022 override: use dedicated bed icons for smooth/texture
-    std::string base_name = name;
-    if (tt == e_tt_bed_texture || tt == e_tt_bed_smooth) {
-        auto bundle = wxGetApp().preset_bundle;
-        if (bundle != nullptr) {
-            const std::string model_name = bundle->printers.get_edited_preset().config.opt_string("printer_model");
-            auto vendor_type = bundle->get_current_vendor_type();
-            if (vendor_type == VendorType::Creality && !model_name.empty() && model_name.find("SPARKX") != std::string::npos) {
-                base_name = (tt == e_tt_bed_texture) ? std::string("texture_F022.png") : std::string("smooth_F022.png");
+        std::string path = resources_dir() + "/images/";
+        const auto &[name,needDark,needHover,needSel] = s_names[tt];
+        const bool is_bed_texture = (tt == e_tt_bed_texture || tt == e_tt_bed_smooth);
+        std::string base_name     = name;
+        if (is_bed_texture) {
+            if (auto* bundle = wxGetApp().preset_bundle; bundle != nullptr) {
+                const std::string model_name = bundle->printers.get_selected_preset().config.opt_string("printer_model");
+                const auto        vendor_type = bundle->get_current_vendor_type();
+                // SPARKX i7 uses dedicated bed icons.
+                const bool is_sparkx_i7 = (model_name == "SPARKX i7");
+                if (vendor_type == VendorType::Creality && is_sparkx_i7) {
+                    base_name = (tt == e_tt_bed_texture) ? std::string("texture_F022.png") : std::string("smooth_F022.png");
+                }
             }
         }
-    }
-    if (needDark)
-        path += s_isDark ? "dark/" : "light/";
-    if (needSel)
-        path += sel ? "select_" : "unselect_";
-    if (needHover)
-        path += hover ? "hover_" : "none_";
-    path += base_name;
+
+        if (needDark)
+            path += s_isDark ? "dark/" : "light/";
+        if (needSel)
+            path += sel ? "select_" : "unselect_";
+        if (needHover)
+            path += hover ? "hover_" : "none_";
+
+        std::string file_name = base_name;
+        if (!s_isDark && is_bed_texture) {
+            const std::string suffix = ".png";
+            if (file_name.size() >= suffix.size() &&
+                file_name.compare(file_name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                file_name.insert(file_name.size() - suffix.size(), "_light");
+            }
+        }
+
+        path += file_name;
 
     if (tex == nullptr || tex->get_source() != path) {
         if (tex != nullptr) {
@@ -168,7 +188,10 @@ GLTexture* DispConfig::getTexture(TextureType tt, bool hover, bool sel) {
             tex = nullptr;
         }
         tex = new GLTexture();
-        tex->load_from_png_svg_file(path);
+        if (half_top != -1)
+            tex->load_from_png_file_half(path, half_top);
+        else
+            tex->load_from_png_svg_file(path);
     }
     return tex;
 }
@@ -380,9 +403,21 @@ void DispConfig::processWindows(const wxString& name,CreateFn fn, WindowConfig s
     if (name == "gcode_legend") {
         if(!s_isDark)
         {
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{ 0.f, 0.f, 0.f, 0.05f });
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{ 1.f, 1.f, 1.f, 0.6f });
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{ 1.f, 1.f, 1.f, 0.6f });
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{ 51 / 255.f,51 / 255.f,51 / 255.f,1.f });
-            colornum += 2;
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(225.0f / 255.0f, 228.0f / 255.0f, 233.0f / 255.0f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+            varnum   += 1;
+            colornum += 4;
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{ 34 / 255.f, 34 / 255.f, 34 / 255.f, 0.6f });
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{ 34 / 255.f, 34 / 255.f, 34 / 255.f, 0.6f });
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{ 1.f, 1.f, 1.f, 1.f });
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.f, 0.f, 0.f, 0.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            varnum   += 1;
+            colornum += 4;
         }
         
     }
@@ -465,7 +500,7 @@ ImU32 DispConfig::getColorImU32(ColorType ct) {
         ret = IM_COL32(23, 204, 95, 255);
         break;
     case Slic3r::GUI::DispConfig::e_ct_line:
-        ret = s_isDark ? IM_COL32(67, 67, 70, 255) : IM_COL32(219, 219, 228, 255);
+        ret = s_isDark ? IM_COL32(67, 67, 70, 255) : IM_COL32(159, 159, 158, 255);
         break;
     case Slic3r::GUI::DispConfig::e_ct_lineSel:
         ret = s_isDark ? IM_COL32(126, 126, 132, 255) : IM_COL32(205, 205, 211, 255);
@@ -477,7 +512,7 @@ ImU32 DispConfig::getColorImU32(ColorType ct) {
         ret = s_isDark ? IM_COL32(62, 62, 64, 255) : IM_COL32(234,234,238, 255);
         break;
     case Slic3r::GUI::DispConfig::e_ct_interSel:
-        ret = s_isDark ? IM_COL32(99, 99, 103, 255) : IM_COL32(119,119,125, 255);
+        ret = s_isDark ? IM_COL32(99, 99, 103, 255) : IM_COL32(247, 248, 250, 255);
         break;
     case Slic3r::GUI::DispConfig::e_ct_btnBgSelWhite:
         ret = s_isDark ? IM_COL32(110, 110, 115, 255) : IM_COL32(242, 242, 245,255);
@@ -498,10 +533,16 @@ ImU32 DispConfig::getColorImU32(ColorType ct) {
         ret = IM_COL32(0, 255, 101,255);
         break;
     case Slic3r::GUI::DispConfig::e_ct_sliderTip:
-        ret = s_isDark ? IM_COL32(66, 75, 81,255) : IM_COL32(242, 242, 245,255);
+        ret = s_isDark ? IM_COL32(66, 75, 81,255) : IM_COL32(78, 89, 105, 255);
         break;
     case Slic3r::GUI::DispConfig::e_ct_normalTip:
         ret = IM_COL32(23, 204, 95, 255);
+        break;
+    case Slic3r::GUI::DispConfig::e_ct_selectBox:
+        ret = s_isDark ? IM_COL32(255, 255, 255, 255) : IM_COL32(78, 89, 105, 255);
+        break;
+    case Slic3r::GUI::DispConfig::e_ct_modelOutline:
+        ret = s_isDark ? IM_COL32(255, 255, 255, 255) : IM_COL32(78, 89, 105, 255);
         break;
     default: break;
     }

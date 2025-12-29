@@ -16,7 +16,7 @@ public:
     bool Create(wxWindow *parent, int flags = wxBORDER_NONE);
 
 private:
-#ifdef __WXGTK__
+#if defined(__WXGTK__) || defined(__WXOSX__)
     void topWindowActiavate(wxActivateEvent &event);
 #endif
 };

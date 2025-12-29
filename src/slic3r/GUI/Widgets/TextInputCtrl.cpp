@@ -5,6 +5,7 @@
 
 #include <wx/dcclient.h>
 #include <wx/dcgraph.h>
+#include <boost/log/trivial.hpp>
 
 BEGIN_EVENT_TABLE(TextInputCtrl, wxPanel)
 
@@ -34,6 +35,13 @@ TextInputCtrl::TextInputCtrl(wxWindow* parent, int id, wxString text, const wxPo
 
 
     text_ctrl->Bind(wxEVT_KILL_FOCUS, [this](auto& e) {
+        if (this->IsBeingDeleted()) {
+            wxString value_del = text_ctrl ? text_ctrl->GetValue() : wxString();
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " TextInputCtrl(KILL_FOCUS): window being deleted, skip (id=" << GetId() << ") value='" << value_del.ToStdString() << "'";
+            e.Skip();
+            return;
+        }
+        // 同步本地分发保持原有流程
         e.SetId(GetId());
         ProcessEventLocally(e);
         e.Skip();

@@ -314,8 +314,8 @@ protected:
     wxStaticBitmap* m_camera_switch_button;
 
 
-    wxMediaCtrl2 *  m_media_ctrl;
-    MediaPlayCtrl * m_media_play_ctrl;
+    wxMediaCtrl2*  m_media_ctrl{nullptr};
+    MediaPlayCtrl* m_media_play_ctrl{nullptr};
 
     Label *         m_staticText_printing;
     wxStaticBitmap *m_bitmap_thumbnail;

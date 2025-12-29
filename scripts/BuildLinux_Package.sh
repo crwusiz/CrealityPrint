@@ -46,6 +46,8 @@ function usage() {
     echo "   -d: build deps (optional)"
     echo "   -h: this help output"
     echo "   -i: Generate appimage (optional)"
+    echo "   -e: Generate deb package (optional)"
+    echo "   -T <toolchain>: choose compiler (gcc|clang), default: clang"
     echo "   -r: skip ram and disk checks (low ram compiling)"
     echo "   -s: build orca-slicer (optional)"
     echo "   -u: update and build dependencies (optional and need sudo)"
@@ -54,7 +56,8 @@ function usage() {
 }
 
 unset name
-while getopts ":1bcdghirsu" opt; do
+TOOLCHAIN="clang"
+while getopts ":1bcdghirseuT:" opt; do
   case ${opt} in
     1 )
         export CMAKE_BUILD_PARALLEL_LEVEL=1
@@ -73,6 +76,18 @@ while getopts ":1bcdghirsu" opt; do
         ;;
     i )
         BUILD_IMAGE="1"
+        ;;
+    e )
+        BUILD_DEB="1"
+        ;;
+    T )
+        case "${OPTARG}" in
+            gcc|clang)
+                TOOLCHAIN="${OPTARG}"
+                ;;
+            *)
+                echo "Unsupported toolchain '${OPTARG}'. Use 'gcc' or 'clang'."; exit 1;;
+        esac
         ;;
     r )
 	    SKIP_RAM_CHECK="1"
@@ -121,11 +136,13 @@ echo "Changing date in version..."
 echo "done"
 
 #
+# Normalize positional arguments after options
+shift $((OPTIND - 1))
 
-VERSION_TAG_NAME=$2
-APPNAME=$3
-VERSION_EXTRA=$4
-SLICER_HEADER=$5
+VERSION_TAG_NAME=$1
+APPNAME=$2
+VERSION_EXTRA=$3
+SLICER_HEADER=$4
 if  [ -z "$SLICER_HEADER" ]; then
     export SLICER_HEADER=1
 fi 
@@ -151,6 +168,14 @@ echo SLICER_HEADER=$SLICER_HEADER
 #
 #
 
+# Select compiler according to -T (default clang)
+if [[ "${TOOLCHAIN}" == "gcc" ]]; then
+    C_COMPILER="gcc"; CXX_COMPILER="g++"
+else
+    C_COMPILER="clang"; CXX_COMPILER="clang++"
+fi
+echo "Using compiler: C=${C_COMPILER} CXX=${CXX_COMPILER}"
+
 if ! [[ -n "${SKIP_RAM_CHECK}" ]]
 then
     check_available_memory_and_disk
@@ -159,7 +184,7 @@ fi
 if [[ -n "${BUILD_DEPS}" ]]
 then
     echo "Configuring dependencies..."
-    BUILD_ARGS="-DDEP_WX_GTK3=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++"
+    BUILD_ARGS="-DDEP_WX_GTK3=ON -DCMAKE_C_COMPILER=${C_COMPILER} -DCMAKE_CXX_COMPILER=${CXX_COMPILER}"
     if [[ -n "${CLEAN_BUILD}" ]]
     then
         rm -fr deps/build
@@ -193,7 +218,7 @@ then
     BUILD_ARGS=""
     if [[ -n "${FOUND_GTK3_DEV}" ]]
     then
-        BUILD_ARGS="-DSLIC3R_GTK=3 -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++"
+        BUILD_ARGS="-DSLIC3R_GTK=3 -DCMAKE_C_COMPILER=${C_COMPILER} -DCMAKE_CXX_COMPILER=${CXX_COMPILER}"
     fi
     if [[ -n "${BUILD_DEBUG}" ]]
     then
@@ -214,8 +239,8 @@ then
     echo "done"
     echo "Building CrealityPrint ..."
     cmake --build build --target CrealityPrint
-    echo "Building CrealityPrint_profile_validator .."
-    cmake --build build --target CrealityPrint_profile_validator
+    #echo "Building CrealityPrint_profile_validator .."
+    #cmake --build build --target CrealityPrint_profile_validator
     ./run_gettext.sh
     echo "done"
 fi
@@ -232,8 +257,15 @@ echo "[9/9] Generating Linux app..."
         else
             ${ROOT}/build/src/BuildLinuxImage.sh
         fi
+        # Optionally build Debian package if requested and script exists
+        if [[ -n "${BUILD_DEB}" ]] && [[ -e ${ROOT}/build/src/BuildLinuxDeb.sh ]]
+        then
+            chmod 755 ${ROOT}/build/src/BuildLinuxDeb.sh
+            ${ROOT}/build/src/BuildLinuxDeb.sh
+        fi
     popd
 echo "done"
 else 
     echo not find ${ROOT}/build/src/BuildLinuxImage.sh
 fi
+

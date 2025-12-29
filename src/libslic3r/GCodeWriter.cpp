@@ -534,6 +534,9 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
         used for unlift. */
         // BBS
     Vec3d dest_point = point;
+    double prev_z = m_pos(2);
+    if (std::abs(dest_point(2)) < EPSILON && prev_z > EPSILON)
+        dest_point(2) = prev_z;
     auto travel_speed =
         m_is_first_layer ? this->config.get_abs_value("initial_layer_travel_speed") : this->config.travel_speed.value;
     if (limitSpeed > 0.0f)
@@ -684,6 +687,8 @@ std::string GCodeWriter::travel_to_z(double z, const std::string &comment,const 
 
 std::string GCodeWriter::_travel_to_z(double z, const std::string &comment,const double limitSpeed)
 {
+    // Only emit Z if it actually changes. Prevents writing Z0 when current Z is already correct.
+    const bool emit_z = (std::abs(m_pos(2) - z) >= EPSILON);
     m_pos(2) = z;
 
     double speed = this->config.travel_speed_z.value;
@@ -696,7 +701,8 @@ std::string GCodeWriter::_travel_to_z(double z, const std::string &comment,const
         speed = std::min(speed, limitSpeed);
     }
     GCodeG1Formatter w;
-    w.emit_z(z);
+    if (emit_z)
+        w.emit_z(z);
     w.emit_f(speed * 60.0);
     //BBS
     w.emit_comment(GCodeWriter::full_gcode_comment, comment);
@@ -705,6 +711,7 @@ std::string GCodeWriter::_travel_to_z(double z, const std::string &comment,const
 
 std::string GCodeWriter::_spiral_travel_to_z(double z, const Vec2d &ij_offset, const std::string &comment, const double limitSpeed)
 {
+    const bool emit_z = (std::abs(m_pos(2) - z) >= EPSILON);
     m_pos(2) = z;
 
     double speed = this->config.travel_speed_z.value;
@@ -719,7 +726,8 @@ std::string GCodeWriter::_spiral_travel_to_z(double z, const Vec2d &ij_offset, c
     {
         speed = std::min(speed, limitSpeed);
     }
-    w.emit_z(z);
+    if (emit_z)
+        w.emit_z(z);
     w.emit_ij(ij_offset);
     w.emit_string(" P1 ");
     w.emit_f(speed * 60.0);
@@ -790,13 +798,19 @@ std::string GCodeWriter::extrude_arc_to_xy(const Vec2d& point, const Vec2d& cent
 
 std::string GCodeWriter::extrude_to_xyz(const Vec3d &point, double dE, const std::string &comment, bool force_no_extrusion)
 {
+    double prev_z = m_pos(2);
     m_pos = point;
+    // Guard against unintended Z0: if incoming Z is zero but we already have a valid Z, keep the previous height.
+    if (std::abs(point(2)) < EPSILON && prev_z > EPSILON)
+        m_pos(2) = prev_z;
     m_lifted = 0;
     if (!force_no_extrusion)
         m_extruder->extrude(dE);
     
     //BBS: take plate offset into consider
     Vec3d point_on_plate = { point(0) - m_x_offset, point(1) - m_y_offset, point(2) };
+    if (std::abs(point_on_plate(2)) < EPSILON && prev_z > EPSILON)
+        point_on_plate(2) = prev_z;
 
     GCodeG1Formatter w;
     w.emit_xyz(point_on_plate);

@@ -16,13 +16,17 @@ class WipeTowerWriter;
 class WipeTowerCreality
 {
 public:
+    friend WipeTowerWriterCreality;
     // Construct ToolChangeResult from current state of WipeTowerCreality and WipeTowerWriterCreality.
     // WipeTowerWriterCreality is moved from !
     WipeTower::ToolChangeResult construct_tcr(WipeTowerWriterCreality& writer, 
 								   bool priming,
                                    size_t old_tool, 
-								   bool is_finish, float purge_volume) const;
-
+								   bool is_finish,
+                                   float purge_volume,
+								   bool is_tool_change = false) const;
+    WipeTower::ToolChangeResult construct_block_tcr(
+        WipeTowerWriterCreality& writer, bool priming, size_t filament_id, bool is_finish = false) const;
 	// x			-- x coordinates of wipe tower in mm ( left bottom corner )
 	// y			-- y coordinates of wipe tower in mm ( left bottom corner )
 	// width		-- width of wipe tower in mm ( default 60 mm - leave as it is )
@@ -55,6 +59,16 @@ public:
 	std::vector<std::pair<float, float>> get_z_and_depth_pairs() const;
     float get_brim_width() const { return m_wipe_tower_brim_width_real; }
 	float get_wipe_tower_height() const { return m_wipe_tower_height; }
+    BoundingBoxf                         get_bbx() const
+    {
+    
+        if (m_outer_wall.empty())
+            return BoundingBoxf({Vec2d(0, 0)});
+        BoundingBox  box = get_extents(m_outer_wall.begin()->second);
+        BoundingBoxf res = BoundingBoxf(unscale(box.min), unscale(box.max));
+        return res;
+    }
+    Polygon  get_wipe_tower_stable_cone() const { return m_wipe_tower_stable_cone; }
 
 	void set_last_layer_extruder_fill(bool extruder_fill)
     {
@@ -86,7 +100,8 @@ public:
 		while (!m_plan.empty() && m_layer_info->z < print_z - WT_EPSILON && m_layer_info+1 != m_plan.end())
 			++m_layer_info;
 
-		m_current_shape = (! this->is_first_layer() && m_current_shape == SHAPE_NORMAL) ? SHAPE_REVERSED : SHAPE_NORMAL;
+		//m_current_shape = (! this->is_first_layer() && m_current_shape == SHAPE_NORMAL) ? SHAPE_REVERSED : SHAPE_NORMAL;
+        m_current_shape = SHAPE_NORMAL;
 		if (this->is_first_layer()) {
             m_num_layer_changes = 0;
             m_num_tool_changes 	= 0;
@@ -131,7 +146,52 @@ public:
         std::vector<float>  ramming_speed;
         float               nozzle_diameter;
         float               filament_area;
+        int                 category;
+        float               retract_length;
+        float               retract_speed;
+        float               wipe_dist;
     };
+
+
+public:
+    void set_filament_categories(const std::vector<int>& filament_categories) { m_filament_categories = filament_categories; };
+    void generate_wipe_tower_blocks();
+    void reset_block_status();
+    bool is_in_same_extruder(int filament_id_1, int filament_id_2);
+    WipeTower::WipeTowerBlock* get_block_by_category(int filament_adhesiveness_category, bool create);
+    void add_depth_to_block(int filament_id, int filament_adhesiveness_category, float depth, bool is_nozzle_change = false);
+    int  get_filament_category(int filament_id);
+    void update_all_layer_depth(float wipe_tower_depth);
+    int  get_wall_filament_for_all_layer();
+    bool is_valid_last_layer(int tool) const;
+    WipeTower::ToolChangeResult finish_block(const WipeTower::WipeTowerBlock& block, int filament_id, bool extrude_fill = true);
+    WipeTower::ToolChangeResult finish_block_solid(const WipeTower::WipeTowerBlock& block,
+                                                   int                   filament_id,
+                                                   bool                  extrude_fill    = true,
+                                                   bool                  interface_solid = false);
+	WipeTower::ToolChangeResult finish_layer_new(bool extrude_perimeter = true, bool extrude_fill = true, bool extrude_fill_wall = true);
+    Vec2f                       get_next_pos(const WipeTower::box_coordinates& cleaning_box, float wipe_length);
+
+	Polygon generate_support_wall_new(WipeTowerWriterCreality&          writer,
+                                      const WipeTower::box_coordinates& wt_box,
+                                      double                 feedrate,
+                                      bool                   first_layer,
+                                      bool                   cone_wall,
+                                      bool                   extrude_perimeter,
+                                      bool                   skip_points);
+    Polygon generate_cone_polygon(const WipeTower::box_coordinates& wt_box);
+    Polygon generate_rectange_polygon(const Vec2f& wt_box_min, const Vec2f& wt_box_max);
+
+	std::vector<int>                                    m_filament_categories;
+    std::vector<WipeTower::WipeTowerBlock>              m_wipe_tower_blocks;
+    std::vector<int>                                    m_filament_map;
+    std::vector<std::vector<WipeTower::BlockDepthInfo>> m_all_layers_depth;
+    size_t                                              m_cur_layer_id = size_t(-1);
+    std::vector<double>                                 m_printable_height;
+    std::vector<int>                                    m_last_layer_id;
+    float                                               m_max_speed = 5400.f; // the maximum printing speed on the prime tower.
+    std::vector<Vec2f>                                  m_wall_skip_points;
+    std::map<float, Polylines>                          m_outer_wall;
 
 private:
 	enum wipe_shape // A fill-in direction
@@ -152,9 +212,13 @@ private:
 	float  m_wipe_tower_depth 	= 0.f; 	// Depth of the wipe tower
 	float  m_wipe_tower_height  = 0.f;
 	float  m_wipe_tower_cone_angle = 0.f;
+    Polygon m_wipe_tower_stable_cone;
     float  m_wipe_tower_brim_width      = 0.f; 	// Width of brim (mm) from config
     float  m_wipe_tower_brim_width_real = 0.f; 	// Width of brim (mm) after generation
 	float  m_wipe_tower_rotation_angle = 0.f; // Wipe tower rotation angle in degrees (with respect to x axis)
+    bool   m_wipe_tower_framework       = false;
+    bool   m_wipe_tower_rib_wall        = false;
+    bool   m_wipe_tower_gap_wall        = false;
     float  m_internal_rotation  = 0.f;
 	float  m_y_shift			= 0.f;  // y shift passed to writer
 	float  m_z_pos 				= 0.f;  // Current Z position.
@@ -237,17 +301,19 @@ private:
             float ramming_depth;
             float first_wipe_line;
             float wipe_volume;
-
-			float purge_volume;
+            float wipe_length;
+            float nozzle_change_depth{0};
+            float purge_volume;
             ToolChange(
-                size_t old, size_t newtool, float depth = 0.f, float ramming_depth = 0.f, float fwl = 0.f, float wv = 0.f, float pv = 0)
+                size_t old, size_t newtool, float depth = 0.f, float ramming_depth = 0.f, float fwl = 0.f, float wv = 0.f, float w1 = 0,float pv = 0.f)
                 : old_tool{old}
                 , new_tool{newtool}
                 , required_depth{depth}
                 , ramming_depth{ramming_depth}
                 , first_wipe_line{fwl}
                 , wipe_volume{wv}
-                , purge_volume{pv}
+                , wipe_length{w1}
+                , purge_volume{ pv }
             {}
 		};
 		float z;		// z position of the layer
@@ -293,6 +359,8 @@ private:
 		WipeTowerWriterCreality &writer,
 		const WipeTower::box_coordinates  &cleaning_box,
 		float wipe_volume);
+
+	void get_wall_skip_points(const WipeTowerInfo& layer);
 };
 
 } // namespace Slic3r

@@ -75,6 +75,9 @@ WallToolPaths::WallToolPaths(const Polygons& outline, const coord_t bead_width_0
     , toolpaths_generated(false)
     , m_params(params)
 {
+    //min_feature_size   = 9000;
+    //this->bead_width_0 = 40000;
+    //this->bead_width_x = 40000;
 }
 
 void simplify(Polygon &thiss, const int64_t smallest_line_segment_squared, const int64_t allowed_error_distance_squared)
@@ -481,7 +484,7 @@ const std::vector<VariableWidthLines> &WallToolPaths::generate()
     const coord_t allowed_distance = Slic3r::Arachne::meshfix_maximum_deviation();
     const coord_t epsilon_offset = (allowed_distance / 2) - 1;
     const double  transitioning_angle = Geometry::deg2rad(m_params.wall_transition_angle);
-    const coord_t discretization_step_size = scaled<coord_t>(0.8);
+    const coord_t discretization_step_size = scaled<coord_t>(0.8); // 10000 ;
 
     // Simplify outline for boost::voronoi consumption. Absolutely no self intersections or near-self intersections allowed:
     // TODO: Open question: Does this indeed fix all (or all-but-one-in-a-million) cases for manifold but otherwise possibly complex polygons?

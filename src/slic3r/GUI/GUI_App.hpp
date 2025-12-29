@@ -7,6 +7,8 @@
 #include <wx/string.h>
 #include <wx/snglinst.h>
 #include <wx/msgdlg.h>
+#include <wx/fswatcher.h>
+#include <wx/filename.h>
 
 #include <memory>
 #include <string>
@@ -93,6 +95,7 @@ class ModelMallDialog;
 class PingCodeBindDialog;
 class PrinterPresetConfig;
 class UITour;
+class LoginDialog;
 
 enum FileType
 {
@@ -280,6 +283,7 @@ private:
 
     // login widget
     ZUserLogin*     login_dlg { nullptr };
+    LoginDialog*    m_login_dialog { nullptr };
 
     VersionInfo version_info;
     VersionInfo privacy_version_info;
@@ -356,6 +360,8 @@ private:
     void set_cloud_model_download(const std::string& data) { m_cloud_download_model.push_back(data); }
     std::list<std::string> get_cloud_model_download() { return m_cloud_download_model; }
     void clear_cloud_model_download() { m_cloud_download_model.clear(); }
+    int  get_3mf_download_progress(const std::string& user_id, const std::string& file_id);
+    void cancel_3mf_download(const std::string& user_id, const std::string& file_id);
     bool                   getExtraHeader(std::map<std::string, std::string>& mapHeader);
     
     // SoftFever
@@ -369,6 +375,7 @@ private:
 
     bool send_app_message(const std::string& msg,bool bforce = false);
     void reload_homepage();
+    void reload_region_sensitive_views();
     //mouse_scheme
     void on_interinstance_message(const std::string& msg);
 
@@ -391,6 +398,7 @@ private:
     void            switch_to_tab(const std::string& tabName);
 #if wxUSE_WEBVIEW_EDGE
     void            init_webview_runtime();
+    void            reinstall_webview_runtime();
 #endif
     static unsigned get_colour_approx_luma(const wxColour& colour);
     static bool     dark_mode();
@@ -467,7 +475,7 @@ private:
     wxString transition_tridid(int trid_id);
     void            ShowUserGuide();
     void            ShowDownNetPluginDlg();
-    void            ShowUserLogin(bool show = true);
+    void            ShowUserLogin(bool show = true,const wxString& loginUrl ="");
     void            ShowOnlyFilament();
     //BBS
     void            request_login(bool show_user_info = false);
@@ -699,6 +707,12 @@ private:
     bool            run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage start_page = ConfigWizard::SP_WELCOME);
     void            show_desktop_integration_dialog();
 
+    // Open e-shop recommended goods via cloud API and launch default browser
+    // Protocol requires materialColor; materialType/materialName are optional
+    void            OpenEshopRecommendedGoods(const std::string& materialColor,
+                                             const std::string& materialType = std::string(),
+                                             const std::string& materialName = std::string());
+
 #if ENABLE_THUMBNAIL_GENERATOR_DEBUG
     // temporary and debug only -> extract thumbnails from selected gcode and save them as png files
     void            gcode_thumbnails_debug();
@@ -736,10 +750,15 @@ private:
     void            check_config_updates_from_updater() { check_updates(false); }
     // BBS set extra header for http request
     std::map<std::string, std::string> get_extra_header();
-
+    std::map<std::string, std::string> get_modellibrary_header();
+    void setUserAccount(std::string userId, std::string tokenId);
     std::string account_device_json_file() { return "account_device_info.json"; }
     std::string preset_type_local_device() { return "local_device"; }
     std::string get_local_device_dir();
+
+    // 跨实例登录同步：监听 user_info.json 变更
+    void            start_user_info_watcher();
+    void            on_user_info_file_event(wxFileSystemWatcherEvent& evt);
 
     long long get_app_startup_duration();
     long get_app_running_duration();
@@ -814,6 +833,9 @@ private:
     EPickingEffect          m_picking_effect{ EPickingEffect::Silhouette };
     ColorRGB                m_picking_color{ 1.0f, 1.0f, 1.0f };
 
+    // 文件系统监听器：监控 user_info.json 改变以同步登录状态
+    std::unique_ptr<wxFileSystemWatcher> m_user_info_watcher;
+
 };
 
 DECLARE_APP(GUI_App)
@@ -825,7 +847,11 @@ wxDECLARE_EVENT(EVT_SLICE_ALL_PLATE_FINISHED, wxCommandEvent);
 wxDECLARE_EVENT(EVT_ARRANGE_PLATE_FINISHED, wxCommandEvent);
 #endif
 
-bool is_support_filament(int extruder_id);
+
+bool is_support_filament(int extruder_id, bool strict_check = true);
+bool is_soluble_filament(int extruder_id);
+// check if the filament for model is in the list
+bool has_filaments(const std::vector<string>& model_filaments);
 } // namespace GUI
 } // Slic3r
 

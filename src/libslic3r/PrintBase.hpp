@@ -294,6 +294,20 @@ public:
         return invalidated;
     }
 
+
+    void reset_all_state()
+    {
+        for (size_t i = 0; i < COUNT; ++i)
+        {
+            StateWithTimeStamp& state = m_state[i];
+            if (state.state != INVALID) 
+            {
+                state.state     = INVALID;
+                state.timestamp = ++g_last_timestamp;
+            }
+        }
+    }
+
     // Update list of warnings of the current milestone with a new warning.
     // The warning may already exist in the list, marked as current or not current.
     // If it already exists, mark it as current.
@@ -623,6 +637,8 @@ protected:
     bool            invalidate_all_steps()
         { return m_state.invalidate_all(this->cancel_callback()); }
 
+    void reset_all_steps() { m_state.reset_all_state(); }
+
 	bool            is_step_started_unguarded(PrintStepEnum step) const { return m_state.is_started_unguarded(step); }
 	bool            is_step_done_unguarded(PrintStepEnum step) const { return m_state.is_done_unguarded(step); }
 
@@ -667,6 +683,10 @@ protected:
         { return m_state.invalidate_all(PrintObjectBase::cancel_callback(m_print)); }
     bool            invalidate_all_steps_without_cancel()
         { return m_state.invalidate_all([](){}); }
+
+    void reset_all_steps() { m_state.reset_all_state(); }
+
+
 
     bool            is_step_started_unguarded(PrintObjectStepEnum step) const { return m_state.is_started_unguarded(step); }
     bool            is_step_done_unguarded(PrintObjectStepEnum step) const { return m_state.is_done_unguarded(step); }

@@ -24,6 +24,7 @@
 #include <regex>
 #include <charconv>
 #include <system_error>
+#include <cctype>
 
 #if __has_include(<charconv>)
     #include <charconv>
@@ -1961,6 +1962,14 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     const ConfigOptionFloat* z_offset = config.option<ConfigOptionFloat>("z_offset");
     if (z_offset != nullptr)
         m_z_offset = z_offset->value;
+
+    const ConfigOptionFloat* belt_Z_offset = config.option<ConfigOptionFloat>("belt_Z_offset");
+    if (belt_Z_offset != nullptr)
+        m_result.belt_z_offset = belt_Z_offset->value;
+
+    const ConfigOptionBool* machine_is_belt = config.option<ConfigOptionBool>("machine_is_belt");
+    if (machine_is_belt != nullptr)
+        m_result.machine_is_belt = machine_is_belt->value;
 }
 
 void GCodeProcessor::enable_stealth_time_estimator(bool enabled)
@@ -2164,17 +2173,10 @@ void GCodeProcessor::process_buffer(const std::string &buffer)
 
 float GCodeProcessor::layer_time()
 {
-    float layerTime = 0.0;
-    for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
-        TimeMachine& machine = m_time_processor.machines[i];
-        machine.calculate_time(TimeProcessor::Planner::queue_size);
-        if (!machine.layers_time.empty()) {
-            for (auto& time : machine.layers_time) {
-                layerTime += time;
-            }
-        }
-    }
-    return layerTime >= 0.0f ? layerTime : 0.0f;
+        // layer_time 用 Normal 模式的累计时间与 machine.time 对齐
+    TimeMachine& machine = m_time_processor.machines[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)];
+    machine.calculate_time(TimeProcessor::Planner::queue_size);
+    return std::max(0.0f, machine.time);
 };
 
 float GCodeProcessor::layer_flow() { return m_used_filaments.model_extrude_cache; }
@@ -2264,6 +2266,12 @@ void GCodeProcessor::finalize(bool post_process, float filament_used, float flus
             m_result.moves[i].layer_duration = 0;
     }
     
+    m_result.spiral_vase_layers.erase(std::remove_if(m_result.spiral_vase_layers.begin(), m_result.spiral_vase_layers.end(),
+                                                     [](const std::pair<float, std::pair<size_t, size_t>>& layer) {
+                                                         return layer.first == FLT_MAX;
+                                                     }),
+                                      m_result.spiral_vase_layers.end());
+
 #if ENABLE_GCODE_VIEWER_DATA_CHECKING
     std::cout << "\n";
     m_mm3_per_mm_compare.output();
@@ -2572,6 +2580,7 @@ void GCodeProcessor::process_gcode_line(const GCodeReader::GCodeLine& line, bool
     }
 
     if (cmd.length() > 1) {
+        //return;
         // process command lines
         switch (cmd[0])
         {
@@ -2933,6 +2942,100 @@ bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double&
     }
     return is_z_changed;
 }
+
+bool GCodeProcessor::get_last_position_from_gcode(const std::string& gcode_str, Vec3f& pos)
+{
+    int  str_size     = gcode_str.size();
+    int  start_index  = 0;
+    int  end_index    = 0;
+    bool is_z_changed = false;
+    while (end_index < str_size) {
+        // find a full line
+        if (gcode_str[end_index] != '\n') {
+            end_index++;
+            continue;
+        }
+        // parse the line
+        if (end_index > start_index) {
+            std::string line_str = gcode_str.substr(start_index, end_index - start_index);
+            line_str.erase(0, line_str.find_first_not_of(" "));
+            line_str.erase(line_str.find_last_not_of(";") + 1);
+            line_str.erase(line_str.find_last_not_of(" ") + 1);
+
+            // command which may have z movement
+            if (line_str.size() > 5 &&
+                (line_str.find("G0 ") == 0 || line_str.find("G1 ") == 0 || line_str.find("G2 ") == 0 || line_str.find("G3 ") == 0)) {
+                {
+                    float& x      = pos.x();
+                    auto   z_pos  = line_str.find(" X");
+                    float  temp_z = 0;
+                    if (z_pos != line_str.npos && z_pos + 2 < line_str.size()) {
+                        // Try to parse the numeric value.
+                        std::string z_sub = line_str.substr(z_pos + 2);
+                        char*       c     = &z_sub[0];
+                        char*       end   = c + sizeof(z_sub.c_str());
+
+                        auto is_end_of_word = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == 0 || c == ';'; };
+
+                        auto [pend, ec] = fast_float::from_chars(c, end, temp_z);
+                        if (pend != c && is_end_of_word(*pend)) {
+                            // The axis value has been parsed correctly.
+                            x            = temp_z;
+                            is_z_changed = true;
+                        }
+                    }
+                }
+
+                {
+                    float& y      = pos.y();
+                    auto   z_pos  = line_str.find(" Y");
+                    float  temp_z = 0;
+                    if (z_pos != line_str.npos && z_pos + 2 < line_str.size()) {
+                        // Try to parse the numeric value.
+                        std::string z_sub = line_str.substr(z_pos + 2);
+                        char*       c     = &z_sub[0];
+                        char*       end   = c + sizeof(z_sub.c_str());
+
+                        auto is_end_of_word = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == 0 || c == ';'; };
+
+                        auto [pend, ec] = fast_float::from_chars(c, end, temp_z);
+                        if (pend != c && is_end_of_word(*pend)) {
+                            // The axis value has been parsed correctly.
+                            y            = temp_z;
+                            is_z_changed = true;
+                        }
+                    }
+                }
+
+                {
+                    float& z      = pos.z();
+                    auto   z_pos  = line_str.find(" Z");
+                    float  temp_z = 0;
+                    if (z_pos != line_str.npos && z_pos + 2 < line_str.size()) {
+                        // Try to parse the numeric value.
+                        std::string z_sub = line_str.substr(z_pos + 2);
+                        char*       c     = &z_sub[0];
+                        char*       end   = c + sizeof(z_sub.c_str());
+
+                        auto is_end_of_word = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == 0 || c == ';'; };
+
+                        auto [pend, ec] = fast_float::from_chars(c, end, temp_z);
+                        if (pend != c && is_end_of_word(*pend)) {
+                            // The axis value has been parsed correctly.
+                            z            = temp_z;
+                            is_z_changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        // loop to handle next line
+        start_index = end_index + 1;
+        end_index   = start_index;
+    }
+    return is_z_changed;
+}
+
 
 void GCodeProcessor::process_tags(const std::string_view comment, bool producers_enabled)
 {
@@ -3518,6 +3621,12 @@ bool GCodeProcessor::process_creality_tags(const std::string_view comment)
         return false;
     }
 
+	if (boost::starts_with(comment, " should_enable_preview_lod = ")) {
+        auto data                                = comment.substr(strlen(" should_enable_preview_lod = "));
+        this->m_result.should_enable_preview_lod = (std::stoi(data.data()) > 0);
+        return false;
+    }
+
     if (boost::starts_with(comment, " max_print_temp = ")) {
         auto data = comment.substr(strlen(" max_print_temp = "));
         auto comma = data.find(',');
@@ -3536,6 +3645,25 @@ bool GCodeProcessor::process_creality_tags(const std::string_view comment)
         return false;
     }
     
+
+	if (boost::starts_with(comment, " wipe_tower_tool_changes_layers = ")) {
+        auto data                             = comment.substr(strlen(" wipe_tower_tool_changes_layers = "));
+        std::vector<std::string> subs;
+
+        boost::split(subs, data, boost::is_any_of(","));
+
+        for (size_t i = 0; i < subs.size(); i++) {
+            std::string& sub = subs[i];
+            this->m_result.wipe_tower_tool_changes_layers.push_back(std::stoi(sub.data()));
+		}
+        return false;
+    }
+
+    if (boost::starts_with(comment, " belt_Z_offset = ")) {
+        auto data                    = comment.substr(strlen(" belt_Z_offset = "));
+        this->m_result.belt_z_offset = std::stof(data.data());
+        return true;
+    }
 
     return false;
 }
@@ -6288,14 +6416,12 @@ void GCodeProcessor::process_G2_G3_klipper(const GCodeReader::GCodeLine& line)
 
         if (m_height == 0.0f)
             m_height = DEFAULT_TOOLPATH_HEIGHT;
-               if (m_end_position[Z] == 0.0f) {
+        if (m_end_position[Z] == 0.0f) {
             if (m_z_offset > 0) {
                 m_end_position[Z] = m_height;
             }
         }
 
-        if (m_end_position[Z] == 0.0f)
-            m_end_position[Z] = m_height;
 
         m_extruded_last_z = m_end_position[Z];
         m_options_z_corrector.update(m_height);
@@ -7053,85 +7179,70 @@ void GCodeProcessor::set_velocity_limit(const float& velocity, const float& acce
 
 void GCodeProcessor::process_SET_VELOCITY_LIMIT(const GCodeReader::GCodeLine& line)
 {
-    // handle SQUARE_CORNER_VELOCITY
-    std::regex pattern("\\sSQUARE_CORNER_VELOCITY\\s*=\\s*([0-9]*\\.*[0-9]*)");
-    std::smatch matches;
-    float       _jerk = 0;
-    if (std::regex_search(line.raw(), matches, pattern) && matches.size() == 2) {
-      
-        try
-        {
-            _jerk = std::stof(matches[1]);
+    const std::string &raw = line.raw();
+    std::string_view raw_view(raw);
+    auto is_identifier_char = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+    };
+    auto extract_value = [&raw_view, &is_identifier_char](std::string_view key, float &out) -> bool {
+        size_t pos = 0;
+        while ((pos = raw_view.find(key, pos)) != std::string_view::npos) {
+            if (pos > 0 && is_identifier_char(raw_view[pos - 1])) {
+                ++pos;
+                continue;
+            }
+            size_t after_key = pos + key.size();
+            if (after_key < raw_view.size() && is_identifier_char(raw_view[after_key])) {
+                ++pos;
+                continue;
+            }
+            while (after_key < raw_view.size() && std::isspace(static_cast<unsigned char>(raw_view[after_key])))
+                ++after_key;
+            if (after_key >= raw_view.size() || raw_view[after_key] != '=') {
+                ++pos;
+                continue;
+            }
+            ++after_key;
+            while (after_key < raw_view.size() && std::isspace(static_cast<unsigned char>(raw_view[after_key])))
+                ++after_key;
+            const char *begin = raw_view.data() + after_key;
+            const char *end   = raw_view.data() + raw_view.size();
+            fast_float::from_chars_result res = fast_float::from_chars(begin, end, out);
+            if (res.ec == std::errc())
+                return true;
+            pos = after_key;
         }
-        catch (...){}
+        return false;
+    };
+
+    float _jerk = 0.f;
+    if (extract_value("SQUARE_CORNER_VELOCITY", _jerk)) {
         for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
             set_option_value(m_time_processor.machine_limits.machine_max_jerk_x, i, _jerk);
             set_option_value(m_time_processor.machine_limits.machine_max_jerk_y, i, _jerk);
         }
     }
-    /*
-    pattern = std::regex("\\sACCEL\\s*=\\s*([0-9]*\\.*[0-9]*)");
-    if (std::regex_search(line.raw(), matches, pattern) && matches.size() == 2) {
-        float _accl = 0;
-        try
-        {
-            _accl = std::stof(matches[1]);
-        }
-        catch (...) {}
+
+    float _accl = 0.f;
+    if (extract_value("ACCEL", _accl)) {
         for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
             set_acceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), _accl);
             set_travel_acceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), _accl);
         }
     }
 
-     pattern = std::regex("\\sACCEL_TO_DECEL\\s*=\\s*([0-9]*\\.*[0-9]*)");
-    if (std::regex_search(line.raw(), matches, pattern) && matches.size() == 2) {
-        float _accl = 0;
-        try {
-            _accl = std::stof(matches[1]);
-        } catch (...) {}
-        for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
-            set_deceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), _accl);
-        }
-    }*/
-    float _accl = 0;
-
-    std::regex pattern_accel("\\bACCEL\\s*=\\s*([0-9]*\\.?[0-9]+)");
-    if (std::regex_search(line.raw(), matches, pattern_accel) && matches.size() == 2) {
-       
-        try {
-            _accl = std::stof(matches[1]);
-        } catch (...) {}
-        for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
-            set_acceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), _accl);
-            set_travel_acceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), _accl);
-        }
-    }
-
-    // 解析 ACCEL_TO_DECEL
-    float      _accel_to_decel = 0;
-    std::regex pattern_accel_to_decel("\\bACCEL_TO_DECEL\\s*=\\s*([0-9]*\\.?[0-9]+)");
-    if (std::regex_search(line.raw(), matches, pattern_accel_to_decel) && matches.size() == 2) {
-       
-        try {
-            _accel_to_decel = std::stof(matches[1]);
-        } catch (...) {}
+    float _accel_to_decel = 0.f;
+    if (extract_value("ACCEL_TO_DECEL", _accel_to_decel)) {
         for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
             set_deceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), _accel_to_decel);
         }
     }
-    float _speed = 0;
-    pattern = std::regex("\\sVELOCITY\\s*=\\s*([0-9]*\\.*[0-9]*)");
-    if (std::regex_search(line.raw(), matches, pattern) && matches.size() == 2) {
-      
-        try
-        {
-            _speed = std::stof(matches[1]);
-        }
-        catch (...) {}
+
+    float _speed = 0.f;
+    if (extract_value("VELOCITY", _speed)) {
         for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
-                set_option_value(m_time_processor.machine_limits.machine_max_speed_x, i, _speed);
-                set_option_value(m_time_processor.machine_limits.machine_max_speed_y, i, _speed);
+            set_option_value(m_time_processor.machine_limits.machine_max_speed_x, i, _speed);
+            set_option_value(m_time_processor.machine_limits.machine_max_speed_y, i, _speed);
         }
     }
 

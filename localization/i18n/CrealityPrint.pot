@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-06-21 18:00+0800\n"
+"POT-Creation-Date: 2025-12-22 20:42+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -19,6 +19,13 @@ msgstr ""
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
 msgid "Assembly"
+msgstr ""
+
+msgid ""
+"We apologize for the inconvenience caused by this unexpected software issue. "
+"If it's convenient for you, please leave your email or other contact "
+"information so we can promptly update you on the progress of resolving the "
+"issue."
 msgstr ""
 
 msgid "SendReport"
@@ -263,14 +270,17 @@ msgstr ""
 msgid "write callback failed"
 msgstr ""
 
-msgid ""
-"Unknown file format. Input file must have .stl, .obj, .amf(.xml) extension."
-msgstr ""
-
 msgid "Loading of a model file failed."
 msgstr ""
 
+msgid "Meshing of a model file failed or no valid shape."
+msgstr ""
+
 msgid "The supplied file couldn't be read because it's empty"
+msgstr ""
+
+msgid ""
+"Unknown file format. Input file must have .stl, .obj, .amf(.xml) extension."
 msgstr ""
 
 msgid "Unknown file format. Input file must have .3mf or .zip.amf extension."
@@ -347,6 +357,9 @@ msgid ""
 msgstr ""
 
 msgid "Variable layer height is not supported with Organic supports."
+msgstr ""
+
+msgid "Overhang Optimization is not supported with Organic supports."
 msgstr ""
 
 msgid ""
@@ -660,6 +673,14 @@ msgid "Avoid crossing wall"
 msgstr ""
 
 msgid "Detour and avoid to travel across wall which may cause blob on surface"
+msgstr ""
+
+msgid "Smoothing wall speed along Z(experimental)"
+msgstr ""
+
+msgid ""
+"Smoothing outwall speed in z direction to get better surface quality. Print "
+"time will increases. It does not work on spiral vase mode."
 msgstr ""
 
 msgid "Avoid crossing wall - Max detour length"
@@ -1077,7 +1098,7 @@ msgstr ""
 msgid "mm/s or %"
 msgstr ""
 
-msgid "Over 100% wall (not brige)"
+msgid "Over 100% wall (not brige) (Beta)"
 msgstr ""
 
 #, possible-c-format, possible-boost-format
@@ -1101,7 +1122,7 @@ msgid ""
 "be calculated based on the bridge_speed. Default value is 150%."
 msgstr ""
 
-msgid "Smooth speed discontinuity area"
+msgid "Smooth speed discontinuity area (Beta)"
 msgstr ""
 
 msgid "Add the speed transition between discontinuity area."
@@ -1463,6 +1484,7 @@ msgstr ""
 msgid "Walls printing order"
 msgstr ""
 
+#, possible-c-format, possible-boost-format
 msgid ""
 "Print sequence of the internal (inner) and external (outer) walls. \n"
 "\n"
@@ -1485,6 +1507,13 @@ msgid ""
 "consistent as the first extrusion of a new layer starts on a visible "
 "surface.\n"
 "\n"
+"Use Adaptive Outer/Inner to combine the strengths of both the Outer/Inner "
+"and Inner/Outer print sequences. In most situations, this mode will print "
+"the outer wall first. However, when encountering overhangs exceeding 75%% or "
+"during bridging, the printer will print the inner wall first to ensure "
+"better surface quality in the overhanging areas. Note that layer artifacts "
+"may appear in regions where the wall printing order switches.\n"
+"\n"
 " "
 msgstr ""
 
@@ -1495,6 +1524,9 @@ msgid "Outer/Inner"
 msgstr ""
 
 msgid "Inner/Outer/Inner"
+msgstr ""
+
+msgid "Adaptive Outer/Inner(experimental)"
 msgstr ""
 
 msgid "Print infill first"
@@ -1546,6 +1578,9 @@ msgstr ""
 msgid ""
 "Distance of the nozzle tip to the lower rod. Used for collision avoidance in "
 "by-object printing."
+msgstr ""
+
+msgid "multicolor method"
 msgstr ""
 
 msgid "Height to lid"
@@ -1661,30 +1696,37 @@ msgid ""
 "at least at minimum speed to reduce the frequency of starting and stoping"
 msgstr ""
 
-msgid "Don't slow down outer walls"
+msgid "Cooling slowdown logic"
 msgstr ""
 
 msgid ""
-"If enabled, this setting will ensure external perimeters are not slowed down "
-"to meet the minimum layer time. This is particularly helpful in the below "
-"scenarios:\n"
-"\n"
-" 1. To avoid changes in shine when printing glossy filaments \n"
-"2. To avoid changes in external wall speed which may create slight wall "
-"artefacts that appear like z banding \n"
-"3. To avoid printing at speeds which cause VFAs (fine artefacts) on the "
-"external walls\n"
-"\n"
+"Determines how the printer slows down layer printing when the minimum layer "
+"time isn't reached. 'Consistent surface' first tries to preserve the print "
+"speeds of the first two perimeters by slowing all other features. Only if "
+"this isn't sufficient, it also slows down those first two perimeters. "
+"'Uniform cooling' slows down all print features, including the first two "
+"perimeters."
+msgstr ""
+
+msgid "Uniform cooling"
+msgstr ""
+
+msgid "Consistent surface"
+msgstr ""
+
+msgid "Don't slow down outer walls"
 msgstr ""
 
 msgid "Smart cooling zones(Beta)"
 msgstr ""
 
+msgid "Perimeter transition distance"
+msgstr ""
+
 msgid ""
-"If enabled, this setting will ensure that large areas without overhangs are "
-"not slowed down to meet the minimum layer time. Makes the selection of "
-"slowed down areas more intelligent\n"
-"\n"
+"Distance in millimeters before non-slowed perimeters where the original "
+"unslowed print speed is restored. This reduces print quality issues when "
+"transitioning from heavily slowed feature to fast perimeter printing."
 msgstr ""
 
 msgid "Layer time"
@@ -2025,10 +2067,50 @@ msgid ""
 "infill and internal solid infill pattern will be used"
 msgstr ""
 
+msgid "Start sparse infill density"
+msgstr ""
+
+msgid "Start sparse infill density in range(1-99)"
+msgstr ""
+
+msgid "End sparse infill density"
+msgstr ""
+
+msgid "End sparse infill density in range(1-99)"
+msgstr ""
+
+msgid "Gradual direction"
+msgstr ""
+
+msgid "x-axis"
+msgstr ""
+
+msgid "y-axis"
+msgstr ""
+
+msgid "z-axis"
+msgstr ""
+
 msgid "AI infill"
 msgstr ""
 
 msgid "Active the AI infill On the basis of the original sparse filling."
+msgstr ""
+
+msgid "Align infill direction to model"
+msgstr ""
+
+msgid ""
+"Aligns infill and surface fill directions to follow the model's orientation "
+"on the build plate. When enabled, fill directions rotate with the model to "
+"maintain optimal strength characteristics."
+msgstr ""
+
+msgid "Fill Multiline"
+msgstr ""
+
+msgid ""
+"Using multiple lines for the infill pattern, if supported by infill pattern."
 msgstr ""
 
 msgid "Sparse infill pattern"
@@ -2086,6 +2168,68 @@ msgid "Tetrahedral"
 msgstr ""
 
 msgid "TpmsD"
+msgstr ""
+
+msgid "Gradual TPMS-G"
+msgstr ""
+
+msgid "Gradual TPMS-D"
+msgstr ""
+
+msgid "Gradual TPMS-FK"
+msgstr ""
+
+msgid "TPMS-FK"
+msgstr ""
+
+msgid "Zig-Zag2"
+msgstr ""
+
+msgid "Cross-Zag"
+msgstr ""
+
+msgid "Locked-Zag"
+msgstr ""
+
+msgid "Lateral Honeycomb"
+msgstr ""
+
+msgid "Lateral Lattice"
+msgstr ""
+
+msgid "Skin infill pattern"
+msgstr ""
+
+msgid "Line pattern for skin"
+msgstr ""
+
+msgid "Skeleton infill pattern"
+msgstr ""
+
+msgid "Line pattern for skeleton"
+msgstr ""
+
+msgid "Lateral lattice angle 1"
+msgstr ""
+
+msgid ""
+"The angle of the first set of Lateral lattice elements in the Z direction. "
+"Zero is vertical."
+msgstr ""
+
+msgid "Lateral lattice angle 2"
+msgstr ""
+
+msgid ""
+"The angle of the second set of Lateral lattice elements in the Z direction. "
+"Zero is vertical."
+msgstr ""
+
+msgid "Infill overhang angle"
+msgstr ""
+
+msgid ""
+"The angle of the infill angled lines. 60° will result in a pure honeycomb."
 msgstr ""
 
 msgid "Sparse infill anchor length"
@@ -2197,6 +2341,20 @@ msgstr ""
 #, possible-c-format, possible-boost-format
 msgid ""
 "Klipper's max_accel_to_decel will be adjusted to this %% of acceleration"
+msgstr ""
+
+msgid "Travel short distance acceleration"
+msgstr ""
+
+msgid ""
+"Acceleration used for short travel moves. Short travel distance is "
+"determined by the retract_before_travel setting."
+msgstr ""
+
+msgid "Travel short distance threshold"
+msgstr ""
+
+msgid "Short travel distance threshold for travel_short_distance_acceleration."
 msgstr ""
 
 msgid "Jerk of outer walls"
@@ -2478,6 +2636,18 @@ msgstr ""
 msgid "money/h"
 msgstr ""
 
+msgid "Belt machine"
+msgstr ""
+
+msgid "Whether the machine structure is belt."
+msgstr ""
+
+msgid "Belt machine Z offset"
+msgstr ""
+
+msgid "The Z-axis offset of the belt machine."
+msgstr ""
+
 msgid "Support control chamber temperature"
 msgstr ""
 
@@ -2554,6 +2724,93 @@ msgid ""
 "reduce time. Wall is still printed with original layer height."
 msgstr ""
 
+msgid "Infill shift step"
+msgstr ""
+
+msgid ""
+"This parameter adds a slight displacement to each layer of infill to create "
+"a cross texture."
+msgstr ""
+
+msgid "Infill rotate step"
+msgstr ""
+
+msgid ""
+"This parameter adds a slight rotation to each layer of infill to create a "
+"cross texture."
+msgstr ""
+
+msgid "Skeleton infill density"
+msgstr ""
+
+msgid ""
+"The remaining part of the model contour after removing a certain depth from "
+"the surface is called the skeleton. This parameter is used to adjust the "
+"density of this section.When two regions have the same sparse infill "
+"settings but different skeleton densities, their skeleton areas will develop "
+"overlapping sections.default is as same as infill density."
+msgstr ""
+
+msgid "Skin infill density"
+msgstr ""
+
+msgid ""
+"The portion of the model's outer surface within a certain depth range is "
+"called the skin. This parameter is used to adjust the density of this "
+"section.When two regions have the same sparse infill settings but different "
+"skin densities, This area will not be split into two separate regions."
+"default is as same as infill density."
+msgstr ""
+
+msgid "Skin infill depth"
+msgstr ""
+
+msgid "The parameter sets the depth of skin."
+msgstr ""
+
+msgid "Infill lock depth"
+msgstr ""
+
+msgid "The parameter sets the overlapping depth between the interior and skin."
+msgstr ""
+
+msgid "Skin line width"
+msgstr ""
+
+msgid "Adjust the line width of the selected skin paths."
+msgstr ""
+
+msgid "Skeleton line width"
+msgstr ""
+
+msgid "Adjust the line width of the selected skeleton paths."
+msgstr ""
+
+msgid "Symmetric infill y axis"
+msgstr ""
+
+msgid ""
+"If the model has two parts that are symmetric about the y-axis, and you want "
+"these parts to have symmetric textures, please click this option on one of "
+"the parts."
+msgstr ""
+
+msgid "Infill combination - Max layer height"
+msgstr ""
+
+msgid ""
+"Maximum layer height for the combined sparse infill.\n"
+"\n"
+"Set it to 0 or 100% to use the nozzle diameter (for maximum reduction in "
+"print time) or a value of ~80% to maximize sparse infill strength.\n"
+"\n"
+"The number of layers over which infill is combined is derived by dividing "
+"this value with the layer height and rounded down to the nearest decimal.\n"
+"\n"
+"Use either absolute mm values (eg. 0.32mm for a 0.4mm nozzle) or % values "
+"(eg 80%). This value must not be larger than the nozzle diameter."
+msgstr ""
+
 msgid "Filament to print internal sparse infill."
 msgstr ""
 
@@ -2586,6 +2843,16 @@ msgid ""
 msgstr ""
 
 msgid "Speed of internal sparse infill"
+msgstr ""
+
+msgid "Anchor solid infill by X mm"
+msgstr ""
+
+#, possible-c-format, possible-boost-format
+msgid ""
+"This parameter grows the top/bottom/solid layers by the specified mm to "
+"anchor them into the sparse infill and support the perimeters above. Put 0 "
+"to deactivate it. Can be a %% of the width of the perimeters."
 msgstr ""
 
 msgid "Interface shells"
@@ -2935,12 +3202,6 @@ msgid "Height limit speed and acceleration"
 msgstr ""
 
 msgid "[[mm,mm,mm/s,mm/s²]]"
-msgstr ""
-
-msgid "Weight limit speed and acceleration Enable"
-msgstr ""
-
-msgid "Height limit speed and acceleration Enable"
 msgstr ""
 
 msgid "Auto Temperature"
@@ -4248,6 +4509,12 @@ msgid ""
 "recommended"
 msgstr ""
 
+msgid "Activate chamber layer"
+msgstr ""
+
+msgid "The number of layers for opening the cavity temperature"
+msgstr ""
+
 msgid "Nozzle temperature for layers after the initial one"
 msgstr ""
 
@@ -4333,6 +4600,18 @@ msgid ""
 "appearance defects when printing objects."
 msgstr ""
 
+msgid "Internal ribs"
+msgstr ""
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr ""
+
+msgid "Skip points"
+msgstr ""
+
+msgid "The wall of prime tower will skip the start points of wipe path"
+msgstr ""
+
 msgid "Purging volumes"
 msgstr ""
 
@@ -4359,10 +4638,10 @@ msgstr ""
 msgid "Width of prime tower"
 msgstr ""
 
-msgid "Wipe tower rotation angle"
+msgid "Prime tower rotation angle"
 msgstr ""
 
-msgid "Wipe tower rotation angle with respect to x-axis."
+msgid "Prime tower rotation angle with respect to x-axis."
 msgstr ""
 
 msgid ""
@@ -4370,24 +4649,12 @@ msgid ""
 "on the height of prime tower."
 msgstr ""
 
-msgid "Skip points"
-msgstr ""
-
-msgid "The wall of prime tower will skip the start points of wipe path"
-msgstr ""
-
-msgid "Internal ribs"
-msgstr ""
-
-msgid "Enable internal ribs to increase the stability of the prime tower."
-msgstr ""
-
-msgid "Rib wall"
+msgid "Square prime tower"
 msgstr ""
 
 msgid ""
-"The wall of prime tower will add four ribs and make its cross-section as "
-"close to a square as possible, so the width will be fixed."
+"When this option is checked, the prime tower will be as close to a square as "
+"possible, meaning its width will be fixed."
 msgstr ""
 
 msgid "Prime tower enhance type"
@@ -5328,6 +5595,137 @@ msgstr ""
 msgid "Version"
 msgstr ""
 
+msgid "Weight range"
+msgstr ""
+
+msgid "Invalid numeric."
+msgstr ""
+
+msgid "Print speed"
+msgstr ""
+
+msgid "Acceleration"
+msgstr ""
+
+msgid "Height range"
+msgstr ""
+
+msgid "Weight limit speed and acceleration Enable"
+msgstr ""
+
+msgid "Height limit speed and acceleration Enable"
+msgstr ""
+
+msgid "Add"
+msgstr ""
+
+msgid "Ok"
+msgstr ""
+
+msgid "Model name"
+msgstr ""
+
+msgid "Before processing"
+msgstr ""
+
+msgid "After processing"
+msgstr ""
+
+msgid "AI cloud service"
+msgstr ""
+
+msgid "Discard"
+msgstr ""
+
+msgid "Apply"
+msgstr ""
+
+msgid "Yes"
+msgstr ""
+
+msgid "No"
+msgstr ""
+
+msgid "Seam painting"
+msgstr ""
+
+msgid "In cloud service processing"
+msgstr ""
+
+msgid "In the processing of cloud AI services"
+msgstr ""
+
+#, possible-boost-format
+msgid "Currently queued at position %1%, total %2%"
+msgstr ""
+
+msgid "Timeout"
+msgstr ""
+
+msgid "Tips"
+msgstr ""
+
+msgid "In the processing of cloud AI services, you need to queue up and wait"
+msgstr ""
+
+#, possible-c-format, possible-boost-format
+msgid "Currently queued at position %%1%%, total %%2%%"
+msgstr ""
+
+msgid ""
+"We are about to utilize AI cloud services to process the current project"
+msgstr ""
+
+msgid ""
+"Prompt:\n"
+"1. We will collect necessary account, device, and usage information to "
+"provide core functions such as cloud algorithms and project synchronization. "
+"Your data will be securely protected and will not be disclosed or used for "
+"unrelated purposes. By continuing to use, you agree to our Privacy Policy\n"
+"2. The efficiency of cloud services depends on the network environment and "
+"cloud computing capabilities, and processing may be slightly slower"
+msgstr ""
+
+msgid "https://wiki.creality.com/zh/software/6-0/privacy"
+msgstr ""
+
+msgid "https://wiki.creality.com/en/software/6-0/privacy"
+msgstr ""
+
+msgid "<<Privacy Policy>>"
+msgstr ""
+
+msgid "AI Recommendation Support generation"
+msgstr ""
+
+msgid "AI Recommendation Z-seam painting"
+msgstr ""
+
+msgid "Preparing data"
+msgstr ""
+
+msgid "In the application of AI predictive data"
+msgstr ""
+
+#, possible-boost-format
+msgid "3MF project too large (%1% MB); cloud service cannot process it."
+msgstr ""
+
+msgid "Cloud service cannot process this 3MF—contains assemblies or too many mesh triangles."
+msgstr ""
+
+msgid "No network. Please retry."
+msgstr ""
+
+msgid "Cloud service encountered an error. Please try again."
+msgstr ""
+
+msgid "In cloud service computing"
+msgstr ""
+
+msgid "finished"
+msgstr ""
+
 msgid "CFS Slots"
 msgstr ""
 
@@ -5727,13 +6125,7 @@ msgstr ""
 msgid "File"
 msgstr ""
 
-msgid "Open Project"
-msgstr ""
-
 msgid "Save the project file"
-msgstr ""
-
-msgid "Preferences"
 msgstr ""
 
 msgid "Relations"
@@ -5745,6 +6137,9 @@ msgstr ""
 msgid "Redo"
 msgstr ""
 
+msgid "Online Models"
+msgstr ""
+
 msgid "Prepare"
 msgstr ""
 
@@ -5754,7 +6149,10 @@ msgstr ""
 msgid "Device"
 msgstr ""
 
-msgid "upload 3mf to crealitycloud"
+msgid "User Feedback"
+msgstr ""
+
+msgid "Help"
 msgstr ""
 
 #. TRN - Input label. Be short as possible
@@ -6528,13 +6926,13 @@ msgstr ""
 msgid "PA Calibration"
 msgstr ""
 
+msgid "Extruder type"
+msgstr ""
+
 msgid "DDE"
 msgstr ""
 
 msgid "Bowden"
-msgstr ""
-
-msgid "Extruder type"
 msgstr ""
 
 msgid "PA Tower"
@@ -6783,9 +7181,6 @@ msgstr ""
 msgid "New Flow Dynamic Calibration"
 msgstr ""
 
-msgid "Ok"
-msgstr ""
-
 msgid "The filament must be selected."
 msgstr ""
 
@@ -6811,6 +7206,29 @@ msgid "720p"
 msgstr ""
 
 msgid "1080p"
+msgstr ""
+
+msgid ""
+"This project file is not from Creality Print. Please select the printer "
+"preset you want to use for slicing."
+msgstr ""
+
+msgid "User presets"
+msgstr ""
+
+msgid "System presets"
+msgstr ""
+
+msgid "Project-inside presets"
+msgstr ""
+
+msgid "Select/Remove printers(system presets)"
+msgstr ""
+
+msgid "Create Nozzle"
+msgstr ""
+
+msgid "Create printer"
 msgstr ""
 
 msgid ""
@@ -6935,7 +7353,8 @@ msgstr ""
 
 msgid ""
 "Spiral mode only works when wall loops is 1, support is disabled, top shell "
-"layers is 0, sparse infill density is 0 and timelapse type is traditional."
+"layers is 0, sparse infill density is 0, timelapse type is traditional and "
+"smoothing wall speed along Z is false."
 msgstr ""
 
 msgid " But machines with I3 structure will not generate timelapse videos."
@@ -7380,9 +7799,6 @@ msgstr ""
 msgid ""
 "\n"
 "Do you want to rewrite it?"
-msgstr ""
-
-msgid "Create Nozzle"
 msgstr ""
 
 msgid "Create Printer"
@@ -8180,9 +8596,6 @@ msgstr ""
 msgid "parameter name"
 msgstr ""
 
-msgid "Invalid numeric."
-msgstr ""
-
 #, possible-c-format, possible-boost-format
 msgid "%s can't be percentage"
 msgstr ""
@@ -8269,9 +8682,6 @@ msgstr ""
 msgid "Layer Time (log)"
 msgstr ""
 
-msgid "Acceleration"
-msgstr ""
-
 msgid "Height: "
 msgstr ""
 
@@ -8294,9 +8704,6 @@ msgid "Temperature: "
 msgstr ""
 
 msgid "Loading display data"
-msgstr ""
-
-msgid "Loading G-codes"
 msgstr ""
 
 msgid "Generating geometry vertex data"
@@ -8329,9 +8736,6 @@ msgstr ""
 msgid "Total cost"
 msgstr ""
 
-msgid "Expand"
-msgstr ""
-
 msgid "G-code Preview"
 msgstr ""
 
@@ -8347,6 +8751,9 @@ msgstr ""
 msgid "Material Cost"
 msgstr ""
 
+msgid "Details"
+msgstr ""
+
 msgid "Show in Preview"
 msgstr ""
 
@@ -8356,7 +8763,7 @@ msgstr ""
 msgid "Color Show"
 msgstr ""
 
-msgid "G-code"
+msgid "G-Code"
 msgstr ""
 
 msgid "Time"
@@ -8425,13 +8832,16 @@ msgstr ""
 msgid "Quality / Speed"
 msgstr ""
 
-msgid "Apply"
-msgstr ""
-
 msgid "Adaptive"
 msgstr ""
 
 msgid "Keep the minimum floor height constant"
+msgstr ""
+
+msgid "Overhangs"
+msgstr ""
+
+msgid "Enable Overhang Optimization"
 msgstr ""
 
 msgid "Left mouse button:"
@@ -8536,10 +8946,25 @@ msgstr ""
 msgid "Checkerboard Layout"
 msgstr ""
 
-msgid "angle reset"
+msgid "FRONT"
 msgstr ""
 
-msgid "Add"
+msgid "BACK"
+msgstr ""
+
+msgid "TOP"
+msgstr ""
+
+msgid "BOTTOM"
+msgstr ""
+
+msgid "LEFT"
+msgstr ""
+
+msgid "RIGHT"
+msgstr ""
+
+msgid "angle reset"
 msgstr ""
 
 msgid "Add plate"
@@ -8575,7 +9000,7 @@ msgstr ""
 msgid "Send to Multi-device"
 msgstr ""
 
-msgid "Export plate sliced file"
+msgid "Export G-code"
 msgstr ""
 
 msgid "Export all sliced file"
@@ -8731,13 +9156,34 @@ msgstr ""
 msgid "WebView2 Runtime"
 msgstr ""
 
+msgid ""
+"Creality Print requires the Microsoft WebView2 Runtime,But it has been found "
+"that the abnormal operation of Microsoft WebView2 may be related to the "
+"installation of Microsoft Edge. \n"
+"Click the Yes to reinstall Microsoft Edge"
+msgstr ""
+
+msgid ""
+"Failed to reinstall the Microsoft WebView2 Runtime. Please reinstall it "
+"manually."
+msgstr ""
+
+#, possible-c-format, possible-boost-format
+msgid "tutorial: %s"
+msgstr ""
+
+msgid ""
+"The Microsoft WebView2 Runtime has been reinstalled successfully. The "
+"application will restart now."
+msgstr ""
+
 msgid "Here you can select and add your printer presets"
 msgstr ""
 
 msgid "Click 【"
 msgstr ""
 
-msgid "】 to select Creality printer maching the chosen preset"
+msgid "】 to select Creality printer matching the chosen preset"
 msgstr ""
 
 msgid "Here to import model files"
@@ -8755,7 +9201,7 @@ msgid "Click 【Slice plate】 to generate the G-code file for printing"
 msgstr ""
 
 msgid ""
-"Click 【Send print】,send the file to the selected device and start printing"
+"Click 【Send print】, send the file to the selected device and start printing"
 msgstr ""
 
 msgid "Error Report"
@@ -8828,7 +9274,13 @@ msgstr ""
 msgid "User logged out"
 msgstr ""
 
+msgid "Downloading 3MF Project"
+msgstr ""
+
 msgid "new or open project file is not allowed during the slicing process!"
+msgstr ""
+
+msgid "Open Project"
 msgstr ""
 
 msgid ""
@@ -8836,7 +9288,7 @@ msgid ""
 "latest version before it can be used normally"
 msgstr ""
 
-msgid "User Experience Improvement Program1"
+msgid "User Experience Improvement Program"
 msgstr ""
 
 msgid "Slicing Preview"
@@ -8967,6 +9419,24 @@ msgid "Del"
 msgstr ""
 
 msgid "Delete the selected object"
+msgstr ""
+
+msgid "Copy"
+msgstr ""
+
+msgid "Ctrl+C"
+msgstr ""
+
+msgid "Copy the selected object"
+msgstr ""
+
+msgid "Paste"
+msgstr ""
+
+msgid "Ctrl+V"
+msgstr ""
+
+msgid "Paste the selected object"
 msgstr ""
 
 msgid "Cube"
@@ -9509,6 +9979,9 @@ msgstr ""
 msgid "Can be set in the \"Worktop\" or \"Device\""
 msgstr ""
 
+msgid "Click to bind the device"
+msgstr ""
+
 msgid "Device Lists"
 msgstr ""
 
@@ -9519,6 +9992,9 @@ msgid "Please go to the device page to"
 msgstr ""
 
 msgid " add printer"
+msgstr ""
+
+msgid "Device List Not Connect Warning"
 msgstr ""
 
 msgid "Additional process preset"
@@ -9615,6 +10091,9 @@ msgstr ""
 msgid "Custom G-code:"
 msgstr ""
 
+msgid "Steps"
+msgstr ""
+
 msgid "Click to toggle showing only the current layer"
 msgstr ""
 
@@ -9678,6 +10157,39 @@ msgstr ""
 msgid "Objects list"
 msgstr ""
 
+msgid "Mouse shortcut scheme 1"
+msgstr ""
+
+msgid "Click"
+msgstr ""
+
+msgid "Rotate View"
+msgstr ""
+
+msgid "Control+Click"
+msgstr ""
+
+msgid "Pan View"
+msgstr ""
+
+msgid "Shift+mouse"
+msgstr ""
+
+msgid "Select objects by rectangle"
+msgstr ""
+
+msgid "Mouse shortcut scheme 2"
+msgstr ""
+
+msgid "Right mouse button"
+msgstr ""
+
+msgid "Left mouse button"
+msgstr ""
+
+msgid "Shift+Left mouse button"
+msgstr ""
+
 msgid "New Project"
 msgstr ""
 
@@ -9708,6 +10220,9 @@ msgstr ""
 msgid "Paste from clipboard"
 msgstr ""
 
+msgid "Preferences"
+msgstr ""
+
 msgid "Show/Hide 3Dconnexion devices settings dialog"
 msgstr ""
 
@@ -9721,18 +10236,6 @@ msgid "Show keyboard shortcuts list"
 msgstr ""
 
 msgid "Global shortcuts"
-msgstr ""
-
-msgid "Left mouse button"
-msgstr ""
-
-msgid "Rotate View"
-msgstr ""
-
-msgid "Right mouse button"
-msgstr ""
-
-msgid "Pan View"
 msgstr ""
 
 msgid "Mouse wheel"
@@ -9784,12 +10287,6 @@ msgid "Alt+Left mouse button"
 msgstr ""
 
 msgid "Ctrl+Left mouse button"
-msgstr ""
-
-msgid "Shift+Left mouse button"
-msgstr ""
-
-msgid "Select objects by rectangle"
 msgstr ""
 
 msgid "Arrow Up"
@@ -9993,6 +10490,9 @@ msgstr ""
 msgid "Horizontal slider - Move to last position"
 msgstr ""
 
+msgid "System Browser Login"
+msgstr ""
+
 msgid "login status has expired, please log in again?"
 msgstr ""
 
@@ -10022,18 +10522,6 @@ msgstr ""
 msgid "Logging"
 msgstr ""
 
-msgid "Multi-device"
-msgstr ""
-
-msgid "Project"
-msgstr ""
-
-msgid "Yes"
-msgstr ""
-
-msgid "No"
-msgstr ""
-
 msgid "will be closed before creating a new model. Do you want to continue?"
 msgstr ""
 
@@ -10059,9 +10547,6 @@ msgid "Check for Update"
 msgstr ""
 
 msgid "Use Course"
-msgstr ""
-
-msgid "User Feedback"
 msgstr ""
 
 msgid "Log View"
@@ -10150,12 +10635,6 @@ msgstr ""
 msgid "Import"
 msgstr ""
 
-msgid "Import Gcode"
-msgstr ""
-
-msgid "Load a gcode"
-msgstr ""
-
 msgid "Export all objects as one STL"
 msgstr ""
 
@@ -10168,16 +10647,10 @@ msgstr ""
 msgid "Export 3mf file without using some 3mf-extensions"
 msgstr ""
 
-msgid "Export current sliced file"
+msgid "Export current plate as G-code"
 msgstr ""
 
 msgid "Export all plate sliced file"
-msgstr ""
-
-msgid "Export G-code"
-msgstr ""
-
-msgid "Export current plate as G-code"
 msgstr ""
 
 msgid "Export Presets"
@@ -10186,19 +10659,16 @@ msgstr ""
 msgid "Export current configuration to files"
 msgstr ""
 
+msgid "Upload current project to cloud storage"
+msgstr ""
+
 msgid "Quit"
 msgstr ""
 
 msgid "Cut selection to clipboard"
 msgstr ""
 
-msgid "Copy"
-msgstr ""
-
 msgid "Copy selection to clipboard"
-msgstr ""
-
-msgid "Paste"
 msgstr ""
 
 msgid "Paste clipboard"
@@ -10329,9 +10799,6 @@ msgid "Calibration help"
 msgstr ""
 
 msgid "View"
-msgstr ""
-
-msgid "Help"
 msgstr ""
 
 msgid "&Open G-code"
@@ -10469,6 +10936,10 @@ msgid ""
 msgstr ""
 
 msgid "Synchronization"
+msgstr ""
+
+#, possible-c-format, possible-boost-format
+msgid "Parameter name: %s"
 msgstr ""
 
 msgid "All Files"
@@ -10758,6 +11229,12 @@ msgstr ""
 
 #, possible-c-format, possible-boost-format
 msgid "%s info"
+msgstr ""
+
+msgid "Adjust Model"
+msgstr ""
+
+msgid "Continue Export (Not Recommended)"
 msgstr ""
 
 #, possible-c-format, possible-boost-format
@@ -11112,6 +11589,9 @@ msgstr ""
 msgid "Error loading shaders"
 msgstr ""
 
+msgid "Advance"
+msgstr ""
+
 msgid "Advance parameters"
 msgstr ""
 
@@ -11119,12 +11599,6 @@ msgid "Compare presets"
 msgstr ""
 
 msgid "View all object's settings"
-msgstr ""
-
-msgid "User presets"
-msgstr ""
-
-msgid "System presets"
 msgstr ""
 
 msgid "Project presets"
@@ -11519,10 +11993,13 @@ msgstr ""
 msgid "Another export job is running."
 msgstr ""
 
-msgid "Unable to replace with more than one volume"
+msgid "The selected file doesn't contain any object or Error during replace"
 msgstr ""
 
 msgid "Error during replace"
+msgstr ""
+
+msgid "Unable to replace with more than one volume"
 msgstr ""
 
 msgid "Replace from:"
@@ -11555,6 +12032,30 @@ msgstr ""
 msgid "There are warnings after slicing models:"
 msgstr ""
 
+msgid ""
+"has floating regions. Please re-orient the object or enable support "
+"generation."
+msgstr ""
+
+msgid ""
+"appears to have floating areas, which may cause print failure.\n"
+"Please reorient the model or enable supports.\n"
+"\n"
+" "
+msgstr ""
+
+msgid ""
+"has bridge overhangs. Please re-orient the object or enable support "
+"generation."
+msgstr ""
+
+msgid ""
+"appears to have bridge overhangs, which may cause print failure.\n"
+"Please reorient the model or enable supports.\n"
+"\n"
+" "
+msgstr ""
+
 msgid "warnings"
 msgstr ""
 
@@ -11569,6 +12070,11 @@ msgid "Slicing Plate %d"
 msgstr ""
 
 msgid "Please resolve the slicing errors and publish again."
+msgstr ""
+
+msgid ""
+"This printer does not support the \"Send to Multi-device\" function. Thank "
+"you for your understanding~"
 msgstr ""
 
 msgid ""
@@ -11601,7 +12107,7 @@ msgstr ""
 msgid "Save project"
 msgstr ""
 
-msgid "Saved successfully. Open Local Folder"
+msgid "Exporting."
 msgstr ""
 
 msgid "Importing Model"
@@ -11663,6 +12169,9 @@ msgstr ""
 msgid "Import geometry only"
 msgstr ""
 
+msgid "Please import multiple files with the same suffix."
+msgstr ""
+
 msgid "Only one G-code file can be opened at the same time."
 msgstr ""
 
@@ -11706,8 +12215,8 @@ msgid ""
 msgstr ""
 
 msgid ""
-"Unable to perform boolean operation on model meshes. Only positive parts "
-"will be kept. You may fix the meshes and try agian."
+"Unable to perform boolean operation on model meshes. You may fix the meshes "
+"and try again."
 msgstr ""
 
 #, possible-boost-format
@@ -11726,6 +12235,14 @@ msgstr ""
 msgid "Reason: \"%1%\" and another part have no intersection."
 msgstr ""
 
+msgid "Saved successfully. Open Local Folder"
+msgstr ""
+
+msgid ""
+"Negative parts detected. Would you like to perform mesh boolean before "
+"exporting?"
+msgstr ""
+
 msgid ""
 "Are you sure you want to store original SVGs with their local paths into the "
 "3MF file?\n"
@@ -11733,6 +12250,18 @@ msgid ""
 msgstr ""
 
 msgid "Private protection"
+msgstr ""
+
+msgid ""
+"Generic filament preset detected. Print quality may vary between brands. We "
+"recommend fine-tuning the settings for your actual filament or using "
+"Creality filament."
+msgstr ""
+
+msgid ""
+"Third-party filament preset detected. These settings are provided by our "
+"partners. Please adjust them according to your actual filament or consult "
+"the filament manufacturer for detailed guidance."
 msgstr ""
 
 msgid "Is the printer ready? Is the print sheet in place, empty and clean?"
@@ -11818,6 +12347,9 @@ msgid ""
 "to non zero."
 msgstr ""
 
+msgid "support_manual_draw_hint"
+msgstr ""
+
 msgid "Other layer filament sequence"
 msgstr ""
 
@@ -11827,6 +12359,9 @@ msgstr ""
 msgid "Plate name"
 msgstr ""
 
+msgid "Same as Global Plate Type"
+msgstr ""
+
 msgid "Same as Global Print Sequence"
 msgstr ""
 
@@ -11834,9 +12369,6 @@ msgid "Same as Global"
 msgstr ""
 
 msgid "Disable"
-msgstr ""
-
-msgid "Same as Global Plate Type"
 msgstr ""
 
 msgid "Same as Global Bed Type"
@@ -11881,6 +12413,12 @@ msgstr ""
 msgid "Enable LOD"
 msgstr ""
 
+msgid ""
+"Please note that the Gcode show will undergo certain changes at small pixels "
+"case.\n"
+"Enabled LOD requires application restart."
+msgstr ""
+
 msgid "Downloads"
 msgstr ""
 
@@ -11909,9 +12447,6 @@ msgid "Professional"
 msgstr ""
 
 msgid "Asia-Pacific"
-msgstr ""
-
-msgid "China"
 msgstr ""
 
 msgid "Chinese Mainland"
@@ -11947,12 +12482,18 @@ msgstr ""
 msgid "User Experience Program"
 msgstr ""
 
-msgid "Improve rendering performance by lod"
+msgid "Display Step Import Setting Dialog"
+msgstr ""
+
+msgid "Improve preparation rendering performance by lod"
 msgstr ""
 
 msgid ""
 "Improved rendering performance under the scene of multiple plates and many "
 "models."
+msgstr ""
+
+msgid "Improve preview rendering performance by lod"
 msgstr ""
 
 msgid "Clear my choice on the unsaved presets."
@@ -12069,19 +12610,10 @@ msgstr ""
 msgid "Edit preset"
 msgstr ""
 
-msgid "Project-inside presets"
-msgstr ""
-
 msgid "Add/Remove filaments"
 msgstr ""
 
 msgid "Add/Remove materials"
-msgstr ""
-
-msgid "Select/Remove printers(system presets)"
-msgstr ""
-
-msgid "Create printer"
 msgstr ""
 
 msgid "The selected preset is null!"
@@ -12293,10 +12825,21 @@ msgstr ""
 msgid "New version of Creality Print"
 msgstr ""
 
+msgid "Open in browser"
+msgstr ""
+
 msgid "Skip this Version"
 msgstr ""
 
 msgid "Check for stable updates only"
+msgstr ""
+
+#, possible-c-format, possible-boost-format
+msgid "New version found: %s, it's recommended to update"
+msgstr ""
+
+#, possible-c-format, possible-boost-format
+msgid "Current version: %s"
 msgstr ""
 
 msgid "Done"
@@ -12842,6 +13385,35 @@ msgid ""
 "to give a positive rating(4 or 5stars)."
 msgstr ""
 
+msgid "Step file import parameters"
+msgstr ""
+
+msgid ""
+"Smaller linear and angular deflections result in higher-quality "
+"transformations but increase the processing time."
+msgstr ""
+
+msgid "Linear Deflection"
+msgstr ""
+
+msgid "Please input a valid value (0.001 <= linear deflection <= 0.1)"
+msgstr ""
+
+msgid "Angle Deflection"
+msgstr ""
+
+msgid "Please input a valid value (0.01 <= angle deflection <= 1.0)"
+msgstr ""
+
+msgid "Split compound and compsolid into multiple objects"
+msgstr ""
+
+msgid "Number of triangular facets"
+msgstr ""
+
+msgid "Calculating, please wait..."
+msgstr ""
+
 msgid "Move over surface"
 msgstr ""
 
@@ -12889,9 +13461,6 @@ msgstr ""
 msgid "Search in preset"
 msgstr ""
 
-msgid "Advance"
-msgstr ""
-
 msgid "Click to reset all settings to the last saved preset."
 msgstr ""
 
@@ -12927,10 +13496,49 @@ msgid ""
 msgstr ""
 
 msgid ""
+"We have added an experimental wall sequence called \"adaptive outer wall/"
+"inner wall\" , which automatically switches the wall printing order when "
+"overhangs are detected.\n"
+"We recommend using it together with \"Slow Down for Overhangs\" and "
+"\"Classic Mode\" enabled, and \"Slow Down for Curled Perimeters\" disabled."
+msgstr ""
+
+msgid ""
+"Non-soluble support materials are not recommended for support base. \n"
+"Are you sure to use them for support base? \n"
+msgstr ""
+
+msgid ""
+"When using PLA to support TPU, We recommend the following settings:\n"
+"0 top z distance, 0 interface spacing, 0 support/object xy distance, "
+"interlaced rectilinear pattern, disable \n"
+"independent support layer height and use PLA for both support interface and "
+"support base"
+msgstr ""
+
+msgid ""
+"When using soluble material for the support, We recommend the following "
+"settings:\n"
+"0 top z distance, 0 interface spacing, 0 support/object xy distance, "
+"interlaced rectilinear pattern, disable \n"
+"independent support layer height and use soluble materials for both support "
+"interface and support base"
+msgstr ""
+
+msgid ""
 "When using support material for the support interface, We recommend the "
 "following settings:\n"
 "0 top z distance, 0 interface spacing, concentric pattern and disable "
 "independent support layer height"
+msgstr ""
+
+msgid ""
+"When using soluble material for the support interface, We recommend the "
+"following settings:\n"
+"0 top z distance, 0 interface spacing, 0 support/object xy distance, "
+"interlaced rectilinear pattern, disable \n"
+"independent support layer height and use soluble materials for both support "
+"interface and support base"
 msgstr ""
 
 msgid ""
@@ -12997,9 +13605,6 @@ msgstr ""
 msgid "Bridging"
 msgstr ""
 
-msgid "Overhangs"
-msgstr ""
-
 msgid "Walls"
 msgstr ""
 
@@ -13055,6 +13660,9 @@ msgid "Notes"
 msgstr ""
 
 msgid "sparse_infill_density_100"
+msgstr ""
+
+msgid "Set"
 msgstr ""
 
 #, possible-c-format, possible-boost-format
@@ -13275,9 +13883,6 @@ msgstr[1] ""
 msgid "Are you sure to %1% the selected preset?"
 msgstr ""
 
-msgid "Set"
-msgstr ""
-
 msgid "Delete this preset1"
 msgstr ""
 
@@ -13314,10 +13919,6 @@ msgstr ""
 msgid "Old Value"
 msgstr ""
 
-msgid "We apologize for the inconvenience caused by this unexpected software issue. If it's convenient for you, please leave your "
-           "email or other contact information so we can promptly update you on the progress of resolving the issue."
-msgstr ""
-
 msgid "New Value"
 msgstr ""
 
@@ -13325,9 +13926,6 @@ msgid "Transfer"
 msgstr ""
 
 msgid "Don't save"
-msgstr ""
-
-msgid "Discard"
 msgstr ""
 
 msgid "Click the right mouse button to display the full text."
@@ -13528,6 +14126,9 @@ msgstr ""
 msgid "Setup Wizard"
 msgstr ""
 
+msgid "Forward"
+msgstr ""
+
 msgid "Bambu Network plug-in not detected."
 msgstr ""
 
@@ -13700,16 +14301,10 @@ msgstr ""
 msgid "New network plug-in available."
 msgstr ""
 
-msgid "Details"
-msgstr ""
-
 msgid "New printer config available."
 msgstr ""
 
 msgid "Undo integration failed."
-msgstr ""
-
-msgid "Exporting."
 msgstr ""
 
 msgid "Software has New version."
@@ -13791,9 +14386,6 @@ msgid "Select all connectors"
 msgstr ""
 
 msgid "Non-manifold edges be caused by cut tool, do you want to fix it now?"
-msgstr ""
-
-msgid "Non-manifold edges be caused by drill tool, do you want to fix it now?"
 msgstr ""
 
 msgid "Connector"
@@ -14667,9 +15259,6 @@ msgstr ""
 msgid "Bucket fill"
 msgstr ""
 
-msgid "Height range"
-msgstr ""
-
 msgid "Alt + Shift + Enter"
 msgstr ""
 
@@ -14723,9 +15312,6 @@ msgid "Enforce seam"
 msgstr ""
 
 msgid "Block seam"
-msgstr ""
-
-msgid "Seam painting"
 msgstr ""
 
 msgid "Remove selection"
@@ -15116,6 +15702,11 @@ msgid "No arrangable objects are selected."
 msgstr ""
 
 msgid ""
+"The following plates are skipped due to different arranging settings from "
+"global:"
+msgstr ""
+
+msgid ""
 "This plate is locked,\n"
 "We can not do auto-arrange on this plate."
 msgstr ""
@@ -15126,18 +15717,11 @@ msgstr ""
 msgid "Arranging"
 msgstr ""
 
-msgid "Arranging canceled."
-msgstr ""
-
-msgid ""
-"Arranging is done but there are unpacked items. Reduce spacing and try again."
-msgstr ""
-
-msgid "Arranging done."
-msgstr ""
-
 msgid ""
 "Arrange failed. Found some exceptions when processing object geometries."
+msgstr ""
+
+msgid "The UnPrintable Objects are placed above Tray 1."
 msgstr ""
 
 #, possible-c-format, possible-boost-format
@@ -15145,6 +15729,9 @@ msgid ""
 "Arrangement ignored the following objects which can't fit into a single "
 "bed:\n"
 "%s"
+msgstr ""
+
+msgid "An unexpected error occured"
 msgstr ""
 
 msgid "Logging in"
@@ -15157,6 +15744,12 @@ msgid "Please check the printer network connection."
 msgstr ""
 
 msgid "Add Emboss text object"
+msgstr ""
+
+msgid "Bad input data for EmbossUpdateJob."
+msgstr ""
+
+msgid "Created text volume is empty. Change text or font."
 msgstr ""
 
 #. TRN: This is the title of the action appearing in undo/redo stack.
@@ -15345,9 +15938,6 @@ msgstr ""
 msgid "Install failed"
 msgstr ""
 
-msgid "An unexpected error occured"
-msgstr ""
-
 msgid "Best surface quality"
 msgstr ""
 
@@ -15418,6 +16008,9 @@ msgstr ""
 msgid "EXT"
 msgstr ""
 
+msgid "upload 3mf to crealitycloud"
+msgstr ""
+
 msgid "Upload type"
 msgstr ""
 
@@ -15445,6 +16038,9 @@ msgstr ""
 msgid "Printer is busy, can send gcode only"
 msgstr ""
 
+msgid "Uploading to Creality Cloud..."
+msgstr ""
+
 msgid "Upload fail"
 msgstr ""
 
@@ -15459,6 +16055,16 @@ msgid "Upload failed(%s): %s"
 msgstr ""
 
 msgid "Please Select"
+msgstr ""
+
+msgid ""
+"Out of memory. Please save the current project and exit the application."
+msgstr ""
+
+msgid "Out of memory"
+msgstr ""
+
+msgid "An error occurred: Failed to generate plate data."
 msgstr ""
 
 msgid "Send to Lan Printer"
@@ -15480,9 +16086,6 @@ msgid "Load"
 msgstr ""
 
 msgid "Ext Spool"
-msgstr ""
-
-msgid "Tips"
 msgstr ""
 
 msgid "Guide"
@@ -15635,6 +16238,9 @@ msgstr ""
 msgid "Failed to initialize the WinRT library."
 msgstr ""
 
+msgid "Repair failed."
+msgstr ""
+
 msgid "Exporting objects"
 msgstr ""
 
@@ -15644,10 +16250,22 @@ msgstr ""
 msgid "Repairing object by Windows service"
 msgstr ""
 
-msgid "Repair failed."
+msgid "Loading repaired objects"
 msgstr ""
 
-msgid "Loading repaired objects"
+msgid "Failed to get buffer factory."
+msgstr ""
+
+msgid "Failed to open destination file."
+msgstr ""
+
+msgid "Failed to create buffer."
+msgstr ""
+
+msgid "Failed to access buffer memory."
+msgstr ""
+
+msgid "Failed to obtain buffer pointer."
 msgstr ""
 
 msgid "Exporting 3mf file failed"
@@ -15745,9 +16363,6 @@ msgid "Connection to PrusaLink works correctly."
 msgstr ""
 
 msgid "Could not connect to PrusaLink"
-msgstr ""
-
-msgid "This project file is not from Creality Print. Please select the printer preset you want to use for slicing."
 msgstr ""
 
 msgid "Storages found"
@@ -15978,51 +16593,4 @@ msgid ""
 "Compared with the default profile of a 0.8 mm nozzle, it has a smaller layer "
 "height, and results in less but still apparent layer lines and slightly "
 "higher printing quality, but longer printing time in some printing cases."
-msgstr ""
-
-msgid "Adjust Model"
-msgstr ""
-
-msgid "Continue Export (Not Recommended)"
-msgstr ""
-
-msgid "has floating regions. Please re-orient the object or enable support generation."
-msgstr ""
-
-msgid "has bridge overhangs. Please re-orient the object or enable support generation."
-msgstr ""
-
-msgid "appears to have floating areas, which may cause print failure.\nPlease reorient the model or enable supports.\n\n "
-msgstr ""
-
-msgid "appears to have bridge overhangs, which may cause print failure.\nPlease reorient the model or enable supports.\n\n "
-msgstr ""
-
-msgid "Weight range"
-msgstr ""
-
-msgid "Print speed"
-msgstr ""
-
-msgid "Anchor solid infill by X mm"
-msgstr ""
-
-msgid ""
-"This parameter grows the top/bottom/solid layers by the specified mm to anchor them into the sparse infill and support the perimeters above. "
-"Put 0 to deactivate it. Can be a % of the width of the perimeters."
-msgstr ""
-
-msgid "Current version: %s"
-msgstr "当前软件版本：%s"
-
-msgid "Check out the release notes to learn more."
-msgstr "前往更新日志了解更多"
-
-msgid "Out of memory. Please save the current project and exit the application."
-msgstr ""
-
-msgid "Out of memory"
-msgstr ""
-
-msgid "An error occurred: Failed to generate plate data."
 msgstr ""

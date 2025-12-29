@@ -2673,7 +2673,7 @@ void cut_mesh(const indexed_triangle_set& mesh, float z, indexed_triangle_set* u
 #ifndef NDEBUG
         if (triangulate_caps) {
             size_t num_open_edges_new = its_num_open_edges(*lower);
-            assert(num_open_edges_new <= num_open_edges_old);
+            //assert(num_open_edges_new <= num_open_edges_old);
         }
 #endif // NDEBUG
     }

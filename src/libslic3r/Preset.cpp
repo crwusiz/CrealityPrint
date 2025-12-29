@@ -844,7 +844,23 @@ static std::vector<std::string> s_Preset_print_options {
     "tpms_end_infill_density",
     "tpms_gradual_direction",
     "ai_infill",
+    "skin_infill_line_width",
+    "skeleton_infill_line_width",
+    "fill_multiline",
+    "infill_overhang_angle",
+    "infill_shift_step",
+    "infill_rotate_step",
+    "lateral_lattice_angle_1",
+    "lateral_lattice_angle_2",
+    "symmetric_infill_y_axis",
+    "skeleton_infill_density",
+    "infill_lock_depth",
+    "skin_infill_depth",
+    "skin_infill_density",
+    "align_infill_direction_to_model",
     "sparse_infill_pattern",
+    "locked_skin_infill_pattern",
+    "locked_skeleton_infill_pattern",
     "top_surface_pattern",
     "bottom_surface_pattern",
     "infill_direction", "solid_infill_direction", "rotate_solid_infill_direction",  "counterbore_hole_bridging",
@@ -871,7 +887,7 @@ static std::vector<std::string> s_Preset_print_options {
     "inner_wall_line_width", "outer_wall_line_width", "sparse_infill_line_width", "internal_solid_infill_line_width", "external_infill_margin",
     "top_surface_line_width", "support_line_width", "infill_wall_overlap","top_bottom_infill_wall_overlap", "bridge_flow", "internal_bridge_flow",
     "elefant_foot_compensation", "elefant_foot_compensation_layers", "xy_contour_compensation", "xy_hole_compensation", "resolution", "enable_prime_tower",
-    "prime_tower_width", "prime_tower_brim_width", "prime_volume", "prime_tower_enhance_type", 
+    "prime_tower_width","prime_tower_rib_wall","prime_tower_skip_points","prime_tower_enable_framework", "prime_tower_brim_width","prime_volume","prime_tower_enhance_type", 
     "wipe_tower_no_sparse_layers", "compatible_printers", "compatible_printers_condition", "inherits",
     "flush_into_infill", "flush_into_objects", "flush_into_support",
      "tree_support_branch_angle", "tree_support_angle_slow", "tree_support_wall_count", "tree_support_wall_count_tree", "tree_support_top_rate", "tree_support_branch_distance", "tree_support_tip_diameter",
@@ -883,16 +899,17 @@ static std::vector<std::string> s_Preset_print_options {
      "timelapse_type",
      "wall_generator", "wall_transition_length", "wall_transition_filter_deviation", "wall_transition_angle",
      "wall_distribution_count", "min_feature_size", "min_bead_width", "post_process", "min_length_factor",
-     "small_perimeter_speed", "small_perimeter_threshold","bridge_angle", "filter_out_gap_fill", "travel_acceleration","inner_wall_acceleration", "min_width_top_surface",
+     "small_perimeter_speed", "small_perimeter_threshold", "z_direction_outwall_speed_continuous",
+     "bridge_angle", "filter_out_gap_fill", "travel_acceleration","inner_wall_acceleration", "min_width_top_surface",
      "default_jerk", "outer_wall_jerk", "inner_wall_jerk", "infill_jerk", "top_surface_jerk", "initial_layer_jerk","travel_jerk",
      "top_solid_infill_flow_ratio","bottom_solid_infill_flow_ratio","only_one_wall_first_layer", "print_flow_ratio", "seam_gap",
-     "role_based_wipe_speed", "wipe_speed", "accel_to_decel_enable", "accel_to_decel_factor", "wipe_on_loops", "wipe_before_external_loop",
+     "role_based_wipe_speed", "wipe_speed", "accel_to_decel_enable","travel_short_distance_acceleration", "travel_short_distance_threshold","accel_to_decel_factor", "wipe_on_loops", "wipe_before_external_loop",
      "bridge_density", "precise_outer_wall", "overhang_speed_classic", "bridge_acceleration",
      "sparse_infill_acceleration", "internal_solid_infill_acceleration", "tree_support_adaptive_layer_height", "tree_support_auto_brim", 
      "tree_support_brim_width", "gcode_comments", "gcode_label_objects",
      "initial_layer_travel_speed", "exclude_object", "slow_down_layers", "infill_anchor", "infill_anchor_max","initial_layer_min_bead_width",
      "make_overhang_printable", "make_overhang_printable_angle", "make_overhang_printable_hole_size" ,"notes",
-     "wipe_tower_cone_angle", "wipe_tower_extra_spacing","wipe_tower_max_purge_speed", "wipe_tower_filament", "wiping_volumes_extruders","wipe_tower_bridging","wipe_tower_extra_flow", "single_extruder_multi_material_priming",
+     "wipe_tower_cone_angle", "wipe_tower_extra_spacing","wipe_tower_max_purge_speed", "wipe_tower_filament", "wiping_volumes_extruders","wipe_tower_bridging","wipe_tower_extra_flow", "single_extruder_multi_material_priming","purge_in_prime_tower",
      "wipe_tower_rotation_angle", "tree_support_branch_distance_organic", "tree_support_branch_diameter_organic", "tree_support_branch_angle_organic",
      "hole_to_polyhole", "hole_to_polyhole_threshold", "hole_to_polyhole_twisted", "mmu_segmented_region_max_width", "mmu_segmented_region_interlocking_depth",
      "small_area_infill_flow_compensation", "small_area_infill_flow_compensation_model",
@@ -901,15 +918,15 @@ static std::vector<std::string> s_Preset_print_options {
 };
 
 static std::vector<std::string> s_Preset_filament_options {
-    /*"filament_colour", */ "default_filament_colour","required_nozzle_HRC","filament_diameter", "pellet_flow_coefficient", "filament_type", "filament_soluble", "filament_is_support",
-    "filament_max_volumetric_speed",
+    /*"filament_colour", */ "default_filament_colour","required_nozzle_HRC","filament_diameter", "pellet_flow_coefficient", "filament_type", "filament_soluble", "filament_is_support", "filament_max_volumetric_speed", "filament_adhesiveness_category",
     "filament_flow_ratio", "filament_density", "filament_cost", "filament_minimal_purge_on_wipe_tower",
     "nozzle_temperature", "nozzle_temperature_initial_layer","material_flow_dependent_temperature","material_flow_temp_graph",
     // BBS
     "cool_plate_temp", "eng_plate_temp", "hot_plate_temp", "textured_plate_temp", "cool_plate_temp_initial_layer", "eng_plate_temp_initial_layer", "hot_plate_temp_initial_layer","textured_plate_temp_initial_layer", "epoxy_resin_plate_temp","epoxy_resin_plate_temp_initial_layer", "customized_plate_temp","customized_plate_temp_initial_layer",
     // "bed_type",
     //BBS:temperature_vitrification
-    "temperature_vitrification", "reduce_fan_stop_start_freq", "dont_slow_down_outer_wall", "slow_down_for_layer_cooling", "fan_min_speed", "smart_cooling_zones",
+    "temperature_vitrification", "reduce_fan_stop_start_freq", "slow_down_for_layer_cooling", "fan_min_speed",
+    "cooling_slowdown_logic", "cooling_perimeter_transition_distance",
     "fan_max_speed", "enable_overhang_bridge_fan", "overhang_fan_speed", "overhang_fan_threshold", "close_fan_the_first_x_layers", "full_fan_speed_layer", "fan_cooling_layer_time", "slow_down_layer_time", "slow_down_min_speed",
     "filament_start_gcode", "filament_end_gcode",
     //exhaust fan control
@@ -950,7 +967,7 @@ static std::vector<std::string> s_Preset_printer_options {
     "default_print_profile", "inherits",
     "silent_mode","curr_bed_type",
     // Creality
-    "color_bed_exclude_area","machine_ptc_exist",
+    "color_bed_exclude_area", "machine_ptc_exist", "machine_is_belt", "belt_Z_offset",
     // BBS
     "scan_first_layer", "machine_load_filament_time", "machine_unload_filament_time", "machine_tool_change_time","time_cost", "machine_pause_gcode", "template_custom_gcode",
     "nozzle_type", "nozzle_hrc","auxiliary_fan", "nozzle_volume","upward_compatible_machine", "z_hop_types","travel_slope", "retract_lift_enforce","support_chamber_temp_control","support_air_filtration","printer_structure",
@@ -2927,7 +2944,7 @@ inline t_config_option_keys deep_diff(const ConfigBase &config_this, const Confi
 
 static constexpr const std::initializer_list<const char*> optional_keys { "compatible_prints", "compatible_printers" };
 //BBS: skip these keys for dirty check
-static std::set<std::string> skipped_in_dirty = {"printer_settings_id", "print_settings_id", "filament_settings_id", "inherits", "curr_bed_type"};
+static std::set<std::string> skipped_in_dirty = {"printer_settings_id", "print_settings_id", "filament_settings_id", "inherits", "curr_bed_type","belt_Z_offset"};
 
 bool PresetCollection::is_dirty(const Preset *edited, const Preset *reference)
 {
@@ -3850,29 +3867,39 @@ namespace PresetUtils {
         std::string out;
         const VendorProfile::PrinterModel* pm = PresetUtils::system_printer_model(preset);
         if (pm != nullptr && !pm->bed_model.empty()) {
-            out = Slic3r::data_dir() + "/vendor/" + preset.vendor->id + "/";
-            // Special-case Creality F022 to use its dedicated buildplate model.
-            if (preset.vendor->id == "Creality") {
-                // Prefer explicit F022 model when available; otherwise keep legacy K1 default.
-                if (pm->name == "Creality F022" || pm->id == "Creality F022" || pm->bed_model == "Creality F022_buildplate_model.stl")
-                    out += "Creality F022_buildplate_model.stl";
-                else
-                    out += "creality_k1_buildplate_model.stl";
-            } else {
-                out += pm->bed_model;
-            }
-            if (!boost::filesystem::exists(boost::filesystem::path(out))) {
-                out = Slic3r::resources_dir() + "/profiles/" + preset.vendor->id + "/";
-                if (preset.vendor->id == "Creality") {
-                    if (pm->name == "Creality F022" || pm->id == "Creality F022" || pm->bed_model == "Creality F022_buildplate_model.stl")
-                        out += "Creality F022_buildplate_model.stl";
-                    else
-                        out += "creality_k1_buildplate_model.stl";
-                } else {
-                    out += pm->bed_model;
-                }
-            }
+            const auto bed_model_filename = [&]() -> std::string {
+                if (preset.vendor->id != "Creality")
+                    return pm->bed_model;
 
+                auto matches_id = [&](const char* candidate) {
+                    return candidate != nullptr && (
+                        pm->name == candidate || pm->id == candidate || pm->model_id == candidate);
+                };
+                auto matches_model = [&](const char* file, const char* id1 = nullptr, const char* id2 = nullptr,
+                                         const char* id3 = nullptr, const char* id4 = nullptr) {
+                    if (pm->bed_model == file)
+                        return true;
+                    return matches_id(id1) || matches_id(id2) || matches_id(id3) || matches_id(id4);
+                };
+
+                // Prefer explicit dedicated bed models when available; otherwise keep legacy K1 default.
+                if(pm->name.find("SPARKX") != std::string::npos || pm->id.find("SPARKX") != std::string::npos)
+                    return "Creality F022_buildplate_model.stl";
+                if (matches_model("Creality F022_buildplate_model.stl", "Creality F022", "Creality_F022"))
+                    return "Creality F022_buildplate_model.stl";
+                if (matches_model("Creality K2_buildplate_model.stl", "Creality K2", "Creality_K2"))
+                    return "Creality K2_buildplate_model.stl";
+                if (matches_model("Creality K2 Pro_buildplate_model.stl", "Creality K2 Pro", "Creality_K2_Pro"))
+                    return "Creality K2 Pro_buildplate_model.stl";
+                if (matches_model("Creality K2 Plus_buildplate_model.stl", "Creality K2 Plus", "Creality_K2_Plus"))
+                    return "Creality K2 Plus_buildplate_model.stl";
+                return "creality_k1_buildplate_model.stl";
+            }();
+
+            out = Slic3r::data_dir() + "/vendor/" + preset.vendor->id + "/" + bed_model_filename;
+            if (!boost::filesystem::exists(boost::filesystem::path(out))) {
+                out = Slic3r::resources_dir() + "/profiles/" + preset.vendor->id + "/" + bed_model_filename;
+            }
         }
         return out;
     }
@@ -3881,28 +3908,12 @@ namespace PresetUtils {
     {
         std::string out;
         const VendorProfile::PrinterModel* pm = PresetUtils::system_printer_model(preset);
-        if (pm != nullptr) {
+        if (pm != nullptr && !pm->bed_texture.empty()) {
             out = Slic3r::data_dir() + "/vendor/" + preset.vendor->id + "/";
-            // Creality: use smooth_F022.png for F022, smooth.png for others;
-            // for non-Creality, use pm->bed_texture when provided.
-            if (preset.vendor->id == "Creality") {
-                if (pm->name == "Creality F022" || pm->id == "Creality F022" || pm->bed_texture == "smooth_F022.png" || pm->bed_texture == "texture_F022.png")
-                    out += "smooth_F022.png";
-                else
-                    out += "smooth.png";
-            } else if (!pm->bed_texture.empty()) {
-                out += pm->bed_texture;
-            }
+            out += (preset.vendor->id == "Creality") ? "creality_k1_buildplate_texture.png" : pm->bed_texture;
             if (!boost::filesystem::exists(boost::filesystem::path(out))) {
                 out = Slic3r::resources_dir() + "/profiles/" + preset.vendor->id + "/";
-                if (preset.vendor->id == "Creality") {
-                    if (pm->name == "Creality F022" || pm->id == "Creality F022" || pm->bed_texture == "smooth_F022.png" || pm->bed_texture == "texture_F022.png")
-                        out += "smooth_F022.png";
-                    else
-                        out += "smooth.png";
-                } else if (!pm->bed_texture.empty()) {
-                    out += pm->bed_texture;
-                }
+                out += (preset.vendor->id == "Creality") ? "creality_k1_buildplate_texture.png" : pm->bed_texture;
             }
         }
         return out;

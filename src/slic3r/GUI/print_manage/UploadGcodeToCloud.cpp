@@ -1042,7 +1042,16 @@ void UploadGcodeToCloudDialog::on_upload_3mf(wxCommandEvent& event)
 
             std::string target_name = std::string(m_rename_text->GetLabelText().utf8_str().data());
             std::string target_path = "model/slice/" + get_file_md5(m_ssGCodeFilePath) + ".gcode.gz";
-            nRet                    = m_upload_file.uploadFileToAliyun(m_ssGCodeFilePath, target_path,target_name);
+
+            // show centered progress dialog during upload to Creality Cloud
+            ProgressDialog progress_dlg(_L("Upload"), _L("Uploading to Creality Cloud..."), 100,
+                                        wxGetApp().mainframe, wxPD_APP_MODAL | wxPD_AUTO_HIDE);
+            m_upload_file.setProcessCallback([&progress_dlg](int progress, double) {
+                progress_dlg.Update(progress);
+            });
+
+            nRet = m_upload_file.uploadFileToAliyun(m_ssGCodeFilePath, target_path, target_name);
+            m_upload_file.setProcessCallback(nullptr);
             if (nRet != 0)
                 break;
             nRet = m_upload_file.uploadGcodeToCXCloud(target_name, target_path);

@@ -14,7 +14,7 @@ class FillCross : public Fill
 {
 public:
     ~FillCross() override {}
-
+    bool is_self_crossing() override { return false; }
 	void set_cross_fill_provider(BoundingBox& abox, const Point& offset, InfillPattern _pattern, const float infill_line_distance, const float sparse_infill_line_width);
 protected:
     Fill* clone() const override { return new FillCross(*this); };

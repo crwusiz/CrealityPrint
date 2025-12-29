@@ -253,6 +253,8 @@ void BackgroundSlicingProcess::process_fff()
 		m_fff_print->export_gcode(m_temp_output_path, m_gcode_result, [this](const ThumbnailsParams& params) {
 			return this->render_thumbnails(params);
 		});
+
+
 		if (m_fff_print->is_BBL_printer())
 			run_post_process_scripts(m_temp_output_path, false, "File", m_temp_output_path, m_fff_print->full_print_config());
 

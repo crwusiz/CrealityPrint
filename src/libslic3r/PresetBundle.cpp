@@ -42,6 +42,7 @@ static std::vector<std::string> s_project_options {
     //"wipe_tower_rotation_angle",
     "curr_bed_type",
     "flush_multiplier",
+    "belt_Z_offset"
 };
 
 //BBS: add BBL as default
@@ -540,7 +541,7 @@ std::string PresetBundle::get_texture_for_printer_model(std::string model_name)
 
     // Override for Creality: F022 uses smooth_F022.png, others use smooth.png
     if (!vendor_name.empty() && vendor_name == "Creality") {
-        if (model_name == "Creality F022" || texture_name == "smooth_F022.png" || texture_name == "texture_F022.png")
+        if (model_name == "SPARKX i7")
             texture_name = "smooth_F022.png";
         else
             texture_name = "smooth.png";
@@ -574,13 +575,10 @@ std::string PresetBundle::get_stl_model_for_printer_model(std::string model_name
         }
     }
 
-    if (vendor_name.compare("Creality") == 0)
-    {
-        // Special-case F022 to use its dedicated model; others keep legacy K1 default.
-        if (model_name == "Creality F022" || stl_name == "Creality F022_buildplate_model.stl")
-            stl_name = "Creality F022_buildplate_model.stl";
-        else
+    if (!boost::filesystem::exists(boost::filesystem::path(Slic3r::resources_dir() + "/profiles/" + vendor_name + "/" + stl_name))) {
+        if (vendor_name.compare("Creality") == 0) {
             stl_name = "creality_k1_buildplate_model.stl";
+        }
     }
 
     if (!stl_name.empty())
@@ -2967,7 +2965,8 @@ ConfigSubstitutions PresetBundle::load_config_file(const std::string &path, Forw
 
 // Load a config file from a boost property_tree. This is a private method called from load_config_file.
 // is_external == false on if called from ConfigWizard
-void PresetBundle::load_config_file_config(const std::string &name_or_path, bool is_external, DynamicPrintConfig &&config, Semver file_version, bool selected, bool is_custom_defined)
+void PresetBundle::load_config_file_config(const std::string &name_or_path, bool is_external, DynamicPrintConfig &&config, Semver file_version, 
+    bool selected, bool is_custom_defined, bool isCreality3mf)
 {
     PrinterTechnology printer_technology = Preset::printer_technology(config);
 
@@ -3088,6 +3087,25 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
         //BBS: add config related logs
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": load printer preset from printer_settings_id");
         load_preset(this->printers, num_filaments + 1, "printer_settings_id", printer_different_keys_set, std::string());
+                    Preset& printer_preset = this->printers.get_edited_preset();
+        if (!isCreality3mf) {
+            ConfigOptionString* printer_settings_id = config.opt<ConfigOptionString>("printer_settings_id");
+            if (printer_settings_id != nullptr) {
+                std::string ssPrinter = printer_settings_id->value;
+                std::string inherits  = "";
+                for (auto item : printers.get_presets()) {
+                    if (item.is_user() && item.name == ssPrinter) {
+                        inherits = item.inherits();
+                        break;
+                    }
+                }
+                
+                if (!inherits.empty()) {
+                    ConfigOptionString inherits_opt(inherits);
+                    printer_preset.config.optptr("inherits", true)->set(&inherits_opt);
+                }
+            }
+        }
 
         // 3) Now load the filaments. If there are multiple filament presets, split them and load them.
         auto old_filament_profile_names = config.option<ConfigOptionStrings>("filament_settings_id", true);
@@ -3096,8 +3114,8 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
         if (num_filaments <= 1) {
             // Split the "compatible_printers_condition" and "inherits" from the cummulative vectors to separate filament presets.
             inherits                      = inherits_values[1];
-            compatible_printers_condition = compatible_printers_condition_values[1];
-			compatible_prints_condition   = compatible_prints_condition_values.front();
+            compatible_printers_condition = compatible_printers_condition_values.size()>1?compatible_printers_condition_values[1]:"";
+			compatible_prints_condition   = compatible_prints_condition_values.size()>0?compatible_prints_condition_values.front():"";
 			Preset                *loaded = nullptr;
 
             //BBS: add different settings logic
@@ -3111,11 +3129,14 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
             //else
                 filament_different_keys_set.insert(ignore_settings_list.begin(), ignore_settings_list.end());
 
-            std::string filament_id = filament_ids[0];
+            std::string filament_id = filament_ids.size()>0?filament_ids[0]:"";
             //BBS: add config related logs
             BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": load single filament preset from filament_settings_id");
             if (is_external)
-                loaded = this->filaments.load_external_preset(name_or_path, name, old_filament_profile_names->values.front(), config, filament_different_keys_set, PresetCollection::LoadAndSelect::Always, file_version, filament_id).first;
+            {
+                const std::string old_filament_profile_name = old_filament_profile_names->values.size()>0?old_filament_profile_names->values.front():"";
+                loaded = this->filaments.load_external_preset(name_or_path, name, old_filament_profile_name, config, filament_different_keys_set, PresetCollection::LoadAndSelect::Always, file_version, filament_id).first;
+            }  
             else {
                 // called from Config Wizard.
 				loaded= &this->filaments.load_preset(this->filaments.path_from_name(name, inherits.empty()), name, config, true, file_version, is_custom_defined);
@@ -3149,12 +3170,24 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
             bool any_modified = false;
             //BBS: add config related logs
             BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": load multiple filament preset from filament_settings_id");
+            auto getInheritsValue = [&print_compatible_printers](const std::string& inherits_value) -> std::string {
+                size_t pos = inherits_value.find("@");
+                if (pos == std::string::npos) {
+                    return inherits_value;
+                }
+                std::string printer = inherits_value.substr(pos + 1, inherits_value.length() - pos - 1);
+                
+                if (std::find(print_compatible_printers.begin(), print_compatible_printers.end(), printer) != print_compatible_printers.end()) {
+                    return inherits_value;
+                }
+                return "";
+            };
             for (int i = (int)configs.size()-1; i >= 0; i--) {
                 DynamicPrintConfig &cfg = configs[i];
                 // Split the "compatible_printers_condition" and "inherits" from the cummulative vectors to separate filament presets.
                 cfg.opt_string("compatible_printers_condition", true) = compatible_printers_condition_values[i + 1];
                 cfg.opt_string("compatible_prints_condition",   true) = compatible_prints_condition_values[i];
-                cfg.opt_string("inherits", true)                      = inherits_values[i + 1];
+                cfg.opt_string("inherits", true) = getInheritsValue(inherits_values[i + 1]); //""; // inherits_values[i + 1];
 
                 //BBS: add different settings logic
                 std::vector<std::string> filament_different_keys_vector;

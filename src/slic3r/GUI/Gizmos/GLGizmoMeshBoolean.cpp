@@ -696,12 +696,7 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
     if (m_operation_mode == MeshBooleanOperation::Union)
     {
         if (operate_button(_L("Perform"), "##btn", enable_button)) {
-            TriangleMesh temp_src_mesh = m_src.mv->mesh();
-            temp_src_mesh.transform(m_src.trafo);
-            TriangleMesh temp_tool_mesh = m_tool.mv->mesh();
-            temp_tool_mesh.transform(m_tool.trafo);
-            std::vector<TriangleMesh> temp_mesh_resuls;
-            Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "UNION");
+            std::vector<TriangleMesh> temp_mesh_resuls = execute_mesh_boolean();
             if (temp_mesh_resuls.size() != 0) {
                 generate_new_volume(true, *temp_mesh_resuls.begin());
                 //wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
@@ -716,12 +711,7 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
     else if (m_operation_mode == MeshBooleanOperation::Difference) {
         m_imgui->bbl_checkbox(_L("Delete input"), m_diff_delete_input);
         if (operate_button(_L("Perform"), "##btn", enable_button)) {
-            TriangleMesh temp_src_mesh = m_src.mv->mesh();
-            temp_src_mesh.transform(m_src.trafo);
-            TriangleMesh temp_tool_mesh = m_tool.mv->mesh();
-            temp_tool_mesh.transform(m_tool.trafo);
-            std::vector<TriangleMesh> temp_mesh_resuls;
-            Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "A_NOT_B");
+            std::vector<TriangleMesh> temp_mesh_resuls = execute_mesh_boolean();
             if (temp_mesh_resuls.size() != 0) {
                 generate_new_volume(m_diff_delete_input, *temp_mesh_resuls.begin());
                 //wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
@@ -736,12 +726,7 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
     else if (m_operation_mode == MeshBooleanOperation::Intersection){
         m_imgui->bbl_checkbox(_L("Delete input"), m_inter_delete_input);
         if (operate_button(_L("Perform"), "##btn", enable_button)) {
-            TriangleMesh temp_src_mesh = m_src.mv->mesh();
-            temp_src_mesh.transform(m_src.trafo);
-            TriangleMesh temp_tool_mesh = m_tool.mv->mesh();
-            temp_tool_mesh.transform(m_tool.trafo);
-            std::vector<TriangleMesh> temp_mesh_resuls;
-            Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "INTERSECTION");
+            std::vector<TriangleMesh> temp_mesh_resuls = execute_mesh_boolean();
             if (temp_mesh_resuls.size() != 0) {
                 generate_new_volume(m_inter_delete_input, *temp_mesh_resuls.begin());
                 //wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
@@ -799,6 +784,64 @@ void GLGizmoMeshBoolean::on_load(cereal::BinaryInputArchive &ar)
 void GLGizmoMeshBoolean::on_save(cereal::BinaryOutputArchive &ar) const
 {
     ar(m_enable, m_operation_mode, m_selecting_state, m_diff_delete_input, m_inter_delete_input, m_src, m_tool);
+}
+
+std::vector<TriangleMesh> GLGizmoMeshBoolean::execute_mesh_boolean()
+{
+    std::string bool_op = "";
+    switch (m_operation_mode) {
+    case Slic3r::GUI::MeshBooleanOperation::Union: bool_op = "UNION"; break;
+    case Slic3r::GUI::MeshBooleanOperation::Difference: bool_op = "A_NOT_B"; break;
+    case Slic3r::GUI::MeshBooleanOperation::Intersection: bool_op = "INTERSECTION"; break;
+    default: return {};
+    }
+
+    TriangleMesh temp_src_mesh = m_src.mv->mesh();
+    temp_src_mesh.transform(m_src.trafo);
+    TriangleMesh temp_tool_mesh = m_tool.mv->mesh();
+    temp_tool_mesh.transform(m_tool.trafo);
+
+    auto fn_useMcut = [&]() -> bool {
+        std::vector<indexed_triangle_set> src_parts      = its_split(temp_src_mesh.its);
+        std::vector<indexed_triangle_set> cut_parts      = its_split(temp_tool_mesh.its);
+        bool                              hasNegativeVol = src_parts.size() > 1 &&
+                              std::any_of(src_parts.begin(), src_parts.end(), [](const auto& p) { return its_volume(p) < 0.f; });
+        hasNegativeVol = hasNegativeVol || (cut_parts.size() > 1 && std::any_of(cut_parts.begin(), cut_parts.end(),
+                                                                                [](const auto& p) { return its_volume(p) < 0.f; }));
+
+        if (hasNegativeVol)
+            return false;
+
+        if (m_operation_mode == MeshBooleanOperation::Union) {
+            if (src_parts.size() > cut_parts.size())
+                std::swap(src_parts, cut_parts);
+
+            return src_parts.size() == 1 && cut_parts.size() < 15;
+        }
+
+        return src_parts.size() + cut_parts.size() < 20;
+    };
+
+    std::vector<TriangleMesh> temp_mesh_resuls;
+    if (fn_useMcut()) {
+
+        if (!bool_op.empty())
+            Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, bool_op);
+
+    } else {
+        if (bool_op == "UNION") {
+            Slic3r::MeshBoolean::plus(temp_src_mesh, temp_tool_mesh);
+            temp_mesh_resuls = {temp_src_mesh};
+        } else if (bool_op == "A_NOT_B") {
+            Slic3r::MeshBoolean::minus(temp_src_mesh, temp_tool_mesh);
+            temp_mesh_resuls = {temp_src_mesh};
+        } else if (bool_op == "INTERSECTION") {
+            Slic3r::MeshBoolean::intersect(temp_src_mesh, temp_tool_mesh);
+            temp_mesh_resuls = {temp_src_mesh};
+        }
+    }
+
+    return temp_mesh_resuls;
 }
 
 void GLGizmoMeshBoolean::generate_new_volume(bool delete_input, const TriangleMesh& mesh_result) {

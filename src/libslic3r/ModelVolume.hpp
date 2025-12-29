@@ -148,11 +148,13 @@ public:
 
     // The triangular model.
     const TriangleMesh& mesh() const { return *m_mesh.get(); }
+    const TriangleMesh& world_mesh() const { return *m_world_mesh.get(); }
     std::shared_ptr<const TriangleMesh> mesh_ptr() const { return m_mesh; }
     void                set_mesh(const TriangleMesh &mesh) { m_mesh = std::make_shared<const TriangleMesh>(mesh); }
     void                set_mesh(TriangleMesh &&mesh) { m_mesh = std::make_shared<const TriangleMesh>(std::move(mesh)); }
     void                set_mesh(const indexed_triangle_set &mesh) { m_mesh = std::make_shared<const TriangleMesh>(mesh); }
     void                set_mesh(indexed_triangle_set &&mesh) { m_mesh = std::make_shared<const TriangleMesh>(std::move(mesh)); }
+    void                set_world_mesh(indexed_triangle_set&& worldmesh) { m_world_mesh = std::make_shared<const TriangleMesh>(std::move(worldmesh)); }
     void                set_mesh(std::shared_ptr<const TriangleMesh> &mesh) { m_mesh = mesh; }
     void                set_mesh(std::unique_ptr<const TriangleMesh> &&mesh) { m_mesh = std::move(mesh); }
 	void				reset_mesh() { m_mesh = std::make_shared<const TriangleMesh>(); }
@@ -184,6 +186,7 @@ public:
     // Is set only when volume is Embossed Shape
     // Contain 2d information about embossed shape to be editabled
     std::optional<EmbossShape> emboss_shape; 
+    float                      min_y;
 
     // A parent object owning this modifier volume.
     ModelObject*        get_object() const { return this->object; }
@@ -317,6 +320,7 @@ private:
     ModelObject*                    	object;
     // The triangular model.
     std::shared_ptr<const TriangleMesh> m_mesh;
+    std::shared_ptr<const TriangleMesh> m_world_mesh;
     // Is it an object to be printed, or a modifier volume?
     ModelVolumeType                 	m_type;
     t_model_material_id             	m_material_id;

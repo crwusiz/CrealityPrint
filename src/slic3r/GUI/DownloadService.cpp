@@ -10,6 +10,7 @@
 
 #include "format.hpp"
 #include "GUI.hpp"
+#include "GUI_App.hpp"
 #include "I18N.hpp"
 #include "libslic3r/Utils.hpp"
 
@@ -117,7 +118,8 @@ void DownloadService::priv::get_perform()
 
     size_t written_previously   = m_written;
     size_t written_this_session = 0;
-    Http::set_extra_headers({});
+    // Ensure authenticated requests carry app/session headers
+    Http::set_extra_headers(Slic3r::GUI::wxGetApp().get_extra_header());
     Http::get(m_url)
         .size_limit(DOWNLOAD_SIZE_LIMIT) // more?
         //.set_range(range_string)

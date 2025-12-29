@@ -94,6 +94,11 @@ namespace GUI {
 
         bool load_from_png_svg_file(const std::string& filename, bool use_mipmaps=true, bool compress=false
             , bool apply_anisotropy=false, unsigned int max_size_px=0);
+        bool load_from_png_file_half(const std::string& filename,
+                                                int                half_top,
+                                                bool  use_mipmaps = true,
+                                                ECompressionType   compression_type = ECompressionType::None,
+                                                bool               apply_anisotropy = false);
         bool load_from_png_file(const std::string& filename, bool use_mipmaps, ECompressionType compression_type, bool apply_anisotropy);
         bool load_from_svg_file(const std::string& filename, bool use_mipmaps, bool compress
             , bool apply_anisotropy, unsigned int max_size_px = 0);
@@ -143,7 +148,8 @@ namespace GUI {
 
         static constexpr unsigned int INVAILD_ID = 0;
     private:
-        bool load_from_png(const std::string& filename, bool use_mipmaps, ECompressionType compression_type, bool apply_anisotropy);
+        bool load_from_png(
+            const std::string& filename, bool use_mipmaps, ECompressionType compression_type, bool apply_anisotropy, wxImage* cache = nullptr);
         bool load_from_svg(const std::string& filename, bool use_mipmaps, bool compress, bool apply_anisotropy, unsigned int max_size_px);
 
         friend class Compressor;

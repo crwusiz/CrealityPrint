@@ -78,6 +78,7 @@ namespace Slic3r {
             void setMqttDeviceDN(std::string dn);
             void destoryMqtt();
             void processMqttMessage(std::string topic,std::string playload);
+            void update_current_cxy_device_filament(const std::string& mac);
 
         private:
             void SendAPIKey();
@@ -114,6 +115,7 @@ namespace Slic3r {
             struct ProgressInfo { float progress = 0.f; double speed = 0.0; };
             std::unordered_map<std::string, ProgressInfo> m_uploadProgressMap;
             std::mutex m_uploadProgressMutex;
+            bool m_bHasError = false;
             // DECLARE_EVENT_TABLE()
         };
 
