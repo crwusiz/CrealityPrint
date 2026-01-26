@@ -246,7 +246,10 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         // creality
         "activate_chamber_layer",
          "default_flush_multiplier",
-          "multicolor_method",
+        "flush_box_first_clean_length",
+        "flush_box_need_clean_length",
+        "flush_box_need_clean_length_max",
+        "multicolor_method",
 		"machine_is_belt",
         "belt_Z_offset"
 
@@ -2219,7 +2222,8 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
         m_tool_ordering.clear();
         if (this->has_wipe_tower()) {
             this->_make_wipe_tower();
-        } else if (this->config().print_sequence != PrintSequence::ByObject) {
+        } else if (this->config().print_sequence != PrintSequence::ByObject
+            || (this->config().print_sequence == PrintSequence::ByObject && m_objects.size() == 1)) {
         	// Initialize the tool ordering, so it could be used by the G-code preview slider for planning tool changes and filament switches.
         	m_tool_ordering = ToolOrdering(*this, -1, false);
             if (m_tool_ordering.empty() || m_tool_ordering.last_extruder() == unsigned(-1))
@@ -3113,7 +3117,7 @@ void Print::_make_wipe_tower()
                             }
 
                             wipe_tower.plan_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
-                                                       current_extruder_id, extruder_id, volume_to_wipe /*, purge_volume*/);
+                                                       current_extruder_id, extruder_id, volume_to_wipe, purge_volume);
                             current_extruder_id = extruder_id;
                         }
                     }

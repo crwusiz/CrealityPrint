@@ -5,6 +5,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
 #include "libslic3r_version.h"
+#include "AppUtils.hpp"
 namespace pt = boost::property_tree;
 using json = nlohmann::json;
 
@@ -141,6 +142,37 @@ namespace DM {
             {
                 this->RemoveDevice(ip);
             }
+
+#ifdef __WXGTK__
+            if (is_uos_system() && p->data.contains("groups")) {
+                int total = 0;
+                for (auto& group : p->data["groups"]) {
+                    if (!group.contains("list") || group["list"].is_null())
+                        continue;
+                    auto& list = group["list"];
+                    if (!list.is_array())
+                        continue;
+                    if (total >= 20) {
+                        list = nlohmann::json::array();
+                        continue;
+                    }
+                    int remaining = 20 - total;
+                    if (remaining <= 0) {
+                        list = nlohmann::json::array();
+                        continue;
+                    }
+                    if (static_cast<int>(list.size()) > remaining) {
+                        nlohmann::json new_list = nlohmann::json::array();
+                        for (int i = 0; i < remaining; ++i)
+                            new_list.push_back(list[i]);
+                        list = new_list;
+                        total = 20;
+                    } else {
+                        total += static_cast<int>(list.size());
+                    }
+                }
+            }
+#endif
         }
 
         if (p->data.empty())
@@ -260,10 +292,19 @@ namespace DM {
         item["name"] = data.name;
         item["connectType"] = data.connectType;
         item["oldPrinter"] = data.oldPrinter;
+        item["deviceUI"] = data.deviceUI;
 
         item["moonrakerPort"] = data.moonrakerPort;
         item["fluiddPort"] = data.fluiddPort;
         item["mainsailPort"] = data.mainsailPort;
+
+        if (data.connectType == 1001) 
+        {
+            item["apiKey"] = data.apiKey;
+            item["hostType"] = data.hostType;
+            item["caFile"] = data.caFile;
+            item["ignoreCertRevocation"] = data.ignoreCertRevocation;
+        }
 
         for (auto& g : p->data["groups"])
         {

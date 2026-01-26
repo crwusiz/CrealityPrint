@@ -8,6 +8,8 @@
 #include "slic3r/Utils/MacDarkMode.hpp"
 #endif
 #include <string>
+#include <vector>
+#include <sstream>
 
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/predicate.hpp>
@@ -23,6 +25,8 @@
 #include <Windows.h>
 #include "boost/nowide/convert.hpp"
 #endif
+
+#include <wx/msgdlg.h>
 
 #include "AboutDialog.hpp"
 #include "MsgDialog.hpp"
@@ -660,7 +664,6 @@ std::string get_cloud_webaddress()
 	std::string url;
     std::string version_type = get_vertion_type();
     std::string country_code = wxGetApp().app_config->get_country_code();
-    // 当 PROJECT_VERSION_EXTRA 为 Dev 时，云端交互统一指向 Dev 接口
     {
         std::string extra = std::string(PROJECT_VERSION_EXTRA);
         if (boost::algorithm::iequals(extra, std::string("Dev"))) {
@@ -682,24 +685,28 @@ std::string get_cloud_webaddress()
     }
     return url;
 }
-std::string get_file_md5(const std::string& path)
+
+static std::string get_file_md5_streaming_impl(const std::string& path)
 {
     boost::nowide::ifstream ifs(path, std::ios::binary);
     if (!ifs)
-    {
         throw std::runtime_error("Failed to open file: " + path);
-    }
-
-    std::ostringstream oss;
-    oss << ifs.rdbuf();
-    std::string data = oss.str();
 
     using boost::uuids::detail::md5;
     md5 md5_hash;
     md5::digest_type md5_digest{};
     std::string md5_digest_str;
 
-    md5_hash.process_bytes(data.data(), data.size());
+    const std::size_t buffer_size = 4 * 1024 * 1024;
+    std::vector<char> buffer(buffer_size);
+
+    while (ifs) {
+        ifs.read(buffer.data(), buffer.size());
+        std::streamsize read_count = ifs.gcount();
+        if (read_count > 0)
+            md5_hash.process_bytes(buffer.data(), static_cast<std::size_t>(read_count));
+    }
+
     md5_hash.get_digest(md5_digest);
 
     boost::algorithm::hex(md5_digest, md5_digest + std::size(md5_digest), std::back_inserter(md5_digest_str));
@@ -707,6 +714,11 @@ std::string get_file_md5(const std::string& path)
     assert(md5_digest_str.size() == 32);
 
     return md5_digest_str;
+}
+
+std::string get_file_md5(const std::string& path)
+{
+    return get_file_md5_streaming_impl(path);
 }
 
 std::string user_feedback_website() 

@@ -96,7 +96,7 @@ std::future<void> KlipperInterface::sendFileToDevice(const std::string& serverIp
                  {
                      curl_off_t bytes_sent = progress.ulnow;
                      double time_elapsed = difftime(now, last_time);
-                     speed = bytes_sent / time_elapsed / 1024; // 字节/秒
+                     speed = bytes_sent / time_elapsed / 1024; // bytes per second
                  }
                  if (progress.ultotal > 0)
                  {
@@ -121,7 +121,7 @@ std::future<void> KlipperInterface::sendFileToDevice(const std::string& serverIp
                   {
                       if (m_bCancelSend) 
                       {
-                          uploadStatusCallback(601); // 601 表示取消成功
+                          uploadStatusCallback(601); // 601 means cancel succeeded
                       } else 
                       {
                           uploadStatusCallback(CURLE_HTTP_RETURNED_ERROR);

@@ -41,10 +41,10 @@ static const constexpr int UNARRANGED = -1;
 /// will mark the needed transformation for the polygon to be in the arranged
 /// position. These can also be set to an initial offset and rotation.
 ///
-/// The bed_idx field will indicate the logical bed into which the
-/// polygon belongs: UNARRANGED means no place for the polygon
-/// (also the initial state before arrange), 0..N means the index of the bed.
-/// Zero is the physical bed, larger than zero means a virtual bed.  参数bed_idx大于0是虚拟床(即打印床外的空间)
+        /// The bed_idx field will indicate the logical bed into which the
+        /// polygon belongs: UNARRANGED means no place for the polygon
+        /// (also the initial state before arrange), 0..N means the index of the bed.
+        /// Zero is the physical bed, values greater than zero are virtual beds.
 struct ArrangePolygon {
     ExPolygon poly;                 /// The 2D silhouette to be arranged
     Vec2crd   translation{0, 0};    /// The translation of the poly

@@ -242,7 +242,7 @@ public:
             return 0;
         }
 #if AUTOMATION_TOOL
-        // ����һЩӰ��ʱ��������������������̣��Զ������Բ���Ҫ�����Ի���
+        // When running automation or performance tests, skip dialogs to avoid blocking
         if (AutomationMgr::enabled()) {
             return 0;
         }

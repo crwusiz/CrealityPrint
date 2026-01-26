@@ -47,7 +47,7 @@ bool LoadOldPresets::loadPresets(const std::string& fileName)
             setLastError("2", "not old presets");
             break;
         }
-        //  判断预设值是否存在
+        // Check whether the preset value exists
         PresetBundle::STOverrideConfirmFile stOverrideConfirmFile;
         stOverrideConfirmFile.fileName = filePath.filename().stem().string();
         for (auto item : vtFileName) {
@@ -66,7 +66,7 @@ bool LoadOldPresets::loadPresets(const std::string& fileName)
                 }
             }
         }
-        m_override = 1; // 1-覆盖 4-创建副本
+        m_override = 1; // 1-overwrite 4-do not overwrite
         if (stOverrideConfirmFile.lstPrinterPreset.size() != 0 || stOverrideConfirmFile.lstFilamentPreset.size() != 0 ||
             stOverrideConfirmFile.lstProcessPreset.size() != 0) {
             if (m_overrideConfirmCb) {
@@ -75,16 +75,17 @@ bool LoadOldPresets::loadPresets(const std::string& fileName)
                 m_override = m_overrideConfirmCb(lstOverrideConfirmFile);
             }
         }
-        if (m_override == -1) // -1表示界面点击了取消按钮
+        if (m_override == -1) // -1 means user clicked the cancel button
         {
-            setLastError("-1", "cancel load");
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " cancel load, not loading: " << file;
-            break;
-        }
+        setLastError("-1", "cancel load");
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " cancel load, not loading: " << file;
+        break;
+    }
+    // Prepare to load print presets
 
         int errFileCout = 0;
         m_printerData   = PrinterData();
-        //  导入打印机预设
+        // Load printer presets
         for (auto item : vtFileName) {
             if (item.type == DefJson) {
                 if (item.isSystemPreset) {
@@ -99,7 +100,7 @@ bool LoadOldPresets::loadPresets(const std::string& fileName)
             setLastError("3", "load def json fail");
             break;
         }
-        // 导入耗材、工艺预设
+    // Process other types of presets
         for (auto item : vtFileName) {
             if (item.type == DefJson) {
                 continue;
@@ -114,7 +115,7 @@ bool LoadOldPresets::loadPresets(const std::string& fileName)
             }
         }
 
-        //  重新加载预设文件
+    // Save updated preset files
         auto* app_config = GUI::wxGetApp().app_config;
         GUI::wxGetApp().preset_bundle->load_presets(*app_config, ForwardCompatibilitySubstitutionRule::EnableSilentDisableSystem);
         GUI::wxGetApp().load_current_presets();
@@ -245,7 +246,7 @@ bool LoadOldPresets::loadMachineList()
             std::ifstream file(pathMachineList.string());
             file.imbue(std::locale("en_US.UTF-8"));
             if (!file.is_open()) {
-                // 获取错误码
+                // Get file list
                 std::error_code error_code = std::make_error_code(std::errc::no_such_file_or_directory);
                 setLastError(std::to_string(error_code.value()), error_code.message());
                 break;
@@ -268,12 +269,12 @@ bool LoadOldPresets::loadSystemFilamentFile() {
 
         fs::path dir_path(data_dir() + "/" + PRESET_SYSTEM_DIR + "/Creality/filament");
 
-        // 检查路径是否存在且为目录
+        // Check whether the path exists and is a directory
         if (!fs::exists(dir_path) || !fs::is_directory(dir_path)) {
             break;
         }
 
-        // 遍历目录
+        // Iterate through directory
         for (auto& entry : fs::directory_iterator(dir_path)) {
             m_vtSystemFilamentFile.push_back(entry.path().filename().string());
         }
@@ -288,12 +289,12 @@ bool LoadOldPresets::loadSystemProcessFile()
 
         fs::path dir_path(data_dir() + "/" + PRESET_SYSTEM_DIR + "/Creality/process");
 
-        // 检查路径是否存在且为目录
+        // Check whether the path exists and is a directory
         if (!fs::exists(dir_path) || !fs::is_directory(dir_path)) {
             break;
         }
 
-        // 遍历目录
+        // Iterate through directory
         for (auto& entry : fs::directory_iterator(dir_path)) {
             m_vtSystemProcessFile.push_back(entry.path().filename().string());
         }
@@ -404,7 +405,7 @@ bool LoadOldPresets::doDefJson(const FileData& fileData)
             std::ifstream file(from_u8(fileData.name).ToStdString());
             file.imbue(std::locale("en_US.UTF-8"));
             if (!file.is_open()) {
-                // 获取错误码
+                // Get file list
                 std::error_code error_code = std::make_error_code(std::errc::no_such_file_or_directory);
                 setLastError(std::to_string(error_code.value()), error_code.message());
                 break;
@@ -500,7 +501,7 @@ bool LoadOldPresets::doDefJson(const FileData& fileData)
                     }
                 }
 
-                //  重新组合
+                // Handle error
                 jsonOut                        = json();
                 jsonOut["base_id"]             = inherit_preset->base_id;
                 jsonOut["from"]                = "User";
@@ -581,7 +582,7 @@ bool LoadOldPresets::doDefJson(const FileData& fileData)
             m_printerData.printerInherits = "fdm_creality_common";
         }
 
-        //  如果单挤出机多材料为0时，强制手动更换丝材为0
+        // If the number of user presets is 0, force the preset count to 0
         if (jsonOut.contains("single_extruder_multi_material") && 
             jsonOut["single_extruder_multi_material"].is_string() && jsonOut["single_extruder_multi_material"].get<std::string>() == "0") {
             jsonOut["manual_filament_change"] = "0";
@@ -618,7 +619,7 @@ bool LoadOldPresets::doDefJson(const FileData& fileData)
         c << std::setw(4) << jsonOut << std::endl;
         c.close();
 
-        //  保存info文件
+        // Save info file
         std::string outInfoFile;
         if (userInfo.bLogin && !fileData.isSystemPreset) {
             fs::path pathMachine = fs::path(data_dir()).append("user").append(userInfo.userId).append("machine");
@@ -659,7 +660,7 @@ bool LoadOldPresets::doFilamentJson(const FileData& fileData)
             std::ifstream file(from_u8(fileData.name).ToStdString());
             file.imbue(std::locale("en_US.UTF-8"));
             if (!file.is_open()) {
-                // 获取错误码
+                // Get file list
                 std::error_code error_code = std::make_error_code(std::errc::no_such_file_or_directory);
                 setLastError(std::to_string(error_code.value()), error_code.message());
                 break;
@@ -687,7 +688,7 @@ bool LoadOldPresets::doFilamentJson(const FileData& fileData)
         PresetCollection* collection = nullptr;
         collection                   = &GUI::wxGetApp().preset_bundle->filaments;
         
-        //  如果文件名和继承的名字相同，说明是系统文件
+        // If file name differs from template, treat it as system file
         if (inherits == outputName) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << "doFilamentJson outputName=inherist," << outputName << " is system preset.";
             bRet = true;
@@ -776,7 +777,7 @@ bool LoadOldPresets::doFilamentJson(const FileData& fileData)
         std::string compatiblePrinters = getCompatiblePrinters(fileData);
         if (compatiblePrinters.empty())
             break;
-        //  重新组合
+        // Processing finished
         jsonOut["from"]                = "User";
         jsonOut["compatible_printers"]     = json::array();
         jsonOut["compatible_printers"][0]  = getCompatiblePrinters(fileData);
@@ -810,7 +811,7 @@ bool LoadOldPresets::doFilamentJson(const FileData& fileData)
         c << std::setw(4) << jsonOut << std::endl;
         c.close();
 
-        //  保存info文件
+        // Save info file
         std::string outInfoFile;
         if (userInfo.bLogin) {
             outInfoFile = fs::path(data_dir()).append("user").append(userInfo.userId).append("filament").append(outputName + ".info").string();
@@ -843,7 +844,7 @@ bool LoadOldPresets::doProcessJson(const FileData& fileData)
             std::ifstream file(from_u8(fileData.name).ToStdString());
             file.imbue(std::locale("en_US.UTF-8"));
             if (!file.is_open()) {
-                // 获取错误码
+                // Get file list
                 std::error_code error_code = std::make_error_code(std::errc::no_such_file_or_directory);
                 setLastError(std::to_string(error_code.value()), error_code.message());
                 break;
@@ -946,7 +947,7 @@ bool LoadOldPresets::doProcessJson(const FileData& fileData)
             }
         }
 
-        //  重新组合
+        // Processing finished
         jsonOut["from"]                   = "User";
         jsonOut["compatible_printers"]    = json::array();
         jsonOut["compatible_printers"][0] = getCompatiblePrinters(fileData);
@@ -981,7 +982,7 @@ bool LoadOldPresets::doProcessJson(const FileData& fileData)
         c << std::setw(4) << jsonOut << std::endl;
         c.close();
 
-                //  保存info文件
+                // Save info file
         std::string outInfoFile;
         if (userInfo.bLogin) {
             outInfoFile =
@@ -1068,7 +1069,7 @@ void        LoadOldPresets::setCompatiblePrinters(const std::vector<FileData>& v
                 std::ifstream file(from_u8(item.name).ToStdString());
                 file.imbue(std::locale("en_US.UTF-8"));
                 if (!file.is_open()) {
-                    // 获取错误码
+                    // Get file list
                     std::error_code error_code = std::make_error_code(std::errc::no_such_file_or_directory);
                     setLastError(std::to_string(error_code.value()), error_code.message());
                     break;

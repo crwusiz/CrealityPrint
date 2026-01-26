@@ -776,7 +776,7 @@ namespace igl
         }
       }
   
-     /* Copyright(C) 2004-2008 Ren� Nyffenegger
+    /* Copyright(C) 2004-2008 Rene Nyffenegger
   
         This source code is provided 'as-is',without any express or implied
         warranty.In no event will the author be held liable for any damages
@@ -794,9 +794,9 @@ namespace igl
         2. Altered source versions must be plainly marked as such,and must not be
         misrepresented as being the original source code.
   
-        3. This notice may not be removed or altered from any source distribution.
-  
-        Ren� Nyffenegger rene.nyffenegger@adp-gmbh.ch
+       3. This notice may not be removed or altered from any source distribution.
+
+       Rene Nyffenegger rene.nyffenegger@adp-gmbh.ch
         */
   
       static const std::string base64_chars =
@@ -861,7 +861,7 @@ namespace igl
         std::string ret;
   
         // construct fast lookup table
-        // added by Christian Sch�ller (schuellc@inf.ethz.ch)
+        // added by Christian Schueller (schuellc@inf.ethz.ch)
         int charLookup[200];
         for(int i=0;i<(int)(base64_chars.length());i++)
           charLookup[(int)base64_chars[i]] = i;

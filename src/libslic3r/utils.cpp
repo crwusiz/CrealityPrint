@@ -1563,7 +1563,7 @@ SystemMemoryStats system_memory_stats(std::string text)
         stats.valid = false;
     }
 #else
-    // �� Windows ƽ̨�ݲ�ʵ�֣����ֽӿڴ����ҿ����Կ��жϡ�
+    // Not implemented on non-Windows platforms; use other APIs to detect memory.
     stats.valid = false;
 #endif
     BOOST_LOG_TRIVIAL(warning) << text << " memory total_bytes " << stats.total_bytes << " memory available_bytes "

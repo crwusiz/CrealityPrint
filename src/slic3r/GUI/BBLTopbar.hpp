@@ -81,6 +81,19 @@ public:
     void update_mode(int mode);
 
     bool GetSaveProjectItemEnabled();
+
+    void UpdateFileNameDisplay();
+    void UpdateFileNameDisplay(const wxString& fileName);
+
+private:
+
+    wxString TruncateTextToWidth(const wxString& text, int maxWidth, Label* label);
+
+    void OnWindowResize(wxSizeEvent& event);
+
+    void OnFileLoaded(const wxString& fileName) { UpdateFileNameDisplay(fileName); }
+
+
 private:
     wxFrame* m_frame;
     wxAuiToolBarItem* logo_item = nullptr;
@@ -129,4 +142,6 @@ private:
     bool m_skip_popup_file_menu;
     bool m_skip_popup_dropdown_menu;
     bool m_skip_popup_calib_menu;
+
+    wxString m_displayName;
 };

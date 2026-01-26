@@ -54,7 +54,7 @@ enum class FuzzySkinType {
 };
 
 enum PrintHostType {
-    htPrusaLink, htPrusaConnect, htOctoPrint, htDuet, htFlashAir, htAstroBox, htRepetier, htMKS, htESP3D, htObico, htFlashforge, htSimplyPrint
+    htPrusaLink, htPrusaConnect, htOctoPrint, htDuet, htFlashAir, htAstroBox, htRepetier, htMKS, htESP3D, htObico, htFlashforge, htSimplyPrint, htCrealityPrint
 };
 
 enum AuthorizationType {
@@ -221,7 +221,7 @@ inline bool is_auto(SupportType stype)
     return std::set<SupportType>{stNormalAuto, stTreeAuto}.count(stype) != 0;
 };
 
-enum SeamPosition { spNearest, spAligned, spRear, spRandom, spAssemble_zgap };
+enum SeamPosition { spNearest, spAligned, spAlignedBack, spRear, spRandom, spAssemble_zgap };
 
 // Orca
 enum class SeamScarfType {
@@ -1469,6 +1469,9 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionPoint,               bed_mesh_probe_distance))
     ((ConfigOptionFloat,               adaptive_bed_mesh_margin))
     ((ConfigOptionFloat,              default_flush_multiplier))
+    ((ConfigOptionInt,                flush_box_first_clean_length))
+    ((ConfigOptionInt,                flush_box_need_clean_length))
+    ((ConfigOptionInt,                flush_box_need_clean_length_max))
     ((ConfigOptionBool,               multicolor_method))
 
 )

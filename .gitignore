@@ -16,7 +16,6 @@ xs/assertlib*
 .vs/*
 local-lib
 /src/TAGS
-/.vscode/
 build-linux/*
 deps/build*/*
 **/.DS_Store
@@ -62,3 +61,4 @@ __pycache__
 /docs/printer_parameters_validation.md
 /docs/printer_settings_ui_parameters.md
 docs
+flatbuild

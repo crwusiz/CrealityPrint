@@ -76,7 +76,7 @@ ButtonsCtrl::ButtonsCtrl(wxWindow* parent, wxBoxSizer* side_tools)
     this->SetSizer(m_sizer);
 
     if (side_tools != NULL) {
-        m_sizer->AddStretchSpacer(1);
+       // m_sizer->AddStretchSpacer(1);
         for (size_t idx = 0; idx < side_tools->GetItemCount(); idx++) {
             wxSizerItem* item     = side_tools->GetItem(idx);
             wxWindow*    item_win = item->GetWindow();
@@ -645,7 +645,7 @@ void BBLTopbar::Init(wxFrame* parent)
     m_calib_item->SetDisabledBitmap(calib_bitmap_inactive);*/
 
     addDipSpacer(10);
-    this->AddStretchSpacer(1);
+    this->AddStretchSpacer(4);
     //CX
     ButtonsCtrl* pCtr = new ButtonsCtrl(this);
     pCtr->InsertPage(MainFrame::tpOnlineModel, _L("Online Models"), 0);
@@ -781,6 +781,7 @@ void BBLTopbar::Init(wxFrame* parent)
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnDownMgr, this, ID_DOWNMANAGER);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnLogin, this, ID_LOGIN);
 
+    this->Bind(wxEVT_SIZE, &BBLTopbar::OnWindowResize, this);
 
     //Creality: relations
     // int mode = wxGetApp().app_config->get("role_type") != "0";
@@ -1201,6 +1202,9 @@ wxMenu* BBLTopbar::GetCalibMenu()
 
 void BBLTopbar::SetTitle(wxString title)
 {
+    return UpdateFileNameDisplay(title);
+    /*
+
     wxGCDC dc(this);
     wxString newTitle = wxControl::Ellipsize(title, dc, wxELLIPSIZE_END, TOPBAR_TITLE_WIDTH - FromDIP(30));
 
@@ -1215,6 +1219,9 @@ void BBLTopbar::SetTitle(wxString title)
         m_title_item->SetAlignment(wxALIGN_CENTRE);
         this->Refresh();
     }
+
+
+    */
 }
 
 void BBLTopbar::SetMaximizedSize()
@@ -1571,4 +1578,62 @@ wxAuiToolBarItem* BBLTopbar::FindToolByCurrentPosition()
     wxPoint mouse_pos = ::wxGetMousePosition();
     wxPoint client_pos = this->ScreenToClient(mouse_pos);
     return this->FindToolByPosition(client_pos.x, client_pos.y);
+}
+
+void BBLTopbar::UpdateFileNameDisplay()
+{
+    UpdateFileNameDisplay(m_displayName);
+}
+
+wxString BBLTopbar::TruncateTextToWidth(const wxString& text, int maxWidth, Label* label)
+{
+    if (text.IsEmpty() || maxWidth <= 0 || !label)
+        return text;
+
+    // 获取当前Label的字体和DC（设备上下文，用于计算文字宽度）
+    wxClientDC dc(label);
+    dc.SetFont(label->GetFont());
+
+    // 如果文字本身宽度小于最大宽度，直接返回
+    wxSize textSize = dc.GetTextExtent(text);
+    if (textSize.x <= maxWidth)
+        return text;
+
+    // 否则，使用Ellipsize函数进行截断
+    wxString truncated = wxControl::Ellipsize(text, dc, wxELLIPSIZE_END, maxWidth - FromDIP(30));
+
+    return truncated;
+}
+
+void BBLTopbar::UpdateFileNameDisplay(const wxString& fileName)
+{
+    int availableWidth = (this->GetClientSize().x/2) - 500;
+    if (availableWidth <= 0)
+        availableWidth = 160;
+
+     m_title_LabelItem->SetMinSize(wxSize(availableWidth, FromDIP(-1)));
+    m_title_LabelItem->SetSize(wxSize(availableWidth, FromDIP(-1)));
+
+    wxString displayText = TruncateTextToWidth(fileName, availableWidth, m_title_LabelItem);
+
+    if (m_title_LabelItem) {
+        m_title_LabelItem->SetLabel(displayText);
+        m_title_LabelItem->SetToolTip(fileName);
+    }
+    if (m_title_item != nullptr) {
+        m_title_item->SetLabel(displayText);
+        m_title_item->SetAlignment(wxALIGN_CENTRE);
+        this->Refresh();
+    }
+    m_displayName = fileName;
+
+
+}
+
+void BBLTopbar::OnWindowResize(wxSizeEvent& event)
+{
+    event.Skip();
+    UpdateFileNameDisplay();
+    Layout();
+    Refresh();
 }

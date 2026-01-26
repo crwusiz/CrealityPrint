@@ -25,6 +25,8 @@
 #include "Obico.hpp"
 #include "Flashforge.hpp"
 #include "SimplyPrint.hpp"
+#include "slic3r/GUI/print_manage/Utils.hpp"
+#include "slic3r/GUI/Notebook.hpp"
 
 namespace fs = boost::filesystem;
 using boost::optional;
@@ -63,6 +65,7 @@ PrintHost* PrintHost::get_print_host(DynamicPrintConfig *config)
             case htObico:     return new Obico(config);
             case htFlashforge: return new Flashforge(config);
             case htSimplyPrint: return new SimplyPrint(config);
+            case htCrealityPrint: return new CrealityPrint(config);
             default:          return nullptr;
         }
     } else {
@@ -313,13 +316,35 @@ void PrintHostJobQueue::priv::perform_job(PrintHostJob the_job)
         [this](wxString tag, wxString host)             { this->info_fn(std::move(tag), std::move(host)); }
     );
 
-    if (success) {
+    if (success) 
+    {
+        //emit_progress(100);
+        //if (the_job.switch_to_device_tab) {
+        //    const auto mainframe = GUI::wxGetApp().mainframe;
+        //    mainframe->request_select_tab(MainFrame::TabPosition::tpMonitor);
+        //}
+
         emit_progress(100);
-        if (the_job.switch_to_device_tab) {
-            const auto mainframe = GUI::wxGetApp().mainframe;
-            mainframe->request_select_tab(MainFrame::TabPosition::tpMonitor);
-        }
+        GUI::wxGetApp().CallAfter([host = the_job.printhost->get_host()] {
+            if(auto mainframe = GUI::wxGetApp().mainframe)
+            {
+                mainframe->request_select_tab(MainFrame::TabPosition::tpDeviceMgr);
+                wxCommandEvent e = wxCommandEvent(wxCUSTOMEVT_NOTEBOOK_SEL_CHANGED);
+                e.SetId(MainFrame::TabPosition::tpDeviceMgr); 
+                wxPostEvent(wxGetApp().mainframe->topbar(), e);
+                if (auto view = mainframe->get_printer_mgr_view()) 
+                {
+                    nlohmann::json commandJson;
+                    nlohmann::json dataJson;
+                    commandJson["command"] = "forward_fluidd_device_details";
+                    commandJson["url"]    = host;
+                    auto jsonStr           = RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true));
+                    view->ExecuteScriptCommand(jsonStr);
+                }
+            }
+        });
     }
+    
 }
 
 void PrintHostJobQueue::enqueue(PrintHostJob job)

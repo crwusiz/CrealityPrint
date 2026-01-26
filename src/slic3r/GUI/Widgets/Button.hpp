@@ -105,9 +105,9 @@ public:
     void SetIcon(const wxBitmap& icon);
 
 private:
-    int      m_cornerRadius = 5;                   // Ô²½Ç°ë¾¶
-    wxColour m_bgColor      = wxColour("#15BF59"); // ±³¾°ÑÕÉ«
-    wxColour m_textColor    = *wxWHITE;            // ÎÄ×ÖÑÕÉ«
+    int      m_cornerRadius = 5;                   // Corner radius
+    wxColour m_bgColor      = wxColour("#15BF59"); // Button background color
+    wxColour m_textColor    = *wxWHITE;            // Button text color
     wxBitmap m_icon;
 
     void OnPaint(wxPaintEvent& event);

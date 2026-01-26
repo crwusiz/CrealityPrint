@@ -630,17 +630,17 @@ public:
         }
     }
 
-    // ���ɾ��ȷֲ��ķ�������
+    // Generate approximately uniform distribution of normals on a sphere
     std::vector<Vec3f> generateUniformNormals(int numPoints)
     {
         std::vector<Vec3f> normals;
         normals.reserve(numPoints);
 
-        const float phi = (1.0 + std::sqrt(5.0)) / 2.0; // �ƽ����
+        const float phi = (1.0 + std::sqrt(5.0)) / 2.0; // Golden ratio
         for (int i = 0; i < numPoints; ++i) {
-            float y      = 1 - (i / float(numPoints - 1)) * 2; // y�����1��-1
-            float radius = std::sqrt(1 - y * y);               // �뾶
-            float theta  = 2 * M_PI * i / phi;                 // �Ƕ�
+            float y      = 1 - (i / float(numPoints - 1)) * 2; // y from 1 to -1
+            float radius = std::sqrt(1 - y * y);               // Radius on unit sphere
+            float theta  = 2 * M_PI * i / phi;                 // Angle
 
             float x = std::cos(theta) * radius;
             float z = std::sin(theta) * radius;
@@ -856,8 +856,7 @@ public:
 
          //volume 
          float support_area = 0.f;
-         //С��ģ�� ����֧������е����� ֧�ŵ�����ԭ���ǣ�
-         //�������Ƕ���أ�
+         // For small models, consider support volume and overhang volume when evaluating orientation.
          //float vol = get_volume(-orientation,support_area);
 
          float vol = get_support_volume(-orientation,mesh_param_sim);
@@ -873,8 +872,7 @@ public:
          float fill_time = fill_length / 250.f;
 
 
-         //Ȩ�ر��� 1:1:?  ��Ҫ��Ŀ���Ż�  ��Ѱ����Ȩ��   ���ڹ̶�һ������
-         //18-25  __   10-20    10   __   
+         // Weight ratio 1:1:? needs future optimization; current weights are fixed.
          
          //fill 0.0002*x*x+0.8141*x+4.9651
          float fill_quan = 0.0002f * fill_time * fill_time + 0.8141f * fill_time + 4.9651f;

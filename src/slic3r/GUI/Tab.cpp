@@ -48,6 +48,7 @@
 #include "EditGCodeDialog.hpp"
 #include "MsgDialog.hpp"
 #include "Notebook.hpp"
+#include "CrealityBedModelMapping.hpp"
 
 #include "Widgets/Label.hpp"
 #include "Widgets/TabCtrl.hpp"
@@ -1833,10 +1834,10 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     }
 
     if (opt_key == "wall_sequence") {
-        // ����Ƿ�ѡ���� "adaptive outer wall/inner wall"
+        // Check whether \"adaptive outer wall/inner wall\" is selected
 
         if (m_config->opt_enum<WallSequence>("wall_sequence") == WallSequence::AdaptiveOuterInner) {
-            // ��� overhang_speed_classic �Ƿ��ѹ�ѡ
+            // Then check whether overhang_speed_classic is enabled
             if (!(m_config->opt_bool("overhang_speed_classic") && m_config->opt_bool("enable_overhang_speed") &&
                  !m_config->opt_bool("slowdown_for_curled_perimeters"))) {
                 wxString msg_text = _L("We have added an experimental wall sequence called \"adaptive outer wall/inner wall\" , which automatically switches the wall printing order when overhangs are detected.\n"
@@ -5064,7 +5065,9 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("machine_unload_filament_time");
         optgroup->append_single_option_line("time_cost");
         //optgroup->append_single_option_line("machine_is_belt");
-        
+        optgroup->append_single_option_line("flush_box_first_clean_length");
+        optgroup->append_single_option_line("flush_box_need_clean_length");
+        optgroup->append_single_option_line("flush_box_need_clean_length_max");
         optgroup->append_single_option_line("multicolor_method");
         optgroup  = page->new_optgroup(L("Cooling Fan"), "param_cooling_fan");
         Line line = Line{ L("Fan speed-up time"), optgroup->get_option("fan_speedup_time").opt.tooltip };
@@ -7354,7 +7357,7 @@ wxSizer* TabPrinter::create_bed_shape_widget(wxWindow* parent)
     sizer->Add(btn, 0, wxALIGN_CENTER_VERTICAL);
 
     btn->Bind(wxEVT_BUTTON, ([this](wxCommandEvent e) {
-            bool  is_configed_by_BBL = PresetUtils::system_printer_bed_model(m_preset_bundle->printers.get_edited_preset()).size() > 0;
+            bool  is_configed_by_BBL = CrealityBedModelMapping::bed_model_path_for_preset(m_preset_bundle->printers.get_edited_preset()).size() > 0;
             BedShapeDialog dlg(this);
             dlg.build_dialog(*m_config->option<ConfigOptionPoints>("printable_area"),
                 *m_config->option<ConfigOptionString>("bed_custom_texture"),

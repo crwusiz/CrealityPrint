@@ -91,7 +91,7 @@ public:
                          long           style = wxVSCROLL);
 
 protected:
-    // ÷ÿ–¥OnDraw∑Ω∑®
+    // Override the OnDraw method
     void OnDraw(wxDC& dc) override;
 };
 

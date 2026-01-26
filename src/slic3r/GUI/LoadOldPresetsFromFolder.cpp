@@ -49,7 +49,7 @@ bool LoadOldPresetsFromFolder::loadPresets(const std::string& presetFolder)
             break;
         }
 
-        //  判断预设值是否存在
+        // Check whether the preset value exists
         PresetBundle::STOverrideConfirmFile stOverrideConfirmFile;
         stOverrideConfirmFile.fileName = "5.x Presets";
         for (FileData& item : m_vtFileName) {
@@ -68,7 +68,7 @@ bool LoadOldPresetsFromFolder::loadPresets(const std::string& presetFolder)
                 item.isSystemPreset = true;
             }
         }
-        m_override = 1; // 1-覆盖 4-创建副本
+        m_override = 1; // 1-overwrite 4-do not overwrite
         if (stOverrideConfirmFile.lstPrinterPreset.size() != 0 || stOverrideConfirmFile.lstFilamentPreset.size() != 0 ||
             stOverrideConfirmFile.lstProcessPreset.size() != 0) {
             if (m_overrideConfirmCb) {
@@ -78,7 +78,7 @@ bool LoadOldPresetsFromFolder::loadPresets(const std::string& presetFolder)
             }
         }
 
-        if (m_override == -1) // -1表示界面点击了取消按钮
+        if (m_override == -1) // -1 means user clicked the cancel button
         {
             setLastError("-1", "cancel load");
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " cancel load, not loading: " << file;
@@ -87,7 +87,7 @@ bool LoadOldPresetsFromFolder::loadPresets(const std::string& presetFolder)
 
         int errFileCout = 0;
         m_printerData   = PrinterData();
-        //  导入打印机预设
+        // Prepare to load print presets
         for (auto item : m_vtFileName) {
             if (item.type == DefJson) {
                 if (item.isSystemPreset) {
@@ -107,7 +107,7 @@ bool LoadOldPresetsFromFolder::loadPresets(const std::string& presetFolder)
         //    setLastError("3", "load def json fail");
         //    break;
         //}
-        // 导入耗材、工艺预设
+        // Process other types of presets
         for (auto item : m_vtFileName) {
             if (item.type == DefJson) {
                 continue;
@@ -131,7 +131,7 @@ bool LoadOldPresetsFromFolder::loadPresets(const std::string& presetFolder)
             }
         }
 
-        //  重新加载预设文件
+        // Save updated preset files
         auto* app_config = GUI::wxGetApp().app_config;
         GUI::wxGetApp().preset_bundle->load_presets(*app_config, ForwardCompatibilitySubstitutionRule::EnableSilentDisableSystem);
         GUI::wxGetApp().load_current_presets();

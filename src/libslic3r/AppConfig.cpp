@@ -382,6 +382,10 @@ void AppConfig::set_defaults()
         if (get("autocenter").empty())
             set_bool("autocenter", true);
 #endif
+#ifdef _WIN32
+        if (get("webview_single_process").empty())
+            set_bool("webview_single_process", false);
+#endif
 
 #ifdef SUPPORT_BACKGROUND_PROCESSING
         // Disable background processing by default as it is not stable.
@@ -704,8 +708,8 @@ void AppConfig::set_defaults()
     // Remove legacy window positions/sizes
 	if (get("enable_lod").empty())
         set_bool("enable_lod", true);
-    
-	//Ԥ��ҳLOD����beta�׶�Ĭ�ϴ򿪣�12�·� 7.0�汾Ĭ�Ϲر�
+
+	// Preview page LOD was enabled by default during beta; default may change in 7.0
 	if (get("enable_preview_lod").empty())
         set_bool("enable_preview_lod", true);
 

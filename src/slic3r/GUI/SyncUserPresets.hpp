@@ -17,22 +17,22 @@ public:
     enum class ENSyncCmd {ENSC_NULL, 
         ENSC_SYNC_TO_LOCAL, 
         ENSC_SYNC_TO_CXCLOUD_CREATE, 
-        ENSC_SYNC_TO_FRONT_PAGE,         //  同步数据到前端页面
-        ENSC_SYNC_CONFIG_TO_CXCLOUD    //  同步配置到创想云
+        ENSC_SYNC_TO_FRONT_PAGE,         // Sync data to front page
+        ENSC_SYNC_CONFIG_TO_CXCLOUD    // Sync configuration to CXCloud
     };
 
     enum class ENSyncThreadState {
-        ENTS_IDEL_CHECK,        //  空闲状态，检查是否需要同步
-        ENTS_SYNC_TO_LOCAL,     //  同步到本地
-        ENTS_SYNC_TO_FRONT_PAGE //  同步到前端
+        ENTS_IDEL_CHECK,        // Idle state, check if sync is needed
+        ENTS_SYNC_TO_LOCAL,     // Sync to local
+        ENTS_SYNC_TO_FRONT_PAGE // Sync to front page
     };
 
     static SyncUserPresets& getInstance();
 
-    int startup();      //  线程的启动
-    void shutdown();    //  线程的结束
-    void startSync();   //  同步工作的启动
-    void stopSync();    //  同步工作的不启动
+    int startup();      // Start worker thread
+    void shutdown();    // Stop worker thread
+    void startSync();   // Start synchronization
+    void stopSync();    // Stop synchronization
     void syncUserPresetsToLocal();
     void syncUserPresetsToCXCloud();
     void syncUserPresetsToFrontPage();
@@ -58,7 +58,7 @@ protected:
                                  PreUpdateProfileRetInfo& retInfo,
                                  std::map<std::string, std::string>& values_map);
     int  doCheckNeedDeleteFromCXCloud();
-    //  同步配置文件Creality.conf
+    // Check whether Creality.conf needs to be synced to CXCloud
     int  doCheckNeedSyncConfigToCXCloud();
     int  getSyncDataToFile(std::string& outJsonFile);
     int  copyOldPresetToBackup();

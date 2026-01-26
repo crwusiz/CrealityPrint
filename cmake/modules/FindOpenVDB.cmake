@@ -238,8 +238,8 @@ endif()
 set(OpenVDB_LIB_COMPONENTS "")
 set(OpenVDB_DEBUG_SUFFIX "d" CACHE STRING "Suffix for the debug libraries")
 
-# get_property(_is_multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-set(_is_multi FALSE)
+# Enable multi-config generator support (Visual Studio, Ninja Multi-Config, etc.)
+get_property(_is_multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 
 foreach(COMPONENT ${OpenVDB_FIND_COMPONENTS})
   set(LIB_NAME ${COMPONENT})
@@ -256,13 +256,16 @@ foreach(COMPONENT ${OpenVDB_FIND_COMPONENTS})
 
   if (_is_multi)
     list(APPEND OpenVDB_LIB_COMPONENTS ${OpenVDB_${COMPONENT}_LIBRARY_RELEASE})
-    if (OpenVDB_${COMPONENT}_LIBRARY_DEBUG)
+    if (OpenVDB_${COMPONENT}_LIBRARY_DEBUG AND EXISTS "${OpenVDB_${COMPONENT}_LIBRARY_DEBUG}")
       list(APPEND OpenVDB_LIB_COMPONENTS ${OpenVDB_${COMPONENT}_LIBRARY_DEBUG})
-    endif ()
+    else()
+      # 使用 Release 库替代 Debug 库
+      set(OpenVDB_${COMPONENT}_LIBRARY_DEBUG ${OpenVDB_${COMPONENT}_LIBRARY_RELEASE})
+    endif()
 
     list(FIND CMAKE_CONFIGURATION_TYPES "Debug" _has_debug)
     
-    if(OpenVDB_${COMPONENT}_LIBRARY_RELEASE AND (NOT MSVC OR _has_debug LESS 0 OR OpenVDB_${COMPONENT}_LIBRARY_DEBUG))
+    if(OpenVDB_${COMPONENT}_LIBRARY_RELEASE)
       set(OpenVDB_${COMPONENT}_FOUND TRUE)
     else()
       set(OpenVDB_${COMPONENT}_FOUND FALSE)

@@ -222,6 +222,7 @@ static std::vector<wxWebView*> g_delay_webviews;
 #ifdef __WIN32__
 static bool g_webview_atexit_registered = false;
 static wxString g_webview_userdata_dir;
+static bool g_force_single_process = false;
 #endif
 #if defined __linux__
 static bool g_linux_webview_schemes_registered = false;
@@ -271,6 +272,12 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << ": " << url2.ToUTF8();
 
 #ifdef __WIN32__
+    wxString previous_browser_args;
+    const bool had_previous_args = wxGetEnv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", &previous_browser_args);
+    if (g_force_single_process) {
+        wxSetEnv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", wxS("--single-process"));
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": enabling WebView2 single-process mode for creation.";
+    }
     wxWebView* webView = new WebViewEdge;
 #elif defined(__WXOSX__)
     wxWebView *webView = new WebViewWebKit;
@@ -280,7 +287,7 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     if (webView) {
         webView->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
 #ifdef __WIN32__
-        webView->SetUserAgent(wxString::Format("BBL-Slicer/v%s (%s) Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        webView->SetUserAgent(wxString::Format("Creality-Slicer/v%s (%s) Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.52", SLIC3R_VERSION, 
             Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
@@ -301,14 +308,14 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
             }
             if (isUOS) {
                 webView->SetUserAgent(
-                    wxString::Format("BBL-Slicer/v%s (%s; UOS)", SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
+                    wxString::Format("Creality-Slicer/v%s (%s; UOS)", SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
                 setenv("WEBKIT_DISABLE_TLS_VERIFICATION", "0", 0);
                 setenv("G_TLS_GNUTLS_PRIORITY", "NORMAL:-VERS-ALL:+VERS-TLS1.2", 1);
                 setenv("WEBKIT_TLS_ERRORS_POLICY", "ignore-tls-errors", 0);
                 BOOST_LOG_TRIVIAL(info) << "Set TLS 1.2 as default for WebView on Linux";
             } else {
                 webView->SetUserAgent(
-                    wxString::Format("BBL-Slicer/v%s (%s; Linux) Mozilla/5.0 (X11; Linux) AppleWebKit/537.36 (KHTML, like Gecko)",
+                    wxString::Format("Creality-Slicer/v%s (%s; Linux) Mozilla/5.0 (X11; Linux) AppleWebKit/537.36 (KHTML, like Gecko)",
                                      SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
             }
             if (!g_linux_webview_schemes_registered) {
@@ -324,13 +331,14 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         // And the memory: file system
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-        webView->SetUserAgent(wxString::Format("BBL-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
+        webView->SetUserAgent(wxString::Format("Creality-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
                                                Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
 #endif
 #ifdef __WXMAC__
         WKWebView * wkWebView = (WKWebView *) webView->GetNativeBackend();
         Slic3r::GUI::WKWebView_setTransparentBackground(wkWebView);
 #endif
+
         auto addScriptMessageHandler = [] (wxWebView *webView) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": begin to add script message handler for wx.";
             Slic3r::GUI::wxGetApp().set_adding_script_handler(true);
@@ -363,6 +371,12 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     webView->SetRefData(new WebViewRef(webView));
     g_webviews.push_back(webView);
 #ifdef __WIN32__
+    if (g_force_single_process) {
+        if (had_previous_args)
+            wxSetEnv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", previous_browser_args);
+        else
+            wxUnsetEnv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+    }
     if (!g_webview_atexit_registered) {
         g_webview_atexit_registered = true;
         std::atexit([] { WebView::DestroyAll(); });
@@ -370,6 +384,16 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 #endif
     return webView;
 }
+#if wxUSE_WEBVIEW_EDGE
+void WebView::SetForceSingleProcess(bool force_single_process)
+{
+#ifdef __WIN32__
+    g_force_single_process = force_single_process;
+#else
+    (void)force_single_process;
+#endif
+}
+#endif
 #if wxUSE_WEBVIEW_EDGE
 bool WebView::CheckWebViewRuntime()
 {
@@ -527,7 +551,7 @@ void WebView::RecreateAll()
         void* backend_before = webView->GetNativeBackend();
         BOOST_LOG_TRIVIAL(warning) << "[RECREATE_ALL] Reloading webView " << (void*) webView << ". Backend BEFORE: " << backend_before;
 
-        webView->SetUserAgent(wxString::Format("BBL-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
+        webView->SetUserAgent(wxString::Format("Creality-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
                                                dark ? "dark" : "light"));
         webView->Reload();
 

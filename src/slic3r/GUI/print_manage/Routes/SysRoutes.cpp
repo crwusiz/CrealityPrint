@@ -3,6 +3,7 @@
 #include "../AppUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/LoginDialog.hpp"
+#include "slic3r/GUI/SystemId/SystemId.hpp"
 
 using namespace Slic3r::GUI;
 
@@ -17,6 +18,14 @@ namespace DM{
             commandJson["data"] = wxGetApp().dark_mode();
 
             AppUtils::PostMsg(browse, commandJson);
+            return true;
+        });
+
+        this->Handler({"get_system_id"}, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            nlohmann::json systemId;
+            systemId["command"] = "get_system_id";
+            systemId["data"]    = SystemId::get_system_id();
+            AppUtils::PostMsg(browse, systemId);
             return true;
         });
 
@@ -58,8 +67,11 @@ namespace DM{
             });
         this->Handler({ "switch_to_tab" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
             std::string tabname = json_data["tabName"];
+            std::string pageName = json_data["pageName"];
             wxGetApp().switch_to_tab(tabname);
-
+            if (!pageName.empty()) {
+                wxGetApp().swith_community_sub_page(pageName);
+            }
             return true;
             });
     

@@ -20,13 +20,13 @@ namespace Slic3r
 
     struct AssimpCalculate
     {
-        //获取法向量
+        // Compute normal of a triangle
         Vec3f compute_triangle_normal(const Vec3f& v0, const Vec3f& v1, const Vec3f& v2);
 
-        //获取模型几何中心
+        // Compute global center of a mesh
         Vec3f compute_global_center(const std::vector<Vec3f>& vertices);
 
-        //通过点乘判断法向量，调整面索引
+        // Fix face normal orientation so they point outward
         void Fix_Normal_Orientation(std::vector<Vec3f>& vertices, std::vector<Vec3i32>& faces);
     };
 
@@ -67,7 +67,7 @@ namespace Slic3r
             Vec3f dir = face_center - global_center;
             if (normal.dot(dir) < 0.0f)
             {
-                std::swap(face(1), face(2)); // 翻转顶点顺序
+                std::swap(face(1), face(2)); // Reverse vertex order
             }
         }
     }
@@ -87,11 +87,11 @@ namespace Slic3r
 
         Assimp::Importer importer;
         const aiScene* scene = importer.ReadFile(path,
-            aiProcess_Triangulate |             // 三角化处理
-            aiProcess_FindInvalidData |         //查找修复无效的数据
-            aiProcess_GenSmoothNormals |        // 生成平滑法线
-            aiProcess_ValidateDataStructure|    // 检查数据结构有效性
-            aiProcess_PreTransformVertices      //将顶点转换为世界坐标系
+            aiProcess_Triangulate |             // Ensure all faces are triangles
+            aiProcess_FindInvalidData |         // Find and fix invalid data
+            aiProcess_GenSmoothNormals |        // Generate smooth normals
+            aiProcess_ValidateDataStructure|    // Validate data structure
+            aiProcess_PreTransformVertices      // Pre-transform vertices into target coordinate system
         );
 
         if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
@@ -103,7 +103,7 @@ namespace Slic3r
         std::vector<Vec3i32> faces;
         int offset = 0;
 
-        // 直接遍历所有网格
+        // Directly iterate meshes and accumulate geometry
         auto stage_unit = scene->mNumMeshes / LOAD_STEP_STAGE_UNIT_NUM + 1;
         for (unsigned i = 0; i < scene->mNumMeshes; i++)
         {
@@ -123,19 +123,19 @@ namespace Slic3r
             aiMesh* mesh = scene->mMeshes[i];
             if (!mesh) continue;
 
-            // 顶点数据
+            // Load vertices
             for (unsigned j = 0; j < mesh->mNumVertices; j++)
             {
                 aiVector3D& pos = mesh->mVertices[j];
                 vertices.push_back(Vec3f(pos.x, pos.y, pos.z));
             }
 
-            // 面索引
+            // Load faces
             for (unsigned m = 0; m < mesh->mNumFaces; m++)
             {
                 aiFace& face = mesh->mFaces[m];
                 if (face.mNumIndices != 3)
-                    continue; // 确保三角化
+                    continue; // Ensure triangle
 
                 faces.push_back(Vec3i32(face.mIndices[0] + offset, face.mIndices[1] + offset, face.mIndices[2] + offset));
             }
@@ -143,9 +143,9 @@ namespace Slic3r
             offset += mesh->mNumVertices;
         }
 
-        //适配处理(3ds\dae)
-        //由于不同的建模软件有不同坐标系
-        //会导致导入的模型方位也会不同
+        // Axis handling for some formats (3ds / dae)
+        // Different modeling tools use different coordinate systems
+        // which leads to different imported model orientations
         const char* dot = strrchr(path, '.');
         if (dot)
         {
@@ -165,26 +165,25 @@ namespace Slic3r
             }
         }
 
-        // 创建三角网格
+        // Build triangle mesh from vertices and faces
         TriangleMesh mesh(vertices, faces);
 
-        // 检查网格是否有效
+        // Check whether mesh volume is valid
         if (mesh.volume() <= 0.0)
         {
-            // 修复法线方向
+            // Try to fix normal orientation
             AssimpCalculate AssCalc;
             AssCalc.Fix_Normal_Orientation(vertices, faces);
             mesh = TriangleMesh(vertices, faces);
 
-            // 再次检查体积
+            // Recompute volume again; if still invalid we could flip triangles
             //if (mesh.volume() <= 0.0)
             //{
-            //    // 如果仍然无效，尝试翻转所有面片的法线
             //    mesh.flip_triangles();
             //}
         }
 
-        // 添加模型对象
+        // Derive model object name from file path
         std::string object_name;
         const char* last_slash = strrchr(path, DIR_SEPARATOR);
         object_name.assign((last_slash == nullptr) ? path : last_slash + 1);

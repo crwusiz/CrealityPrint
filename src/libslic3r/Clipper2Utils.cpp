@@ -170,7 +170,7 @@ ExPolygons union_ex_2(const ExPolygons &expolygons)
     return results;
 }
 
-// ¶Ô ExPolygons ½øÐÐÆ«ÒÆ
+// Offset ExPolygons
 ExPolygons offset_ex_2(const ExPolygons &expolygons, double delta)
 {    
     Clipper2Lib::Paths64 subject = Slic3rExPolygons_to_Paths64(expolygons);

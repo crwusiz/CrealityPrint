@@ -190,7 +190,7 @@ bool DataCenter::DeviceHasBoxColor(std::string address)
 //      just return directly
 nlohmann::json DataCenter::_get_acive_device()
 {
-    nlohmann::json device_local(nullptr), device_cxy(nullptr);
+    nlohmann::json device_local(nullptr), device_cxy(nullptr), device_fluidd(nullptr);
     try
     {
         if (p->m_data.contains("data") && p->m_data["data"].contains("currentActivePrinterMac") && p->m_data["data"].contains("printerList"))
@@ -216,6 +216,9 @@ nlohmann::json DataCenter::_get_acive_device()
                         }
                         else if (printer["deviceType"] == 1) {
                             device_cxy = printer;
+                        } else if (printer["deviceType"] == 1001) 
+                        {
+                            device_fluidd = printer;
                         }
 
                         if (!device_local.empty() && !device_cxy.empty())
@@ -236,6 +239,11 @@ nlohmann::json DataCenter::_get_acive_device()
     }
     else
     {
+        if (device_local.empty() && device_cxy.empty() && !device_fluidd.empty()) 
+        {
+            return device_fluidd;
+        }
+
         if (device_local.empty()) 
         {
             return device_cxy;

@@ -30,6 +30,7 @@
 #include "slic3r/GUI/WebUserLoginDialog.hpp"
 #include "slic3r/GUI/LoginDialog.hpp"
 #include "slic3r/GUI/FileDownloader.hpp"
+#include "slic3r/GUI/SystemId/SystemId.hpp"
 #include "slic3r/GUI/print_manage/utils/cxmdns.h"
 #include "slic3r/GUI/print_manage/Utils.hpp"
 #include "Widgets/HoverBorderIcon.hpp"
@@ -1164,9 +1165,6 @@ void GUI_App::post_openlink_cmd(std::string link)
         m_Res["url"] = url;
         wxString strJS = wxString::Format("window.handleStudioCmd(%s)", m_Res.dump(-1, ' ', false, json::error_handler_t::ignore));
         GUI::wxGetApp().run_script(strJS);
-
-        // ��ʾ��Ϣ��
-        //wxMessageBox(ss.str(), "��Ϣ�����", wxOK | wxICON_INFORMATION);
 
     }
 }
@@ -2543,6 +2541,11 @@ void GUI_App::init_download_path()
 #if wxUSE_WEBVIEW_EDGE
 void GUI_App::init_webview_runtime()
 {
+#ifdef __WIN32__
+    const bool single_process = app_config->get_bool("webview_single_process");
+    WebView::SetForceSingleProcess(single_process);
+    BOOST_LOG_TRIVIAL(info) << "[WebViewRuntime] config webview_single_process=" << (single_process ? "true" : "false");
+#endif
     // Check WebView Runtime
     if (!WebView::CheckWebViewRuntime()) {
         int nRet = wxMessageBox(_L("Creality Print requires the Microsoft WebView2 Runtime to operate certain features.\nClick Yes to install it now."),
@@ -2559,8 +2562,8 @@ void GUI_App::reinstall_webview_runtime()
         _L("Creality Print requires the Microsoft WebView2 Runtime,But it has been found that the abnormal operation of Microsoft WebView2 may be related to the installation of Microsoft Edge. \nClick the Yes to reinstall Microsoft Edge"),
         _L("WebView2 Runtime"), wxYES_NO);
     if (nRet == wxYES) {
-        const bool reinstall_ok = WebView::ReInstallWebViewRuntime();
-        if (!reinstall_ok) {
+        //const bool reinstall_ok = WebView::ReInstallWebViewRuntime();
+        if (!false) {
             // Show a dialog with a clickable tutorial link.
             wxDialog dlg(mainframe ? mainframe : nullptr, wxID_ANY, _L("WebView2 Runtime"),
                 wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
@@ -2693,10 +2696,6 @@ void GUI_App::init_app_config()
     //BBS: remove GCodeViewer as seperate APP logic
     if (!app_config)
         app_config = new AppConfig();
-    if (is_copy_after) {
-        //6.0 is max_recent_count=18.。 so here set 30
-        app_config->set("max_recent_count", "30");
-    }
     // app_config = new AppConfig(is_editor() ? AppConfig::EAppMode::Editor : AppConfig::EAppMode::GCodeViewer);
     
     m_config_corrupted = false;
@@ -2704,6 +2703,10 @@ void GUI_App::init_app_config()
 	m_app_conf_exists = app_config->exists();
 	if (m_app_conf_exists) {
         std::string error = app_config->load();
+        if (is_copy_after) {
+            //6.0 is max_recent_count=18.。 so here set 30
+            app_config->set("max_recent_count", "30");
+        }
         if (!error.empty()) {
             // Orca: if the config file is corrupted, we will show a error dialog and create a default config file.
             m_config_corrupted = true;
@@ -2776,6 +2779,7 @@ std::string GetMACAddress() {
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <net/if.h>
+
 
 std::string GetMACAddress() {
     struct ifaddrs *ifap, *ifaptr;
@@ -2939,8 +2943,9 @@ std::map<std::string, std::string> GUI_App::get_modellibrary_header()
     // 供前端环境识别：应用版本与 WebView 类型（跨平台一致）
     extra_headers.emplace("__CXY_APP_VER_", CREALITYPRINT_VERSION);
     extra_headers.emplace("__CXY_WEBVIEW_TYPE_", "creality_print_slice");
-     extra_headers.emplace("__CXY_PLATFORM_", "11");
-      
+    extra_headers.emplace("__CXY_PLATFORM_", "11");
+    extra_headers.emplace( "__CXY_DUID_", Slic3r::GUI::SystemId::get_system_id());
+     
     //extra_headers.emplace("_DARK_MODE", dark_mode() ? "1" : "0");
     return extra_headers;
 }
@@ -3589,7 +3594,7 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
     // !!! Initialization of UI settings as a language, application color mode, fonts... have to be done before first UI action.
     // Like here, before the show InfoDialog in check_older_app_config()
 
-    bool is_first_run = !boost::filesystem::exists(data_dir() + "/config.ini") || 
+    bool is_first_run = !boost::filesystem::exists(data_dir() + "/Creality.conf") || 
                         app_config->get("language").empty();
 #ifdef __APPLE__
     if (is_first_run) {
@@ -4575,25 +4580,26 @@ void GUI_App::UpdateFrameDarkUI(wxFrame* dlg)
 void GUI_App::UpdateDVCDarkUI(wxDataViewCtrl* dvc, bool highlited/* = false*/)
 {
 #ifdef __WINDOWS__
+    if (!dvc)
+        return;
+
     UpdateDarkUI(dvc, highlited ? dark_mode() : false);
 #ifdef _MSW_DARK_MODE
-    //dvc->RefreshHeaderDarkMode(&m_normal_font);
     HWND hwnd;
     if (!dvc->HasFlag(wxDV_NO_HEADER)) {
-        hwnd = (HWND) dvc->GenericGetHeader()->GetHandle();
-        hwnd = GetWindow(hwnd, GW_CHILD);
-        if (hwnd != NULL)
-            NppDarkMode::SetDarkListViewHeader(hwnd);
-//         auto hc = dvc->GenericGetHeader();
-//         UpdateDarkUI(hc, highlited ? dark_mode() : false);
-//         update_dark_children_ui(hc);
-// 		auto orig_col = dvc->GetForegroundColour();
-// 		auto text_col = StateColor::darkModeColorFor(orig_col);
-// 
-        wxItemAttr attr;
-//        attr.SetTextColour(dark_mode()?"#FFFFFF":"#000000");
-        attr.SetFont(::Label::Body_13);
-        dvc->SetHeaderAttr(attr);
+        auto header = dvc->GenericGetHeader();
+        if (header) {
+            hwnd = (HWND)header->GetHandle();
+            if (hwnd != NULL) {
+                hwnd = GetWindow(hwnd, GW_CHILD);
+                if (hwnd != NULL)
+                    NppDarkMode::SetDarkListViewHeader(hwnd);
+            }
+
+            wxItemAttr attr;
+            attr.SetFont(::Label::Body_13);
+            dvc->SetHeaderAttr(attr);
+        }
     }
 #endif //_MSW_DARK_MODE
    /* if (dvc->HasFlag(wxDV_ROW_LINES))
@@ -4796,7 +4802,7 @@ void GUI_App::webGetDevicesInfo(json& result)
     //                        return i;
     //                    }
     //                }
-    //                return order.size(); // �����������������������ȼ�
+    //                return order.size(); // Lowest priority if no keyword matches
     //            };
 
     //            return getPriority(pi.name) < getPriority(pi1.name);
@@ -6159,6 +6165,32 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     if (mainframe->m_webview) {
                         mainframe->m_webview->SendRecentList(INT_MAX);
                     }
+
+                    wxTimer* timer = new wxTimer();
+                    timer->Bind(wxEVT_TIMER, [this, timer](wxTimerEvent&) {
+                        // when reload_homepage() is called, will trigger  this "get_account_info", so we use  m_app_launch_initialized to
+                        // make sure only upload once
+                        if (wxGetApp().is_privacy_checked() && !m_app_launch_initialized) {
+                            m_app_launch_initialized = true;
+                            GUI::wxGetApp().check_app_first_launch_info();
+                            // software launch, upload analytics data here
+                            AnalyticsDataUploadManager::getInstance()
+                                .triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
+                                                    {AnalyticsDataEventType::ANALYTICS_SOFTWARE_LAUNCH,
+                                                     AnalyticsDataEventType::ANALYTICS_ACCOUNT_DEVICE_INFO});
+
+                            if (wxGetApp().app_config->get_bool("software_crash")) {
+                                AnalyticsDataUploadManager::getInstance()
+                                    .triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_CRASH,
+                                                        {AnalyticsDataEventType::ANALYTICS_SOFTWARE_CRASH});
+                                wxGetApp().app_config->set_bool("software_crash", false);
+                                wxGetApp().app_config->save();
+                            }
+                        }
+                        timer->Stop();
+                        delete timer;
+                    });
+                    timer->StartOnce(8000);
                 }
             }else if(command_str.compare("get_account_info") == 0){
                 CallAfter([this] {
@@ -6615,8 +6647,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 }
                 if (input_files.size()) {
                     auto   filePath = input_files[0];
-                    size_t endPos   = filePath.find_last_of("\\");             // 找到倒数第一个反斜杠的位�?
-                    size_t startPos = filePath.find_last_of("\\", endPos - 1); // 找到倒数第二个反斜杠的位�?
+                    size_t endPos   = filePath.find_last_of("\\");             // Find last backslash
+                    size_t startPos = filePath.find_last_of("\\", endPos - 1); // Find second-to-last backslash
 
                     if (startPos != std::string::npos && endPos != std::string::npos) {
                         std::string modelGroupId = filePath.substr(startPos + 1, endPos - startPos - 1);
@@ -7312,6 +7344,13 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 AppConfig* config = GUI::wxGetApp().app_config;
                 config->set("region", region);
                 wxGetApp().update_publish_status();
+            }
+            else if (command_str.compare("get_system_id") == 0) {
+                nlohmann::json systemInfo;
+                systemInfo["command"] = "get_system_id";
+                systemInfo["data"] = SystemId::get_system_id();
+                wxString strJS        = wxString::Format("handleStudioCmd(%s)", systemInfo.dump(-1, ' ', true));
+                wxGetApp().CallAfter([this, strJS] { run_script(strJS.ToStdString()); });
             }
         }
     }
@@ -11661,8 +11700,10 @@ void GUI_App::OpenEshopRecommendedGoods(const std::string& materialColor, const 
     data["materialColor"] = materialColor;
     data["site"] = country_code;
     // Required tracking fields
-    data["utm_source"] = "creality_cloud";
-    data["utm_medium"] = "creality_print";
+    json dataTrace = json::object();
+    dataTrace["utm_medium"] = "creality_print";
+    dataTrace["utm_source"] = "creality_cloud";
+    data["trace"] = dataTrace;
     body.push_back(data);
     // Set required headers and post request
     Http::set_extra_headers(this->get_extra_header());

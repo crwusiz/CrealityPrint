@@ -1381,10 +1381,10 @@ extern "C" void preproc(
         until all connected components (that are created during the current mcDispatch call) are destroyed.
         Thus, each such connected component will maintain its own (reference counted) pointer.
 
-        These variables are used when populating client output arrays during �mcGetConnectedComponentData�.
-        One example of this usage is when the client requests a connected component�s face map. In the cases
+        These variables are used when populating client output arrays during mcGetConnectedComponentData.
+        One example of this usage is when the client requests a connected component's face map. In the cases
         where polygon partitioning occurs during the respective mcDispatch call then some of these shared_ptrs like
-        �source_hmesh_child_to_usermesh_birth_face� will be used to generate the correct mapping from
+        source_hmesh_child_to_usermesh_birth_face will be used to generate the correct mapping from
         the faces of the connected component  to the
         client mesh (which will be internally modified due to polygon partitioning). Here the client mesh
         corresponds to the input source mesh if the connected component is a fragment, and the cut mesh otherwise.

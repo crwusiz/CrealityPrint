@@ -77,10 +77,13 @@ public:
     void updateData(const wxString& modelName, const wxString& beforProcessing, const wxString& afterProcessing);
 
 private:
+    wxString wrapText(const wxString& text, wxDC& dc, int maxWidth);
+    
     wxBoxSizer* m_mainSizer = nullptr;
     wxStaticText* m_modelName = nullptr;
     wxStaticText* m_beforeProcessing = nullptr;
     wxStaticText* m_afterProcessing = nullptr;
+    int m_columnWidth = 0;
 };
 
 class AICloudService_ResultDialog : public DPIDialog

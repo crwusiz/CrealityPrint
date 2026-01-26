@@ -128,7 +128,7 @@ private:
     void         OnPaint(wxPaintEvent& event);
 
 private:
-    wxTreeItemId m_lastHoverItem; // 记录上一次的悬停项
+    wxTreeItemId m_lastHoverItem; // Record the last hovered item
 };
 
 class ParamsPanel : public wxPanel

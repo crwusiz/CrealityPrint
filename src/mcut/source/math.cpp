@@ -517,9 +517,9 @@
         }
 
         int Rcross = 0; /* number of right edge/ray crossings */
-        int Lcross = 0; /* number ofleft edge/ray crossings */
+        int Lcross = 0; /* number of left edge/ray crossings */
 
-        /* For each edge e = (i�lj), see if crosses ray. */
+        /* For each edge e = (i,j), see if crosses ray. */
         for (int i = 0; i < polygon_vertex_count; i++) {
 
             /* First check if q = (0, 0) is a vertex. */

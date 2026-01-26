@@ -345,6 +345,7 @@ ObjectList::ObjectList(wxWindow* parent) : wxDataViewCtrl(parent, wxID_ANY, wxDe
     Bind(EVT_UPDATE_DEVICES, [this](wxCommandEvent& evt) { 
         // mark to update device list
         m_device_list_dirty_mark = true;
+        m_device_list_dirty_mark_fluidd = true;
         if (m_device_list_popup_opened) {
             wxGetApp().plater()->get_current_canvas3D()->render();
         }
@@ -2221,20 +2222,20 @@ static TriangleMesh create_mesh(const std::string& type_name, const BoundingBoxf
     TriangleMesh mesh;
     if (type_name == "Cube")
         // Sitting on the print bed, left front front corner at (0, 0).
-        mesh = TriangleMesh(its_make_cube(20.0f, 20.0f, 20.0f));
+        mesh = TriangleMesh(its_make_cube(side, side, side));
     else if (type_name == "Cylinder")
         // Centered around 0, sitting on the print bed.
         // The cylinder has the same volume as the box above.
-        mesh = TriangleMesh(its_make_cylinder(20.0f, 30.0f));
+        mesh = TriangleMesh(its_make_cylinder(0.5 * side, side));
     else if (type_name == "Sphere")
         // Centered around 0, half the sphere below the print bed, half above.
         // The sphere has the same volume as the box above.
-        mesh = TriangleMesh(its_make_sphere(20.0f, PI / 18));
+        mesh = TriangleMesh(its_make_sphere(0.5 * side, PI / 90));
     else if (type_name == "Slab")
         // Sitting on the print bed, left front front corner at (0, 0).
         mesh = TriangleMesh(its_make_cube(bb.size().x() * 1.5, bb.size().y() * 1.5, bb.size().z() * 0.5));
     else if (type_name == "Cone")
-        mesh = TriangleMesh(its_make_cone(20.0f, 30.0f));
+        mesh = TriangleMesh(its_make_cone(0.5 * side, side));
     else if (type_name == "Disc")
         // mesh.ReadSTLFile((Slic3r::resources_dir() + "/creality_models/helper_disk.stl").c_str(), true, nullptr);
         mesh = TriangleMesh(its_make_cylinder(5.0f, 0.3f));
@@ -7422,8 +7423,10 @@ void ObjectList::render_printer_preset_by_ImGui(bool folded_view)
 
     /**************************************************************************************/
     // is Creality vendor
-    bool wifi_icon_show = wxGetApp().preset_bundle->is_cx_vendor();
-    ImVec2 wifi_icon_size = wifi_icon_show ? icon_size : ImVec2{0, 0};
+    bool isCrealityVendor = wxGetApp().preset_bundle->is_cx_vendor();
+    //ImVec2 wifi_icon_size = isCrealityVendor ? icon_size : ImVec2{0, 0};
+    ImVec2 wifi_icon_size = icon_size ;
+
 
     // printer model img
     update_printer_model_texture();
@@ -7701,9 +7704,13 @@ void ObjectList::render_printer_preset_by_ImGui(bool folded_view)
     }
      
     auto deviceListID = "##DeviceList";
-    if (wifi_icon_show)
-    { 
+    if (isCrealityVendor) {
         update_printer_device_list_data("Creality");
+    } 
+    else 
+    {
+        update_other_printer_device_list_data();
+    }
         ImGui::SameLine();
         auto originCursorY     = window->DC.CursorPos.y;
         window->DC.CursorPos.x = p_max.x + 2.0f * scale;
@@ -7763,7 +7770,7 @@ void ObjectList::render_printer_preset_by_ImGui(bool folded_view)
 
         window->DC.CursorPos.y = originCursorY;
         ImGui::Dummy(ImVec2{0, p_max.y - p_min.y});
-    }
+
 
     /*ImGui::SameLine();
 
@@ -8178,7 +8185,7 @@ void ObjectList::ensure_current_item_visible_imgui()
     }
 }
 
-// updating model texture may fail�� call GLTexture.vaild() check it
+// Updating model texture may fail; call GLTexture::valid() to check it
 void ObjectList::update_printer_model_texture()
 { 
     PresetBundle& preset_bundle = *wxGetApp().preset_bundle;
@@ -8272,6 +8279,73 @@ void ObjectList::update_printer_device_list_data(std::string vendor, bool bForce
                 {device.name, coverPath, device.modelName, 
                 device.address, device.mac, device.deviceState, 
                 device.online, is_current, device.deviceType});
+        }
+    }
+}
+
+void ObjectList::update_other_printer_device_list_data(bool bForce)
+{
+    if (bForce == false && m_device_list_dirty_mark_fluidd == false)
+        return;
+
+    std::srand(std::time(nullptr));
+    m_device_list_dirty_mark_fluidd = false;
+    auto devicesData = DM::DataCenter::Ins().GetData();
+    auto printerData         = devicesData["data"];
+    const auto& model2CoverMap = wxGetApp().app_config->get_model2cover_path();
+    PresetBundle& preset_bundle       = *wxGetApp().preset_bundle;
+    auto          preset              = preset_bundle.printers.get_edited_preset();
+    auto          current_printer_model       = preset.config.opt_string("printer_model");
+    auto          current_printer_address      = preset.config.opt_string("print_host");
+
+    m_device_list_data.clear();
+    for (const auto& group : printerData["printerList"]) 
+    {
+        if (!group.contains("list")) 
+        {
+            continue;
+        }
+        int key_index = 0;
+        for (const auto& printer : group["list"]) 
+        {
+            DM::Device device = DM::Device::deserialize(const_cast<nlohmann::json&>(printer));
+            // model img
+            //auto printer_model = vendor + " " + device.modelName;
+
+            if (device.deviceType != 1001) // fluidd机型
+            {
+                continue;
+            }
+
+            auto key  = wxGetApp().app_config->make_model2cover_path_key("", current_printer_model);
+            auto iter = model2CoverMap.find(key);
+            auto coverPath = Slic3r::resources_dir() + "/images/printer_default.png";
+            if (iter != model2CoverMap.end())
+            {
+                coverPath = iter->second;
+            }
+            bool              is_current     = false;
+            const DM::Device& current_device = DM::DataCenter::Ins().get_current_device_data();
+            if (current_device.valid)
+            {
+                is_current = current_device.mac == device.mac;
+            }
+            auto key_name = device.name.empty() ? (device.modelName + device.mac + device.address) : device.name;
+            if (device.deviceType == 1)
+            {
+                key_name += "_##CXYDevice##_" + std::to_string(std::rand());
+            }
+            key_name += "_" + std::to_string(key_index++);
+            m_device_list_data.push(key_name, 
+                {device.name, coverPath, device.modelName, 
+                device.address, device.mac, device.deviceState, 
+                device.online, is_current, device.deviceType, true,
+                device.apiKey, device.deviceUI, device.caFile, device.hostType, device.ignoreCertRevocation});
+
+            if (is_current && current_printer_address.empty()){
+                set_cur_device_by_attribute(device.apiKey, device.address, device.caFile, device.hostType, device.ignoreCertRevocation);
+            }
+
         }
     }
 }
@@ -8381,27 +8455,60 @@ void ObjectList::draw_device_list_content()
     };
 
     // device not connect warning
+    bool isCrealityVendor = wxGetApp().preset_bundle->is_cx_vendor();
     const DM::Device& current_device = DM::DataCenter::Ins().get_current_device_data();
     if (!(current_device.valid && !current_device.address.empty())) {
         auto originCursorY = ImGui::GetCursorPosY();
         // auto label         = _u8L("Device List Not Connect Warning").c_str();
         auto label_str     = _u8L("Device List Not Connect Warning");
         const char* label         = label_str.c_str();
+        std::vector<std::string> lines;
+        if (!isCrealityVendor) {
+            //lines.push_back("*绑定Other设备后,可将Gcode文件发送到打印机");
+            //lines.push_back("注:Other设备不可进行耗材同步和耗材映射");
+            lines.push_back( _u8L("*After binding an \"Other\" device, you can send G-code files to the printer"));
+            lines.push_back( _u8L("Note: \"Other\" devices do not support filament sync or mapping"));
+        } else {
+            lines.push_back(label);
+        }
+        float wrap_width        = (336 + 15 - 2.0f) * scale;
+        float line_height       = ImGui::GetTextLineHeight();
+        float total_text_height = 0.0f;
+        for (const auto& line : lines) {
+            ImVec2 line_size  = ImGui::CalcTextSize(line.c_str());
+            int    line_count = 1 + (int) (line_size.x / wrap_width);
+            total_text_height += line_count * line_height;
+        }
+        ImGui::SetCursorPosY(originCursorY + rowHeight / 2 - total_text_height / 2);
+        float current_y = ImGui::GetCursorPosY();
 
-        // ver center
-        ImVec2 lab_size = ImGui::CalcTextSize(label);
-        float  wrap_width    = (336 + 15 - 2.0f) * scale;
-        float  line_height   = ImGui::GetTextLineHeight();                         
-        int    line_count    = 1 + (int) (lab_size.x / wrap_width);
-        float  text_height   = line_count * line_height;
-        ImGui::SetCursorPosY(originCursorY + rowHeight / 2 - text_height / 2);
+        auto text_color = is_dark ? ImVec4{1.0f, 0.5294f, 0.0392f, 1.0f} : ImVec4{1.0f, 0.4902f, 0.0f, 1.0f};
 
-        auto text_color = is_dark
-                            ? ImVec4{1.0f, 0.5294f, 0.0392f, 1.0f} 
-                            : ImVec4{1.0f, 0.4902f, 0.0f, 1.0f};
-        ImGui::PushStyleColor(ImGuiCol_Text, text_color);
-        ImGui::TextWrapped(label);
-        ImGui::PopStyleColor(1);
+        for (size_t i = 0; i < lines.size(); ++i) 
+        {
+            const auto& line = lines[i];
+            ImGui::SetCursorPosY(current_y);
+
+            if (!isCrealityVendor) {
+                if (i == 0) {
+                    ImGui::TextWrapped(line.c_str());
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Text, text_color);
+                    ImGui::TextWrapped(line.c_str());
+                    ImGui::PopStyleColor(1);
+                }
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, text_color);
+                ImGui::TextWrapped(line.c_str());
+                ImGui::PopStyleColor(1);
+            }
+
+            // 更新下一行的Y轴位置（加上当前行的高度）
+            ImVec2 line_size  = ImGui::CalcTextSize(line.c_str());
+            int    line_count = 1 + (int) (line_size.x / wrap_width);
+            current_y += line_count * line_height;
+        }
+
         ImGui::SetCursorPosY(originCursorY + rowHeight);
         ImGui::Separator();
     }
@@ -8431,6 +8538,10 @@ void ObjectList::draw_device_list_content()
             if (ImGui::InvisibleButton("##invisibleBtn" + count, { ImVec2{(336 + 15) * scale, rowHeight} }))
             {
                 set_cur_device_by_mac(it.second.mac);
+                if (!isCrealityVendor) 
+                {
+                    set_cur_device_by_attribute(it.second.apiKey, it.second.address, it.second.caFile, it.second.hostType, it.second.ignoreCertRevocation);
+                }
             }
 
             col            = 0;
@@ -8570,6 +8681,23 @@ bool ObjectList::set_cur_device_by_mac(std::string mac_addr)
     return true;
 }
 
+bool ObjectList::set_cur_device_by_attribute(std::string apiKey, std::string deviceAddress, std::string caFile, int hostType, bool ignoreCertRevocation)
+{
+    DynamicPrintConfig* config  = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    if (!config)  
+        return false;
+    PrintHostType type = static_cast<PrintHostType>(hostType);
+    config->erase("host_type");
+    config->set_key_value("host_type", new ConfigOptionEnum<PrintHostType>(type));
+    config->opt_string("printhost_apikey") = apiKey;
+    config->opt_string("print_host")       = deviceAddress;
+    config->set_key_value("printhost_ssl_ignore_revoke",new ConfigOptionBool(ignoreCertRevocation));
+    config->opt_string("printhost_cafile") = caFile;
+
+    return true;
+}
+
+
 bool ObjectList::bind_phy_printer_by_ip_or_name(std::string ip_or_name)
 {
     for (const auto& it : m_device_list_data.datas)
@@ -8625,7 +8753,7 @@ void ObjectList::device_list_data::push(std::string name, device_list_item_data 
     }
 }
 
-// manager duplicate_deivce, such as WAN��LAN device both exists
+// Manage duplicate devices, such as both WAN and LAN device entries existing
 void ObjectList::device_list_data::manager_duplicate_deivce(std::pair<std::string, std::vector<std::string>>& cloud_local_pair)
 {
     // duplicate removal

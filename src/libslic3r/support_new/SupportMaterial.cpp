@@ -2359,7 +2359,7 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::top_contact_layers(const P
 #endif // SLIC3R_DEBUG
                 );
 
-                // 皮带机型下，确保最终接触/致密接口仅覆盖于 enforcer_cubes（layer_support_areas[layer_id]）之上。
+                // Ensure contact, overhang and enforcer polygons stay within layer_support_areas[layer_id]
                 const bool      belt_machine = m_print_config->machine_is_belt.value;
                 const Polygons* support_mask = (belt_machine && !layer_support_areas[layer_id].empty()) ? &layer_support_areas[layer_id] :
                                                                                                           nullptr;

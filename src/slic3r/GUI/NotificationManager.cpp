@@ -150,7 +150,18 @@ NotificationManager::PopNotification::PopNotification(const NotificationData &n,
 {
 
 }
-
+json NotificationManager::get_all_notification()
+{
+	json j2 = json::array();
+	for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
+		json j;
+		j["type"] = notification->get_type();
+		j["level"] = notification->get_data().level;
+		//j["text"] = notification->get_text1();
+        j2.push_back(j);
+    }
+	return j2;
+}
 // We cannot call plater()->get_current_canvas3D() from constructor, so we do it here
 void NotificationManager::PopNotification::ensure_ui_inited()
 {
@@ -2563,9 +2574,14 @@ void NotificationManager::render_notifications(GLCanvas3D &canvas, float overlay
 	bool overflow = m_move_from_overlay && !m_in_preview;
 	
 	bool b_Arrange = false;
+	bool has_visible_content = false;
 	for (const auto& notification : m_pop_notifications) {
         auto level = notification->get_data().level;
         auto state = notification->get_state();
+        if (state == PopNotification::EState::Hidden || state == PopNotification::EState::Finished)
+            continue;
+
+        has_visible_content = true;
         auto type = notification->get_type();
         if (type == NotificationType::BBLObjectInfo && state != PopNotification::EState::Hidden && state != PopNotification::EState::Finished) {
             notification->render(canvas, bottom_up_last_y, overflow, overlay_width * m_scale);
@@ -2595,14 +2611,23 @@ void NotificationManager::render_notifications(GLCanvas3D &canvas, float overlay
 	//static int child_view_count = 1;
 
     ImVec2 win_size = ImVec2(430.0 * canvas.get_scale(), h);
+    if (!has_visible_content)
+        win_size.y = 0.0f;
     ImGui::SetNextWindowPos(bias, ImGuiCond_Always, ImVec2(0.0, 1.0));
     ImGui::SetNextWindowSize(win_size);
 
 
     int window_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                        ImGuiWindowFlags_NoBackground; // ImGuiWindowFlags_NoBackground
+    if (!has_visible_content)
+        window_flags |= ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav;
     
 	if (ImGui::Begin("##notification_window", nullptr, window_flags)) {
+        if (!has_visible_content) {
+            ImGui::End();
+            m_last_render = GLCanvas3D::timestamp_now();
+            return;
+        }
 	
 		ImVec4 scroll_col = ImVec4(0.77f, 0.77f, 0.77f, 1.0f);
         ImGui::PushStyleColor(ImGuiCol_ScrollbarBg,ImVec4(0.f, 0.f, 0.f,0.f));

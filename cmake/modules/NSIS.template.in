@@ -570,6 +570,7 @@ FunctionEnd
 
   @CPACK_NSIS_PAGE_COMPONENTS@
 
+  !define MUI_FINISHPAGE_NOAUTOCLOSE
   !insertmacro MUI_PAGE_INSTFILES
   @CPACK_NSIS_INSTALLER_FINISH_TITLE_CODE@
   @CPACK_NSIS_INSTALLER_FINISH_TITLE_3LINES_CODE@
@@ -1160,44 +1161,12 @@ checkUninstall:
 instbefore:
   ; IS NOT the first install
   StrCpy $FIRST_INSTALL "0"
-  Push $1 
   StrLen $1 "\Uninstall.exe"
   StrCpy $INSTDIR $0 -$1
-  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION \
-  "@CPACK_NSIS_PACKAGE_NAME@ $(DESC_installed)$\n$\n$(DESC_old_version)" \
-  /SD IDYES IDYES uninst IDNO uninstall_end
-
-  Pop $1 
-  Abort
-
-;Run the uninstaller
-uninst:
-; user choose to uninstall old version
-StrCpy $INSTALL_MODE "fresh-install"
-Push $2
-Push $3
-  ClearErrors
-  StrLen $2 "\Uninstall.exe"
-  StrCpy $3 $0 -$2 # remove "\Uninstall.exe" from UninstallString to get path
-  
-  ExecWait '"$0" /S _?=$3' ;Do not copy the uninstaller to a temp file
-  ;Remove the uninstaller itself.
-  Delete "$3\@CPACK_NSIS_UNINSTALL_NAME@.exe"
-  Pop $3
-  Pop $2
-  Pop $0
-  Goto inst
-  ;IfErrors uninst_failed inst
-;uninst_failed:
-  ;MessageBox MB_OK|MB_ICONSTOP "Uninstall failed."
-  ;Abort
-uninstall_end:
-  ; user choose to keep old install
   StrCpy $INSTALL_MODE "keep-old"
-  Pop $3
-  Pop $2
-  Pop $0
+  Goto inst
 inst:
+  Pop $0
   ; Reads components status for registry
   !insertmacro SectionList "InitSection"
 

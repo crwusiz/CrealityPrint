@@ -772,7 +772,8 @@ void PlaterPresetComboBox::OnSelect(wxCommandEvent &evt)
     auto marker = reinterpret_cast<Marker>(this->GetClientData(selected_item));
     if (marker >= LABEL_ITEM_MARKER && marker < LABEL_ITEM_MAX) {
         this->SetSelection(m_last_selected);
-        if ((LABEL_ITEM_WIZARD_ADD_PRINTERS == marker) || (LABEL_ITEM_WIZARD_ADD_NOZZLE == marker)) 
+        if ((LABEL_ITEM_WIZARD_ADD_PRINTERS == marker) || (LABEL_ITEM_WIZARD_ADD_NOZZLE == marker) ||
+            (LABEL_ITEM_WIZARD_OTHER_PRINTER == marker))
         {
             evt.Skip();
             return;
@@ -1139,6 +1140,8 @@ void PlaterPresetComboBox::update()
             if (wxGetApp().app_config->get("role_type") != "0") {
                 set_label_marker(Append(separator(L("Create Nozzle")), *bmp), LABEL_ITEM_WIZARD_ADD_NOZZLE);
                 set_label_marker(Append(separator(L("Create printer")), *bmp), LABEL_ITEM_WIZARD_ADD_PRINTERS);
+                //set_label_marker(Append(separator("ohter printer"), *bmp), LABEL_ITEM_WIZARD_OTHER_PRINTER);
+
             }
         }
     }

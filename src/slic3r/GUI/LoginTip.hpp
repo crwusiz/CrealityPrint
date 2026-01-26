@@ -12,7 +12,7 @@ class LoginTip
 {
 public:
     static LoginTip& getInstance();
-    // 1:不是用户预设, 0:是用户预设，且用户账号正常, wxID_YES:点击了登录
+    // 1: user has presets, 0: user has no presets, wxID_YES: skip to login
     int isFilamentUserMaterialValid(const std::string& userMaterial);
     int showTokenInvalidTipDlg(const std::string& fromPage);
     void resetHasSkipToLogin();

@@ -96,6 +96,7 @@ namespace GUI {
             ,e_wt_error
             ,e_wt_reset
             ,e_wt_gcode
+            ,e_wt_fluidd_print_list
         };
         void prepareWindow(WindowType, ImVec2 ref, float scale = 1);
         ImVec2 getWindowSize(WindowType, float scale = 1);

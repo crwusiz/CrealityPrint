@@ -446,11 +446,87 @@ AICloudService_ResultListItem::AICloudService_ResultListItem(wxWindow* parent, w
     this->Fit();
 }
 
+wxString AICloudService_ResultListItem::wrapText(const wxString& text, wxDC& dc, int maxWidth)
+{
+    if (text.IsEmpty()) {
+        return text;
+    }
+    
+    wxString result;
+    wxString currentLine;
+    size_t len = text.Length();
+    
+    for (size_t i = 0; i < len; ++i) {
+        wxChar ch = text[i];
+        
+        if (ch == '\n') {
+            if (!currentLine.IsEmpty()) {
+                result += currentLine;
+                currentLine.Clear();
+            }
+            result += '\n';
+            continue;
+        }
+        
+        wxString testLine = currentLine + ch;
+        wxSize textSize = dc.GetTextExtent(testLine);
+        
+        if (textSize.GetWidth() > maxWidth) {
+            if (!currentLine.IsEmpty()) {
+                bool isChineseChar = (ch >= 0x4E00 && ch <= 0x9FFF) || 
+                                     (ch >= 0x3400 && ch <= 0x4DBF) || 
+                                     (ch >= 0x20000 && ch <= 0x2A6DF);
+                
+                if (isChineseChar) {
+                    result += currentLine + '\n';
+                    currentLine = ch;
+                } else {
+                    bool foundSpace = false;
+                    for (int j = currentLine.Length() - 1; j >= 0; --j) {
+                        if (currentLine[j] == ' ') {
+                            result += currentLine.Left(j) + '\n';
+                            currentLine = currentLine.Mid(j + 1) + ch;
+                            foundSpace = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!foundSpace) {
+                        result += currentLine + '\n';
+                        currentLine = ch;
+                    }
+                }
+            } else {
+                result += ch + '\n';
+            }
+        } else {
+            currentLine = testLine;
+        }
+    }
+    
+    if (!currentLine.IsEmpty()) {
+        result += currentLine;
+    }
+    
+    return result;
+}
+
 void AICloudService_ResultListItem::updateData(const wxString& modelName, const wxString& beforProcessing, const wxString& afterProcessing)
 {
-    m_modelName->SetLabelText(modelName);
+    wxClientDC dc(this);
+    dc.SetFont(Label::Body_16);
+    
+    int maxWidth = FromDIP(355);
+    
+    wxString wrappedModelName = wrapText(modelName, dc, maxWidth);
+
+    m_modelName->SetLabelText(wrappedModelName);
     m_beforeProcessing->SetLabelText(beforProcessing);
     m_afterProcessing->SetLabelText(afterProcessing);
+    
+    m_modelName->Wrap(m_columnWidth);
+    
+    this->Layout();
 }
 
 AICloudService_ResultDialog::AICloudService_ResultDialog(wxWindow* parent)

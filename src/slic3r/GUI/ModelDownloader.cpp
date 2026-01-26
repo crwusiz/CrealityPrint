@@ -157,7 +157,7 @@ std::string ModelDownloader::filterInvalidFileNameChars(const std::string& input
 {
     std::string result;
     for (char c : input) {
-        // �滻�Ƿ��ַ��Լ��� ASCII �ַ�
+        // Replace invalid characters and non-printable ASCII characters
         if (c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|' ||
             static_cast<unsigned char>(c) < 32) {
             result += '-';
@@ -165,8 +165,8 @@ std::string ModelDownloader::filterInvalidFileNameChars(const std::string& input
             result += c;
         }
     }
-
-    // ��ֹ���Ϊ��
+ 
+    // Avoid empty file name
     if (result.empty()) {
         result = "unnamed";
     }

@@ -113,50 +113,138 @@ void AnalyticsDataUploadManager::processUploadData(AnalyticsDataEventType dataEv
 #endif
     switch (dataEventType)
     {
-    case AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS: 
+    case AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS:
         uploadGlobalPrintParams(plate_idx, device_mac);
         break;
-
-    case AnalyticsDataEventType::ANALYTICS_OBJECT_PRINT_PARAMS: 
-        uploadObjectPrintParams(plate_idx,device_mac);
+    case AnalyticsDataEventType::ANALYTICS_OBJECT_PRINT_PARAMS:
+        uploadObjectPrintParams(plate_idx, device_mac);
         break;
-
     case AnalyticsDataEventType::ANALYTICS_SLICE_PLATE:
         uploadSlicePlateEventData();
         break;
-
-    case AnalyticsDataEventType::ANALYTICS_FIRST_LAUNCH: 
+    case AnalyticsDataEventType::ANALYTICS_FIRST_LAUNCH:
         uploadFirstLaunchEventData();
         break;
-
     case AnalyticsDataEventType::ANALYTICS_PREFERENCES_CHANGED:
         uploadPreferencesChangedData();
         break;
-
-    case AnalyticsDataEventType::ANALYTICS_SOFTWARE_LAUNCH: 
+    case AnalyticsDataEventType::ANALYTICS_SOFTWARE_LAUNCH:
         uploadSoftwareLaunchData();
         break;
-
     case AnalyticsDataEventType::ANALYTICS_SOFTWARE_CRASH:
         uploadSoftwareCrashData();
         break;
-
-    case AnalyticsDataEventType::ANALYTICS_BAD_ALLOC: 
-        uploadSoftwareBadAlloc(); 
+    case AnalyticsDataEventType::ANALYTICS_BAD_ALLOC:
+        uploadSoftwareBadAlloc();
         break;
-
-    case AnalyticsDataEventType::ANALYTICS_SOFTWARE_CLOSE: 
-        uploadSoftwareCloseData(); 
+    case AnalyticsDataEventType::ANALYTICS_SOFTWARE_CLOSE:
+        uploadSoftwareCloseData();
         break;
-
     case AnalyticsDataEventType::ANALYTICS_DEVICE_INFO:
         uploadDeviceInfoData();
         break;
-
     case AnalyticsDataEventType::ANALYTICS_ACCOUNT_DEVICE_INFO:
         uploadAccountDeviceInfoData();
         break;
-
+    case AnalyticsDataEventType::ANALYTICS_ONLINE_MODELS:
+        uploadOnlineModelsEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_PREPARE:
+        uploadPrepareEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_PREVIEW:
+        uploadPreviewEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_DEVICE:
+        uploadDeviceEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_CLICK_HOME_PAGE_PROJECTS:
+        uploadClickHomePageProjectsEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_CLICK_HOME_PAGE_ONLINE_PARAMS:
+        uploadClickHomePageOnlineParamsEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_CLICK_HOME_PAGE_TUTORIALS:
+        uploadClickHomePageTutorialsEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_CLICK_HOME_PAGE_PERSON_CENTER:
+        uploadClickHomePagePersonCenterEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_CLICK_HOME_PAGE_FEEDBACK:
+        uploadClickHomePageFeedbackEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_CLICK_HOME_PAGE_MAKENOW:
+        uploadClickHomePageMakenowEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_CLICK_HOME_PAGE_CREALITYMALL:
+        uploadClickHomePageCrealitymallEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ADD:
+        uploadModelActionAddEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ADD_PLATE:
+        uploadModelActionAddPlateEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_MOVE:
+        uploadModelActionMoveEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ROTATE:
+        uploadModelActionRotateEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_AUTO_ORIENT:
+        uploadModelActionAutoOrientEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ARRANGE_ALL:
+        uploadModelActionArrangeAllEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_LAY_ON_FACE:
+        uploadModelActionLayOnFaceEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_SPLIT_TO_OBJECTS:
+        uploadModelActionSplitToObjectsEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_SPLIT_TO_PARTS:
+        uploadModelActionSplitToPartsEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_SCALE:
+        uploadModelActionScaleEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_HOLLOW:
+        uploadModelActionHollowEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ADD_HOLE:
+        uploadModelActionAddHoleEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_CUT:
+        uploadModelActionCutEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_BOOLEAN:
+        uploadModelActionBooleanEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_MEASURE:
+        uploadModelActionMeasureEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_SUPPORT_PAINT:
+        uploadModelActionSupportPaintEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ZSEAM_PAINT:
+        uploadModelActionZseamPaintEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_VARIABLE_LAYER:
+        uploadModelActionVariableLayerEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_PAINT:
+        uploadModelActionPaintEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_EMBOSS:
+        uploadModelActionEmbossEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ASSEMBLY_VIEW:
+        uploadModelActionAssemblyViewEvent();
+        break;
+    case AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_AI_SERVICE:
+        uploadModelActionAiServiceEvent();
+        break;
     default:
         break;
     }
@@ -592,10 +680,274 @@ void AnalyticsDataUploadManager::uploadPreferencesChangedData()
     js["save_preset_choise"] = wxGetApp().app_config->get("save_preset_choise");
     js["save_project_choise"] = wxGetApp().app_config->get("save_project_choise");
     js["operation_date"] = Slic3r::Utils::utc_timestamp(Slic3r::Utils::get_current_time_utc());
-    js["enable_lod"] = wxGetApp().app_config->get("enable_lod");
-    js["enable_preview_lod"] = wxGetApp().app_config->get("enable_preview_lod");
+    js["lod_preparation"] = wxGetApp().app_config->get("enable_lod");
+    js["lod_preview"] = wxGetApp().app_config->get("enable_preview_lod");
 
     wxGetApp().track_event("preferences_changed", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadOnlineModelsEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("online_models", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadPrepareEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("prepare", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadPreviewEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("preview", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadDeviceEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("device", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadClickHomePageProjectsEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("click_home_page_projects", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadClickHomePageOnlineParamsEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("click_home_page_online_params", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadClickHomePageTutorialsEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("click_home_page_tutorials", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadClickHomePagePersonCenterEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("click_home_page_person_center", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadClickHomePageFeedbackEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("click_home_page_feedback", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadClickHomePageMakenowEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("click_home_page_makenow", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadClickHomePageCrealitymallEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("click_home_page_crealitymall", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionAddEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_add", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionAddPlateEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_add_plate", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionMoveEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_move", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionRotateEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_rotate", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionAutoOrientEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_auto_orient", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionArrangeAllEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_arrange_all", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionLayOnFaceEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_lay_on_face", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionSplitToObjectsEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_split_to_objects", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionSplitToPartsEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_split_to_parts", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionScaleEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_scale", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionHollowEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_hollow", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionAddHoleEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_add_hole", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionCutEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_cut", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionBooleanEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_boolean", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionMeasureEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_measure", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionSupportPaintEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_support_paint", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionZseamPaintEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_zseam_paint", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionVariableLayerEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_variable_layer", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionPaintEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_paint", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionEmbossEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_emboss", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionAssemblyViewEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_assembly_view", js.dump());
+}
+
+void AnalyticsDataUploadManager::uploadModelActionAiServiceEvent()
+{
+    json js;
+    js["app_version"] = GUI_App::format_display_version().c_str();
+    js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+    wxGetApp().track_event("model_action_ai_service", js.dump());
 }
 
 // Static: upload slice822 click event

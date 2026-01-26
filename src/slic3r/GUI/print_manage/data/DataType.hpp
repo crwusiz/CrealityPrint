@@ -70,7 +70,14 @@ namespace DM{
         bool webrtcSupport = false;
         int deviceState;
         int deviceType = 0;  //0==local, 1==cx cloud,        
-        bool oldPrinter = false;  //true = wifi盒子连接的机型
+        bool oldPrinter = false;  //true = printer connected via WiFi
+        std::string cfsName;    //MF003(CFS)   MF040(CFSLite)   MF046(CFSMini)   MF049(CFSNano)
+
+        std::string apiKey = "";           //fluidd机型
+        std::string deviceUI = "";           //fluidd机型
+        std::string caFile = "";
+        int hostType = 1;           //fluidd机型
+        bool ignoreCertRevocation = false; 
 
         std::vector<DeviceBoxColorInfo> boxColorInfos;
         std::vector<MaterialBox> materialBoxes;

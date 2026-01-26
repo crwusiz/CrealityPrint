@@ -2927,6 +2927,15 @@ void ImGuiWrapper::init_font(bool compress)
     int width, height;
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);   // Load as RGBA 32-bits (75% of the memory is wasted, but default font is so small) because it is more likely to be compatible with user's existing shaders. If your ImTextureId represent a higher-level concept than just a GL texture id, consider calling GetTexDataAsAlpha8() instead to save on GPU memory.
     BOOST_LOG_TRIVIAL(trace) << "Build default font texture done. width: " << width << ", height: " << height;
+    if (pixels == nullptr || width <= 0 || height <= 0) {
+        BOOST_LOG_TRIVIAL(error) << "ImGuiWrapper::init_font: Failed to get font texture data. "
+                                << "pixels=" << (void*)pixels
+                                << ", width=" << width
+                                << ", height=" << height;
+        
+        destroy_font();
+        return;
+    }
 
     auto load_icon_from_svg = [this, &io, pixels, width, &rect_id](const std::pair<const wchar_t, std::string> icon, int icon_sz) {
         if (const ImFontAtlas::CustomRect* rect = io.Fonts->GetCustomRectByIndex(rect_id)) {

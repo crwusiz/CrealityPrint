@@ -111,7 +111,7 @@ extern SystemMemoryStats system_memory_stats(std::string);
 * 
 * <modul> is module name
 * <function> is which function
-* <code> can be a step��function code��ret code
+* <code> can be a step code, function code, or return code
 * <message> is extra info, json format, can empty string
 * 
 * modul+function+code be used to match test result,

@@ -266,7 +266,7 @@ AboutDialog::AboutDialog()
     //official_introduction
     {
         wxString   official_introduction     = _L("official_introduction");
-        wxStaticText* official_introduction_text = new wxStaticText(this, wxID_ANY, official_introduction, wxDefaultPosition, wxDefaultSize);
+        wxStaticText* official_introduction_text = new wxStaticText(m_panel, wxID_ANY, official_introduction, wxDefaultPosition, wxDefaultSize);
         official_introduction_text->SetFont(Label::Body_12);
         official_introduction_text->SetBackgroundColour(font_bg);
         panel_versizer->Add(official_introduction_text, 0, wxALL | wxALIGN_LEFT, is_zh ? FromDIP(10) : FromDIP(10));
@@ -277,7 +277,7 @@ AboutDialog::AboutDialog()
     // version
     {
         auto version_string = _L("Creality Print ") + " V" + std::string(CREALITYPRINT_VERSION) + " " + get_vertion_type();
-        wxStaticText* version_text = new wxStaticText(this, wxID_ANY, version_string.c_str(), wxDefaultPosition, wxDefaultSize);
+        wxStaticText* version_text = new wxStaticText(m_panel, wxID_ANY, version_string.c_str(), wxDefaultPosition, wxDefaultSize);
         version_text->SetFont(Label::Body_12);
         version_text->SetBackgroundColour(font_bg);
         version_text->SetLabel(version_string);

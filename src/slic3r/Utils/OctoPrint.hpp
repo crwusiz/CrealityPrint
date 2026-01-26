@@ -133,6 +133,20 @@ protected:
     bool validate_version_text(const boost::optional<std::string>& version_text) const override;
 };
 
+class CrealityPrint : public PrusaLink
+{
+public:
+    CrealityPrint(DynamicPrintConfig* config);
+    ~CrealityPrint() override = default;
+    const char* get_name() const override { return "CrealityPrint"; }
+    bool        validate_version_text(const boost::optional<std::string>& version_text) const override;
+
+    wxString get_test_ok_msg() const override;
+    wxString get_test_failed_msg(wxString& msg) const override;
+    PrintHostPostUploadActions get_post_upload_actions() const override { return PrintHostPostUploadAction::StartPrint | PrintHostPostUploadAction::QueuePrint; }
+};
+
+
 }
 
 #endif

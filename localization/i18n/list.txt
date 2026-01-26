@@ -1759,6 +1759,8 @@ src/slic3r/GUI/print_manage/Routes/Routes.hpp
 src/slic3r/GUI/print_manage/Routes/SenderRoutes.hpp
 src/slic3r/GUI/print_manage/Routes/SysRoutes.hpp
 src/slic3r/GUI/print_manage/utils/cxmdns.cpp
+src/slic3r/GUI/SystemId/SystemId.cpp
+src/slic3r/GUI/SystemId/SystemId.hpp
 src/slic3r/GUI/Widgets/AMSControl.cpp
 src/slic3r/GUI/Widgets/AxisCtrlButton.cpp
 src/slic3r/GUI/Widgets/Button.cpp

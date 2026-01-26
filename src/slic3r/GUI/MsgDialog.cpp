@@ -11,6 +11,9 @@
 #include <wx/html/htmlwin.h>
 
 #include <boost/algorithm/string/replace.hpp>
+#include <boost/log/trivial.hpp>
+#include <boost/log/core.hpp>
+#include <thread>
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Utils.hpp"
@@ -240,8 +243,14 @@ void MsgDialog::finalize()
 // Text shown as HTML, so that mouse selection and Ctrl-V to copy will work.
 static void add_msg_content(wxWindow* parent, wxBoxSizer* content_sizer, wxString msg, bool monospaced_font = false, bool is_marked_msg = false)
 {
-    wxHtmlWindow* html = new wxHtmlWindow(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHW_SCROLLBAR_AUTO);
-    html->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
+	wxHtmlWindow* html = new wxHtmlWindow(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHW_SCROLLBAR_AUTO);
+	html->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
+
+    if (!wxIsMainThread()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " called from non-main thread tid=" << std::this_thread::get_id();
+        if (auto core = boost::log::core::get())
+            core->flush();
+    }
 
     // count lines in the message
     int msg_lines = 0;
@@ -261,8 +270,19 @@ static void add_msg_content(wxWindow* parent, wxBoxSizer* content_sizer, wxStrin
         msg_lines++;
     }
 
-    wxFont      font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
-    wxFont      monospace = wxGetApp().code_font();
+	wxFont      font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+	wxFont      monospace = wxGetApp().code_font();
+    if (!font.IsOk() || !monospace.IsOk()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__
+                                 << " invalid font detected gui_ok=" << font.IsOk()
+                                 << " mono_ok=" << monospace.IsOk()
+                                 << " parent=" << parent
+                                 << " mainframe=" << wxGetApp().mainframe
+                                 << " tid=" << std::this_thread::get_id()
+                                 << " dark_mode=" << wxGetApp().dark_mode();
+        if (auto core = boost::log::core::get())
+            core->flush();
+    }
     wxColour    text_clr = wxGetApp().get_label_clr_default();
     wxColour    bgr_clr = parent->GetBackgroundColour();
     auto        text_clr_str = encode_color(ColorRGB(text_clr.Red(), text_clr.Green(), text_clr.Blue()));

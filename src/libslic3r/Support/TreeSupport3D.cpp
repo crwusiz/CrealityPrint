@@ -538,7 +538,9 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
 
             if (part.front() == part.back()) {
                 size_t optimal_start_index = 0;
-                // If the polyline was a polygon, there is a high chance it was an overhang. Overhangs that are <60� tend to be very thin areas, so lets get the beginning and end of them and ensure that they are supported.
+                // If the polyline was a polygon, there is a high chance it was an overhang.
+                // Overhangs that are <60 degrees tend to be very thin areas, so get the
+                // beginning and end of them and ensure that they are supported.
                 // The first point of the line will always be supported, so rotate the order of points in this polyline that one of the two corresponding points that are furthest from each other is in the beginning.
                 // The other will be manually added (optimal_end_index)
                 coord_t max_dist2_between_vertecies = 0;

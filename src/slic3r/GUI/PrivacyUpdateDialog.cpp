@@ -173,7 +173,7 @@ PrivacyUpdateDialog::PrivacyUpdateDialog(wxWindow* parent, wxWindowID id, const 
         m_button_cancel->Show();
 
     wxBoxSizer* sizer_button_container = new wxBoxSizer(wxHORIZONTAL);
-    sizer_button_container->AddStretchSpacer(1); // ?????????????????????????§Þ?
+    sizer_button_container->AddStretchSpacer(1); // Add stretch spacer to align buttons
     sizer_button_container->Add(m_button_cancel, 0, wxRIGHT, FromDIP(10));
     sizer_button_container->Add(m_button_ok, 0, wxLEFT, FromDIP(10));
 

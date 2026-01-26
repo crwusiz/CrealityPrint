@@ -602,10 +602,6 @@ void FilamentButton::doRender(wxDC& dc)
     m_bg_color = wxColour(255, 255, 255); // 背景色统一
 	this->SetBackgroundColour(m_bg_color);
 
-	this->SetSize(wxSize(400 * em, 28 * em));
-
-  
-
 	m_sizer_main = new wxBoxSizer(wxHORIZONTAL);
 	{
         m_filamentCombox = new Slic3r::GUI::PlaterPresetComboBox(this, Slic3r::Preset::TYPE_FILAMENT);
@@ -637,7 +633,7 @@ void FilamentButton::doRender(wxDC& dc)
         });
 		// filament combox
         wxSizerItem* item = m_sizer_main->Add(m_filamentCombox, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 1);
-        m_sizer_main->SetItemMinSize(m_filamentCombox, (wxSize(FromDIP(40), 35)));
+        m_sizer_main->SetItemMinSize(m_filamentCombox, (wxSize(FromDIP(40), FromDIP(35))));
 
         item->SetProportion(wxEXPAND);
         bool is_dark = Slic3r::GUI::wxGetApp().dark_mode();
@@ -1006,25 +1002,32 @@ FilamentItem::FilamentItem(wxWindow* parent, const Data& data, const wxSize& siz
 			pos.y += this->GetRect().height;
 			pos.x = ppos.x + 1;
 
-			wxSize sz = m_popPanel->GetSize();
-			wxSize psz = this->GetParent()->GetSize();
-			sz.SetWidth(psz.GetWidth() - 2);
-
-
-            // 添加DPI感知的高度调整
+			// 添加DPI感知的高度调整
             const int MIN_HEIGHT = 35;
-            const int MIN_WIDTH  = 350;
-            wxSize    minSize    = wxWindow::FromDIP(wxSize(MIN_WIDTH, MIN_HEIGHT), this); 
+            const int MIN_WIDTH  = 200;
+            wxSize    minSize    = wxWindow::FromDIP(wxSize(MIN_WIDTH, MIN_HEIGHT), m_popPanel);
+
+            m_popPanel->Layout();
+            m_popPanel->Fit();
+
+            wxSize sz = m_popPanel->GetBestSize();
 
             if (sz.GetHeight() < minSize.GetHeight()) {
                 sz.SetHeight(minSize.GetHeight());
             }
+            if (sz.GetWidth() < minSize.GetWidth()) {
+                sz.SetWidth(minSize.GetWidth());
+            }
+
+			wxSize psz = this->GetParent()->GetSize();
 
             int parent_width = psz.GetWidth();
             int panel_width  = std::max(parent_width - 2, minSize.GetWidth());
-            sz.SetWidth(panel_width);
+
             pos.x = ppos.x + parent_width - panel_width;
 
+            wxSize ppsize= Slic3r::GUI::wxGetApp().sidebar().GetSize();
+            sz.SetWidth(ppsize.GetWidth());
 			m_popPanel->SetSize(sz);
  			m_popPanel->Layout();
             m_popPanel->Dismiss();
@@ -2093,7 +2096,11 @@ void BoxColorPopPanel::OnFirstColumnButtonClicked(wxCommandEvent& event)
         bool is_ext_material = false;
         bool has_exact_material = false;
         
-        for (int i = -1; i < 4; i++) {
+        int startIndex = -1;
+        if (m_device_data.cfsName == "MF049") {
+            startIndex = 0;                     // MF049设备跳过外置料架
+        }
+        for (int i = startIndex; i < 4; i++) {
 
             FilamentColorSelectionItem* filament_item = new FilamentColorSelectionItem(m_secondColumnPanel, wxSize(FromDIP(120), FromDIP(20)));
             assert(filament_item);

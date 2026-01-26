@@ -382,6 +382,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/2DBed.hpp
     GUI/3DBed.cpp
     GUI/3DBed.hpp
+    GUI/CrealityBedModelMapping.hpp
+    GUI/CrealityBedModelMapping.cpp
     GUI/Camera.cpp
     GUI/Camera.hpp
     GUI/CameraUtils.cpp
@@ -709,6 +711,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/CrProject.cpp
 	GUI/PhysicalPrinter.hpp
     GUI/PhysicalPrinter.cpp
+    GUI/SystemId/SystemId.hpp
+    GUI/SystemId/SystemId.cpp
 )
 
 option(AUTO_CONVERT_3MF "Enable auto conversion of 3MF files" OFF)

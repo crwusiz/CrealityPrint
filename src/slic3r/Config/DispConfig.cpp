@@ -325,6 +325,9 @@ ImVec2 DispConfig::getWindowSize(WindowType tp, float scale) {
     case DispConfig::e_wt_slider_gcode:
         winsize = {100, 400};
         break;
+    case DispConfig::e_wt_fluidd_print_list:
+        winsize = {202, 118};
+        break;
     default: break;
     }
     winsize.x *= scale;
@@ -362,6 +365,9 @@ ImVec2 DispConfig::getWindowBias(WindowType tp, float scale) {
         break;
     case DispConfig::e_wt_slider_move:
         bias = { 0,-10 };
+        break;
+    case DispConfig::e_wt_fluidd_print_list:
+        bias = { -6, -40 };
         break;
     default: break;
     }

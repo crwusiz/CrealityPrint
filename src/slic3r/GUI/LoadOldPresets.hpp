@@ -79,7 +79,7 @@ namespace GUI {
         std::vector<std::string> m_vtSystemProcessFile;
         PrinterData              m_printerData;
         std::function<int(const std::list<Slic3r::PresetBundle::STOverrideConfirmFile*>&)> m_overrideConfirmCb = nullptr;
-        int                                                                        m_override          = 1; // 1-覆盖 4-创建副本
+        int                                                                        m_override          = 1; // 1-overwrite 4-do not overwrite
     };
 
 }

@@ -240,7 +240,7 @@ protected:
 		return tokens;
 	}
 };
-// ½«Õ­×Ö·û×ª»»Îª¿í×Ö·û
+// Convert multibyte string to wide string
 std::wstring ConvertToWide(const char* str)
 {
     int          length = MultiByteToWideChar(CP_ACP, 0, str, -1, nullptr, 0);

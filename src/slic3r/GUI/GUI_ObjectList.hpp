@@ -316,6 +316,12 @@ private:
             bool        isCurrent;
             int         device_type;
             bool        visible = true;
+
+            std::string apiKey;         // fluidd…Ë±∏
+            std::string deviceUI;
+            std::string caFile;
+            int hostType;
+            bool        ignoreCertRevocation = false;
         };
         std::map<std::string, device_list_item_data> datas;
         std::set<std::string> online_device_list;
@@ -351,6 +357,7 @@ private:
     bool                       m_device_list_popup_open_request = false;
     bool                       m_device_list_popup_opened = false;
     bool                       m_device_list_dirty_mark = true;
+    bool                       m_device_list_dirty_mark_fluidd = true;
     std::string                m_last_printer_model;
 
 #ifdef __WXMSW__
@@ -383,10 +390,12 @@ private:
 
     void update_printer_model_texture();
     void update_printer_device_list_data(std::string vendor, bool bForce = false);
+    void update_other_printer_device_list_data(bool bForce = false);
     void draw_device_list_popup();
     void draw_device_list_content();
     bool set_cur_device_by_cur_preset();
     bool set_cur_device_by_mac(std::string mac_addr);
+    bool set_cur_device_by_attribute(std::string apiKey, std::string deviceUI, std::string caFile, int hostType, bool ignoreCertRevocation);
 
 public:
     ObjectList(wxWindow* parent);

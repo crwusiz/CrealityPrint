@@ -15,7 +15,7 @@
 #include "slic3r/GUI/print_manage/AppMgr.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/OptionsGroup.hpp"
-
+#include "slic3r/GUI/NotificationManager.hpp"
 using boost::asio::ip::tcp;
 using namespace Slic3r;
 using namespace Slic3r::GUI;
@@ -45,7 +45,7 @@ public:
 
     void do_write(std::string datas)
     {
-        auto p = std::make_shared<std::string>(std::move(datas)); // ����壬��ֹdatas.c_str()�첽ʧЧ
+        auto p = std::make_shared<std::string>(std::move(datas)); // Keep buffer alive for async write
         boost::asio::async_write(socket_, boost::asio::buffer(*p), [this, p](boost::system::error_code /*ec*/, std::size_t /*length*/) {});
 
         // boost::asio::async_write(socket_, boost::asio::buffer(datas.c_str(), datas.size()),
@@ -198,13 +198,13 @@ std::string TestHelper::call_cmd_inner(std::string cmd, std::string json_str)
         ret["error"] = "OK";
         // ret["payload"] = payload;
         try {
-            ret["payload"] = nlohmann::json::parse(payload); // ��Ҫ�Ƿ�ֹ·������dump����Ȼ�ͻ��˻���ʾ C:\\\\ ....
+            ret["payload"] = nlohmann::json::parse(payload); // Try to parse JSON payload
         } catch (...) {
-            ret["payload"] = payload; // ���� JSON���Ͱ��ַ�������ȥ
+            ret["payload"] = payload; // Fallback: store raw string payload
         }
         return ret;
     };
-    // cp �ڲ�cmd
+    // cp internal cmd
     auto inner_it = m_inner_cmd2func.find(cmd);
     if (inner_it != m_inner_cmd2func.end())
     {
@@ -221,7 +221,7 @@ std::string TestHelper::call_cmd_inner(std::string cmd, std::string json_str)
             return "";
         }
     }
-    // socket��¶cmd
+    // socket exposed cmd
     auto it = m_cmd2func.find(cmd);
     if (it == m_cmd2func.end()) {
         cmd_respone(cmd, gen_failed_json("COMMAND NOT FAOUND"));
@@ -230,9 +230,9 @@ std::string TestHelper::call_cmd_inner(std::string cmd, std::string json_str)
     try {
         nlohmann::json arg;
         arg = json::parse(json_str);
-        std::string err;                                 // ��������
-        std::string payload;                             // ��������
-        int         res = it->second(arg, payload, err); // ʵ�������������ע��ĺ��������ú� payload�Ѿ����л���(dump)
+        std::string err;                                 // Error message
+        std::string payload;                             // Serialized payload
+        int         res = it->second(arg, payload, err); // Registered handler should serialize payload (dump)
         if (res == 0)
             cmd_respone(cmd, gen_ok_json(payload));
         else if (res > 0)
@@ -256,7 +256,7 @@ void call_when_target_eventloop_exec(std::string cmd, nlohmann::json& arg, ASync
     arg["cmd"] = cmd;
     e.SetString(arg.dump(-1, ' ', true));
     async_callback_list.insert({arg["cmd"], callback});
-    wxPostEvent(&wxGetApp(), e); // Ͷ�ݵ��¼�����ֻ��Ϊ�˴���async_callback_list[cmd]�Ļص���������������
+    wxPostEvent(&wxGetApp(), e); // Post event so async_callback_list[cmd] callback runs in GUI thread
 }
 
 void respone_on_next_eventloop(std::string command, int code, std::string error = "", nlohmann::json ret = {})
@@ -448,11 +448,11 @@ static int capture(nlohmann::json arg, std::string& payload, std::string& error)
     return -1;
 }
 
-// �ú�����EVT_TEST_HELPER_CMD�¼�����
+// This function handles EVT_TEST_HELPER_CMD events
 static int handle_app_cmd(nlohmann::json arg, std::string& payload, std::string& error)
 {
     std::string cmd = arg["cmd"].get<std::string>();
-    async_callback_list[cmd](arg); // GUI �̼߳�⵽Ͷ�ݵ�cmd�¼��󣬴�async_callback_list��ȡ���ص�������ִ��
+    async_callback_list[cmd](arg); // GUI thread executes stored callback
     async_callback_list.erase(cmd);
     return -1;
 }
@@ -482,7 +482,7 @@ static int trigger_load_project(nlohmann::json arg, std::string& payload, std::s
         "trigger_load_project", 
         arg, 
         [](nlohmann::json arg) {
-            wxGetApp().plater()->load_project(arg["file"].get<std::string>());
+            wxGetApp().plater()->load_project(wxString::FromUTF8(arg["file"].get<std::string>()));
             status.set_cmd_status("trigger_load_project", Status::Finished);
         });
     return 0; 
@@ -497,10 +497,10 @@ static int trigger_load_project2(nlohmann::json arg, std::string& payload, std::
             bool discard_preset_changes = j.value("discard_preset_changes", false);
 
             if (discard_preset_changes) {
-                wxGetApp().discard_all_current_preset_changes(); // ������
+                wxGetApp().discard_all_current_preset_changes(); // Reset presets
             }
 
-            wxGetApp().plater()->load_project(file); // ͬ�������ؼ����
+            wxGetApp().plater()->load_project(wxString::FromUTF8(file)); // Load project synchronously
 
             out["ret"]    = 0;
             out["error"]  = "OK";
@@ -515,7 +515,7 @@ static int trigger_load_project2(nlohmann::json arg, std::string& payload, std::
         }
         Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
     });
-    return -1; // �� ����첽����ֹ call_cmd_inner �Զ� OK �ذ�
+    return -1; // Async: prevent call_cmd_inner from sending automatic OK
 }
 
 static wxWindow* FindButton(wxWindow* root, int id, const wxString& name, const wxString& label)
@@ -523,17 +523,17 @@ static wxWindow* FindButton(wxWindow* root, int id, const wxString& name, const 
     if (!root)
         return nullptr;
 
-    // 1) ���Ȱ� id
+    // 1) Find by id
     if (id != wxID_ANY) {
         if (auto* w = wxWindow::FindWindowById(id, root))
             return w;
     }
-    // 2) �� name
+    // 2) Then by name
     if (!name.empty()) {
         if (auto* w = wxWindow::FindWindowByName(name, root))
             return w;
     }
-    // 3) �ݹ鰴 label
+    // 3) Finally recurse by label
     if (!label.empty()) {
         if (auto* btn = wxDynamicCast(root, wxButton)) {
             if (btn->GetLabel() == label)
@@ -549,7 +549,7 @@ static wxWindow* FindButton(wxWindow* root, int id, const wxString& name, const 
 
 static void PostButtonClick(wxWindow* btn)
 {
-    // ����һ������ť����������¼���Ͷ�ݵ��ÿؼ�
+    // Post a button click event to the target control
     wxCommandEvent evt(wxEVT_BUTTON, btn->GetId());
     evt.SetEventObject(btn);
     wxPostEvent(btn, evt);
@@ -639,7 +639,7 @@ static int click_button_cmd(nlohmann::json arg, std::string& payload, std::strin
 
 static int export_gcode_cmd(nlohmann::json arg, std::string& payload, std::string& error)
 {
-    // �� GUI �߳�
+    // Run in GUI thread
     call_when_target_eventloop_exec("export_gcode_3mf", arg, [](nlohmann::json j) {
         nlohmann::json out;
 
@@ -652,7 +652,7 @@ static int export_gcode_cmd(nlohmann::json arg, std::string& payload, std::strin
                 return;
             }
 
-            // ��������
+            // Parse parameters
             bool     export_all = false;
             fs::path output;
             try {
@@ -673,7 +673,7 @@ static int export_gcode_cmd(nlohmann::json arg, std::string& payload, std::strin
                 return;
             }
 
-            // ������ UI ����
+            // Call headless export without touching UI
             std::string err;
             int         ret = plater->export_gcode_3mf_headless(output, export_all, err);
 
@@ -692,20 +692,37 @@ static int export_gcode_cmd(nlohmann::json arg, std::string& payload, std::strin
             out["error"] = e.what();
         }
 
-        // ͨ��ͳһ�ذ�ͨ�����أ��ᱻ cmd_respone_wrapper ת�� code/error/payload��
+        // Response will be converted to code/error/payload by cmd_respone_wrapper
         Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
     });
 
-    return -1; // �첽
+    return -1; // Async
 }
-
+static int get_error_cmd(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    call_when_target_eventloop_exec("get_error", arg, [](nlohmann::json j) {
+        nlohmann::json out;
+        try {
+            out["ret"]   = 0;
+            auto notification_manager = wxGetApp().plater()->get_notification_manager();
+            out["data"] = notification_manager->get_all_notification();
+        
+        } catch (const std::exception& e) {
+            out["ret"]   = 1;
+            out["error"] = e.what();
+        }
+        BOOST_LOG_TRIVIAL(warning) << out.dump(-1, ' ', true);
+        Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true)); 
+        });
+    return -1;
+}
 static int reset_project_cmd(nlohmann::json arg, std::string& payload, std::string& error)
 {
     call_when_target_eventloop_exec("reset_project", arg, [](nlohmann::json j) {
         nlohmann::json out;
         try {
-            bool        skip_confirm = j.value("skip_confirm", true); // Ĭ������ȷ��
-            bool        silent       = j.value("silent", true);       // Ĭ�ϰ���ִ��,���л� UI �� 3D �༭ҳ
+            bool        skip_confirm = j.value("skip_confirm", true); // Default: skip confirmation
+            bool        silent       = j.value("silent", true);       // Default: run silently without switching UI
             std::string project_name = j.value("project_name", "");
             int         rc           = -1;
             if (project_name.empty()) {
@@ -728,7 +745,7 @@ static int reset_project_cmd(nlohmann::json arg, std::string& payload, std::stri
         }
         Test::Visitor().call_cmd("cmd_respone", out.dump(-1, ' ', true));
     });
-    return -1; // �첽��ִ����ص�֮��Żذ�
+    return -1; // Async: real response sent later in callback
 }
 
 static int is_capture_mode(nlohmann::json arg, std::string& payload, std::string& error)
@@ -796,19 +813,19 @@ static int new_project(nlohmann::json arg, std::string& payload, std::string& er
 static int trigger_slice(nlohmann::json arg, std::string& payload, std::string& error)
 {
     call_when_target_eventloop_exec("trigger_slice", arg, [](nlohmann::json arg) {
-        // ��ʼ��Ƭ
+        // Slice start
         call_when_event_spread("slice_started", arg, [](nlohmann::json arg) {
             status.set_cmd_status("trigger_slice", Status::Unfinished);
             nlohmann::json output;
             output["ret"] = 0;
             Test::Visitor().call_cmd("cmd_respone", output.dump(-1, ' ', true));
         });
-        // ��Ƭ���
+        // Slice complete
         call_when_event_spread("slice_compete", arg, [](nlohmann::json arg) {
             // if (!arg["param"].get<std::string>().empty())
             status.set_cmd_status("trigger_slice", Status::Finished);
         });
-        wxGetApp().mainframe->slice_plate(MainFrame::eSliceAll); // Ĭ����ȫ��
+        wxGetApp().mainframe->slice_plate(MainFrame::eSliceAll); // Default: slice all plates
     });
     return -1;
 }
@@ -1110,13 +1127,13 @@ static int set_process_paramter(nlohmann::json arg, std::string& payload, std::s
 
 void TestHelper::register_cmd() 
 { 
-    // cp �ڲ�ģ��ʹ�õ�cmd�������Ǵ�std::string����ֵ���������̷���
+    // cp internal module uses cmds that return std::string; they are not exposed over socket
     m_inner_cmd2func["is_capture_mode"] = is_capture_mode;
     m_inner_cmd2func["event_spread"]   = event_spread;
     m_inner_cmd2func["is_ban_dialog"]     = is_ban_dialog;
     m_inner_cmd2func["ban_dialog"]        = ban_dialog;
     m_inner_cmd2func["allow_dialog"]      = allow_dialog;
-    // socket��¶��cmd�������ǲ���������ֵ
+    // socket-exposed cmds are for external processes, usually without return value
     m_cmd2func["cmd_respone"]          = cmd_respone_wrapper;
     m_cmd2func["handle_app_cmd"]       = handle_app_cmd;
     m_cmd2func["capture"]              = capture;
@@ -1135,11 +1152,12 @@ void TestHelper::register_cmd()
     m_cmd2func["exec_js_in_webview"]    = exec_js_in_webview;
     m_cmd2func["set_process_paramter"]  = set_process_paramter;
 
-    // LHX TODO������������ע��ĺ���
+    // LHX TODO: refactor and document these additional commands
     m_cmd2func["trigger_load_project2"] = trigger_load_project2;
     m_cmd2func["click_button"]          = click_button_cmd;
     m_cmd2func["export_gcode"]          = export_gcode_cmd;
     m_cmd2func["reset_project"]         = reset_project_cmd;
+    m_cmd2func["get_error"]         = get_error_cmd;
 }
 
 } // namespace Test

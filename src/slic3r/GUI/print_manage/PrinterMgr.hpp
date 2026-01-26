@@ -14,11 +14,17 @@ namespace DM {
             std::string mac;
             std::string address;
             std::string name;
+            std::string deviceUI;
             
-            bool oldPrinter = false; //�ɻ��� ��D3Pro
-            int moonrakerPort = 0;   //������ ��Ϣ���ʶ˿�
+            bool oldPrinter = false; // Legacy printer such as D3Pro
+            int moonrakerPort = 0;   // Moonraker status port
             int fluiddPort = 0;
             int mainsailPort = 0;
+
+            std::string apiKey;
+            int hostType;
+            std::string caFile;
+            bool ignoreCertRevocation = false;
         };
     public:
         DeviceMgr();

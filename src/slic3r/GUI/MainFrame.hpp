@@ -242,7 +242,8 @@ public:
         ePrintMultiMachine   = 9,
         eSendToLocalNetPrinter = 10,
         eUpload3mf           = 11,
-        eSendToMultLocalNetPrinter = 12
+        eSendToMultLocalNetPrinter = 12,
+        eSendToFluiddPrinter = 13
     };
 
     enum SliceSelectType {

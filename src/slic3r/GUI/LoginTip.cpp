@@ -88,10 +88,10 @@ int LoginTip::isFilamentUserMaterialValid(const std::string& userMaterial)
                 return ret;
             }
         }
-        return 0;   //  用户预设是有效的
+        return 0;   // User preset is invalid
     }
     
-    return 1;   //  不是用户预设
+    return 1;   // User has no preset
 }
 
 int LoginTip::showTokenInvalidTipDlg(const std::string& fromPage)

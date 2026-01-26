@@ -13,9 +13,9 @@
 #include <condition_variable>
 namespace RemotePrint {
 
-// 上传任务心跳检测间隔时间（秒）
+// Upload file timeout (seconds)
 #define REMOTE_PRINTER_UPLOAD_TIMEOUT_SECONDS 6
-// 重试次数
+// Maximum retry count
 const int MAX_RETRY = 100;
 
 enum class RemotePrinerType {

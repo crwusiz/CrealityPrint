@@ -831,7 +831,7 @@ inline int UnsavedChangesDialog::ShowModal()
 #if AUTOMATION_TOOL
 
 #ifdef _WIN32
-    if (AutomationMgr::enabled()) { // �Զ����ű����ε���
+    if (AutomationMgr::enabled()) { // Skip dialog when automation script is running
         return 0;
     }
 #endif

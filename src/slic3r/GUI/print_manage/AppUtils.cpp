@@ -1,14 +1,44 @@
-﻿#include "AppUtils.hpp"
+#include "AppUtils.hpp"
 #include "../Widgets/WebView.hpp"
 #include "../GUI.hpp"
 
 #include <boost/uuid/detail/md5.hpp>
 #include "libslic3r/Utils.hpp"
+#include <algorithm>
+#include <cctype>
+#include <fstream>
 #pragma execution_character_set("utf-8")
 using namespace Slic3r::GUI;
 using namespace boost::uuids::detail;
 using namespace Slic3r;
 namespace DM{
+
+    bool is_uos_system()
+    {
+#ifdef __WXGTK__
+        static int cached = -1;
+        if (cached != -1)
+            return cached == 1;
+        std::ifstream f("/etc/os-release");
+        if (!f.is_open()) {
+            cached = 0;
+            return false;
+        }
+        std::string line;
+        while (std::getline(f, line)) {
+            std::string lower = line;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+            if (lower.find("uos") != std::string::npos || lower.find("uniontech") != std::string::npos) {
+                cached = 1;
+                return true;
+            }
+        }
+        cached = 0;
+        return false;
+#else
+        return false;
+#endif
+    }
 
     void AppUtils::PostMsg(wxWebView* browse, const std::string& data)
     {

@@ -1,4 +1,4 @@
-﻿#include "MainFrame.hpp"
+#include "MainFrame.hpp"
 
 #include <wx/colour.h>
 #include <wx/panel.h>
@@ -874,18 +874,31 @@ void MainFrame::update_layout()
 
         m_tabpanel->Bind(wxCUSTOMEVT_NOTEBOOK_SEL_CHANGED, [this](wxCommandEvent& evt)
         {
-            // jump to 3deditor under preview_only mode
             if (evt.GetId() == tp3DEditor){
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
+                    AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
+                    { AnalyticsDataEventType::ANALYTICS_PREPARE });
                 m_plater->update(true);
 
                 if (!preview_only_hint())
                     return;
             }
+            else if (evt.GetId() == tpPreview) {
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
+                    AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
+                    { AnalyticsDataEventType::ANALYTICS_PREVIEW });
+            }
             else if (evt.GetId() == tpDeviceMgr){ 
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
+                    AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
+                    { AnalyticsDataEventType::ANALYTICS_DEVICE });
                 if (m_printer_mgr_view) {
                     m_printer_mgr_view->on_switch_to_device_page();
                 }
             } else if (evt.GetId() == tpOnlineModel) {
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
+                    AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
+                    { AnalyticsDataEventType::ANALYTICS_ONLINE_MODELS });
                 if (m_webmodellibrary_view) {
                     //click online  models
                     AnalyticsDataUploadManager::uploadSlice822ClickEvent("online_models");
@@ -1723,6 +1736,7 @@ void MainFrame::print_plate(PrintSelectType tp){
 
     m_print_select = tp;
 
+
     if (wxGetApp().preset_bundle->machine_is_belt()) {
         m_plater->restore_belt_trans();
     }
@@ -1763,6 +1777,9 @@ void MainFrame::print_plate(PrintSelectType tp){
         wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SEND_TO_LOCAL_NET_PRINTER));
     else if (m_print_select == eSendToMultLocalNetPrinter)
         wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_PRINT_MULTI_MACHINE));
+    else if (m_print_select == eSendToFluiddPrinter)
+        wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_FLUIDD_PRINT_MACHINE));
+    
    /* else if (m_print_select == eUpload3mf)
         wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_UPLOAD_3MF));*/
 }
@@ -2173,7 +2190,7 @@ bool MainFrame::get_enable_print_status(bool is_all_or_any_of_them)
 		}
         enable = enable && !is_all_plates;
 	}
-    else if (m_print_select == eSendToLocalNetPrinter || m_print_select == eUploadGcode || m_print_select ==eSendToMultLocalNetPrinter)
+    else if (m_print_select == eSendToLocalNetPrinter || m_print_select == eUploadGcode || m_print_select ==eSendToMultLocalNetPrinter || m_print_select == eSendToFluiddPrinter)
     {
         if (wxGetApp().plater()->only_gcode_mode())
         {
@@ -2441,7 +2458,7 @@ void MainFrame::on_sys_color_changed()
     // Only update home page. No need to reload others
     auto dark = Slic3r::GUI::wxGetApp().dark_mode();
 #if CUSTOM_COMMUNITY_ENABLE
-    m_webview->Browse()->SetUserAgent(wxString::Format("BBL-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
+    m_webview->Browse()->SetUserAgent(wxString::Format("Creality-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
             dark ? "dark" : "light"));
     m_webview->Browse()->Reload();
 #endif
@@ -4130,6 +4147,11 @@ void MainFrame::loadOldPresetsFromFolder()
     });
     spLoadOldPresetsFromFolder->loadPresets(oldPresetsFolder);
     size_t loadFileSize = spLoadOldPresetsFromFolder->getLoadFileSize();
+    if (loadFileSize == 0) {
+        oldPresetsFolder = userDataDir + "/Creative3D/5.0/server_1/orca/user/parampack";
+        spLoadOldPresetsFromFolder->loadPresets(oldPresetsFolder);
+        loadFileSize = spLoadOldPresetsFromFolder->getLoadFileSize();
+    }
 
     auto msg = wxString::Format(_L_PLURAL("There is %d config imported. (Only non-system and compatible configs)",
                                           "There are %d configs imported. (Only non-system and compatible configs)", loadFileSize),

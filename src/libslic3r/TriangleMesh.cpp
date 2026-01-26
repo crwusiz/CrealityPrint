@@ -92,10 +92,10 @@ static void trianglemesh_repair_on_import(stl_file &stl)
     auto start = std::chrono::high_resolution_clock::now();
     stl_check_facets_exact(&stl);
     auto end = std::chrono::high_resolution_clock::now();
-    // 计算耗时
+    // Measure execution time
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
     int spend_time = duration.count();
-    // 输出耗时
+    // Log execution time
     std::cout << "Function took " << spend_time << " seconds to execute." << std::endl;
 
     assert(stl_validate(&stl));

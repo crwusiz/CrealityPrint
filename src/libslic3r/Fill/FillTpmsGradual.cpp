@@ -301,10 +301,9 @@ void process_block(int                                               i,
     tbb::parallel_for(tbb::blocked_range<size_t>(0, total_size),
                       [&contourValue, &posxy, &contourPointss, &data, &gridSize_w](const tbb::blocked_range<size_t>& range) {
                           for (size_t k = range.begin(); k < range.end(); ++k) {
-                              int i = k / (gridSize_w - 1); // 计算行索引
-                              int j = k % (gridSize_w - 1); // 计算列索引
-                                  process_block(i, j, data, contourValue, posxy, contourPointss[k]);
-                             
+                              int i = k / (gridSize_w - 1); // row index in grid
+                              int j = k % (gridSize_w - 1); // column index in grid
+                              process_block(i, j, data, contourValue, posxy, contourPointss[k]);
                           }
                       });
 
@@ -650,11 +649,11 @@ void TpmsGradual::cal_scalar_field(const FillParams& params,
     int total_size = (height) * (width);
     tbb::parallel_for(tbb::blocked_range<size_t>(0, total_size),
                       [&width, &scalar_field, &data, &posxy](const tbb::blocked_range<size_t>& range) {
-                          for (size_t k = range.begin(); k < range.end(); ++k) {
-                              int i      = k / (width); // 计算行索引
-                              int j      = k % (width); // 计算列索引
-                              data[i][j] = scalar_field(posxy[i][j].x, posxy[i][j].y);
-                          }
+                         for (size_t k = range.begin(); k < range.end(); ++k) {
+                             int i      = k / (width); // Calculate row index
+                             int j      = k % (width); // Calculate column index
+                             data[i][j] = scalar_field(posxy[i][j].x, posxy[i][j].y);
+                         }
                       });
 
 
@@ -759,13 +758,13 @@ void FillTpmsGradual::cal_scalar_field(const FillParams&                        
     tbb::parallel_for(tbb::blocked_range<size_t>(0, total_size),
                       [&width, &data, &posxy, &curz, &bbox_min_x, &bbox_min_y, &bbox_min_z, &bbox_max_x, &bbox_max_y, &bbox_max_z, &_axis,
                        &_celltype, &_infill_density1, &_infill_density2](const tbb::blocked_range<size_t>& range) {
-                          for (size_t k = range.begin(); k < range.end(); ++k) {
-                              int i      = k / (width); // 计算行索引
-                              int j      = k % (width); // 计算列索引
-                              data[i][j] = scalar_function_test(posxy[i][j].x, posxy[i][j].y, curz, bbox_min_x, bbox_min_y, bbox_min_z,
-                                                                bbox_max_x, bbox_max_y, bbox_max_z, _axis, _celltype, _infill_density1,
-                                                                _infill_density2);
-                          }
+                         for (size_t k = range.begin(); k < range.end(); ++k) {
+                             int i      = k / (width); // Calculate row index
+                             int j      = k % (width); // Calculate column index
+                             data[i][j] = scalar_function_test(posxy[i][j].x, posxy[i][j].y, curz, bbox_min_x, bbox_min_y, bbox_min_z,
+                                                               bbox_max_x, bbox_max_y, bbox_max_z, _axis, _celltype, _infill_density1,
+                                                               _infill_density2);
+                         }
                       });
 }
 

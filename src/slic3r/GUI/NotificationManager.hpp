@@ -19,7 +19,8 @@
 #include <deque>
 #include <unordered_set>
 #include <unordered_map>
-
+#include "nlohmann/json.hpp"
+using namespace nlohmann;
 namespace Slic3r {
 namespace GUI {
 
@@ -362,7 +363,7 @@ public:
 
 
 	void cleanup_arrange_notifications();
-
+	json get_all_notification();
 private:
 	// duration 0 means not disapearing
 	struct NotificationData {

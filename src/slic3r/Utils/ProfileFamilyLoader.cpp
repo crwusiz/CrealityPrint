@@ -373,10 +373,10 @@ static bool customComparator(const PrinterInfo& a, const PrinterInfo& b)
     auto getPriority = [](const std::string& name) {
         for (size_t i = 0; i < order.size(); ++i) {
             if (toLowerAndContains(name, order[i])) {
-                return i; // �������ȼ�����
+                return i; // Higher priority for earlier keywords
             }
         }
-        return order.size(); // �����������������������ȼ�
+        return order.size(); // Lowest priority if no keyword matches
     };
 
     return getPriority(a.name) < getPriority(b.name);
@@ -798,7 +798,7 @@ int ProfileFamilyLoader::LoadProfileFamily(
                 OneModel["nozzle_selected"] = "";
 
                 for (const auto& pair : mapInfo) {
-                    // k1 max ���⴦������ʾ0.4����Ĵ�ӡ����
+                    // Special-case K1 Max: always use 0.4 mm nozzle area info
                     if ("K1 Max" == s1) {
                         if ((pair.second.strModelName == s1) && (pair.first.find("0.4") != string::npos)) {
                             OneModel["area"] = pair.second.strAreaInfo + "*" + pair.second.strHeightInfo;

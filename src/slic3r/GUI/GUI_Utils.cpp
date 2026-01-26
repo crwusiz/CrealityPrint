@@ -201,7 +201,22 @@ int get_dpi_for_window(const wxWindow *window)
         return GetDeviceCaps(hdc, LOGPIXELSX);
     }
 #elif defined __linux__
-    // TODO
+    if (window) {
+        // wxDisplay constructor with wxWindow* is available since wxWidgets 3.1.2
+        #if wxCHECK_VERSION(3, 1, 2)
+        wxDisplay display(window);
+        if (display.IsOk())
+            return display.GetPPI().x;
+        #else
+        // Fallback for older wxWidgets or if window is null
+        // This might not return the correct DPI for the specific window if monitors have different DPIs
+        wxScreenDC dc;
+        return dc.GetPPI().x;
+        #endif
+    } else {
+        if (wxDisplay::GetCount() > 0)
+            return wxDisplay(0u).GetPPI().x;
+    }
     return DPI_DEFAULT;
 #elif defined __APPLE__
     // TODO

@@ -30,7 +30,7 @@ public:
     }
     std::function<std::string(std::string, std::string)> call_cmd = [](std::string, std::string) -> std::string {
         return "";
-    }; // Î¨Ò»±©Â¶½Ó¿Ú
+    }; // Singleton interface
     
 private:
     TestHelper(bool enable);

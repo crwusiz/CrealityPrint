@@ -1321,7 +1321,7 @@ bool GuideFrame::run()
         this->SetPosition(wxPoint(guide_x, guide_y));
     }
 
-    //锟斤拷锟皆ｏ拷锟截憋拷选锟斤拷锟接★拷锟斤拷慕锟斤拷锟�(wxWidgets)
+    // Legacy selection dialog implementation (wxWidgets) kept for reference
     //int result = 0;
     //if(m_page == GuidePage::BBL_MODELS_ONLY)
     //{

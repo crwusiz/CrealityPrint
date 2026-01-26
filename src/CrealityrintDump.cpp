@@ -12,9 +12,22 @@
 #include <windows.h>
 #include <winternl.h>
 #endif
-// 自定义对话框类
 
-
+static wxString get_cpu_model()
+{
+#ifdef _WIN32
+    constexpr DWORD bufsize_ = 500;
+    DWORD           bufsize  = bufsize_ - 1;
+    char            buf[bufsize_] = "";
+    memset(buf, 0, sizeof(buf));
+    const std::string reg_path = "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0";
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, reg_path.c_str(), "ProcessorNameString",
+        RRF_RT_REG_SZ, NULL, &buf, &bufsize) == ERROR_SUCCESS) {
+        return wxString::FromUTF8(buf);
+    }
+#endif
+    return "";
+}
 
 ErrorReportDialog::ErrorReportDialog(wxWindow* parent, const wxString& title)
     : Slic3r::GUI::DPIDialog(parent, wxID_ANY, title, wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
@@ -65,9 +78,14 @@ ErrorReportDialog::ErrorReportDialog(wxWindow* parent, const wxString& title)
 
     sizer->Add(tabCtrPanel, 0, wxALL | wxEXPAND, 5);
     GetErrorReport();
-    wxString formattedString = wxString::Format(wxT("OS: %s\nGraphicsCard: %s\nOpenGLVersion: %s\nVersion: %s\nUid: %s\n"),
-                                                m_info.osDescription, m_info.graphicsCardVendor, m_info.openGLVersion, m_info.build,
-                                                m_info.uuid);
+    wxString formattedString = wxString::Format(
+        wxT("OS: %s\nCPU: %s\nGraphicsCard: %s\nOpenGLVersion: %s\nVersion: %s\nUid: %s\n"),
+        m_info.osDescription,
+        m_info.cpuModel,
+        m_info.graphicsCardVendor,
+        m_info.openGLVersion,
+        m_info.build,
+        m_info.uuid);
     // 创建水平方向的布局管理器，用于放置文本框
     wxStaticText* vtext = new wxStaticText(tabCtrPanel, wxID_ANY, formattedString, wxPoint(20, 20));
     vtext->SetFont(::Label::Body_12);
@@ -181,6 +199,7 @@ wxString ErrorReportDialog::getSystemInfo()
 
     nlohmann::json j;
     j["osDescription"]      = m_info.osDescription.ToStdString();
+    j["cpuModel"]           = m_info.cpuModel.ToStdString();
     j["graphicsCardVendor"] = m_info.graphicsCardVendor.ToStdString();
     j["openGLVersion"]      = m_info.openGLVersion.ToStdString();
     j["build"]              = m_info.build.ToStdString();
@@ -505,6 +524,7 @@ void ErrorReportDialog::GetErrorReport()
         #endif
         
         m_info.osDescription   = osDescription;
+        m_info.cpuModel        = get_cpu_model();
         m_info.build           = wxString(CREALITYPRINT_VERSION, wxConvUTF8);
         m_info.uuid = Slic3r::GUI::wxGetApp().app_config->get("language") + wxDateTime::Now().Format("%Y%m%d%H%M%S") +
                       wxString::Format("%03lu", wxDateTime::UNow().GetMillisecond());

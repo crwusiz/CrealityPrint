@@ -62,6 +62,7 @@ namespace Slic3r {
             int getFileListFromLanDevice(const std::string strIp);
             int deleteFileListFromLanDevice(const std::string strIp, const std::string strName);
             int uploadeFileLanDevice(const std::string strIp);
+            wxString openCAFile();
 
             bool LoadFile(std::string jPath, std::string & sContent);
 
@@ -96,6 +97,7 @@ namespace Slic3r {
             wxString m_apikey;
             bool m_apikey_sent;
             bool m_finish_upload_device_state {false};
+            bool m_plate_data_sent_on_show {false};
 
             std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> m_commandHandlers;
             std::unordered_map<std::string,std::string> m_devicePool;

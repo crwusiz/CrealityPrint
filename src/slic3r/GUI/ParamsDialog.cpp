@@ -23,8 +23,16 @@ ParamsDialog::ParamsDialog(wxWindow * parent)
 	topsizer->Add(m_panel, 1, wxALL | wxEXPAND, 0, NULL);
 
     int un = em_unit();
-	SetSizerAndFit(topsizer);
-	SetSize({130 * em_unit(), 65 * em_unit()});
+	//SetSizerAndFit(topsizer);
+    
+    SetMinSize({130 * em_unit(), 65 * em_unit()});
+    SetSize({130 * em_unit(), 65 * em_unit()});
+    SetSizer(topsizer);
+    //topsizer->SetSizeHints(this);
+
+    //this->SetMinSize(wxSize(80 * em_unit(), 30 * em_unit()));
+    //this->SetSizer(topSizer);
+    //topSizer->SetSizeHints(this);
 
 	Layout();
     

@@ -19,7 +19,7 @@ class Check3mfVendor
 public:
     static Check3mfVendor* getInstance();
     void updateCurPrinterType();
-    // 返回值：true为创想的3mf,false为其它厂商的3mf
+    // Return true for Creality 3MF file, false for other vendors
     bool check(const std::string& fileName, const std::string& printerSettingId, BusyCursor* busy);
     bool get3mfConfig(const DynamicPrintConfig& config_loaded, DynamicPrintConfig& new_config_loaded);
     void doSelectPrinterPreset();

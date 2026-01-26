@@ -64,17 +64,17 @@ namespace GUI {
 
 
     enum class ENDownloadConfigState {
-        ENDCS_NOT_DOWNLOAD,         //  未开始下载
-        ENDCS_DOWNLOAD_SUCCESS,     //  下载成功
-        ENDCS_DOWNLOAD_FAIL,        //  下载失败
-        ENDCS_CXCLOUD_NO_CONFIG     //  创想云没有配置文件
+        ENDCS_NOT_DOWNLOAD,         // Not started
+        ENDCS_DOWNLOAD_SUCCESS,     // Download succeeded
+        ENDCS_DOWNLOAD_FAIL,        // Download failed
+        ENDCS_CXCLOUD_NO_CONFIG     // No config file in CXCloud
     };
 
     enum class ENDownloadPresetState {
-        ENDPS_NOT_DOWNLOAD,         //  未开始下载
-        ENDPS_DOWNLOADING,           //  下载中
-        ENDPS_DOWNLOAD_SUCCESS,     //  下载成功
-        ENDPS_DOWNLOAD_FAILED,        //  下载失败
+        ENDPS_NOT_DOWNLOAD,         // Not started
+        ENDPS_DOWNLOADING,          // Downloading
+        ENDPS_DOWNLOAD_SUCCESS,     // Download succeeded
+        ENDPS_DOWNLOAD_FAILED,      // Download failed
     };
 
     class CXCloudDataCenter
@@ -89,12 +89,12 @@ namespace GUI {
         int  deleteUserPresetBySettingID(const std::string& settingID);
 
         void setDownloadConfigToLocalState(ENDownloadConfigState state);
-        // -1:未开始下载 0:下载成功， 1：下载失败, 2: 创想云没有配置文件
+        // -1: not started, 0: download succeeded, 1: download failed, 2: no config file
         ENDownloadConfigState getDownloadConfigToLocalState();
-        // 是否到了上传配置文件到创想云的时间
+        // Whether updating the config file has timed out
         bool isUpdateConfigFileTimeout();
         void resetUpdateConfigFileTime();
-        // 是否到了网络错误，重试的时间
+        // Whether retrying after a network error has timed out
         bool isNetworkErrorRetryTimeout();
         void resetNetworkErrorRetryTime();
         bool isNetworkError();
@@ -164,14 +164,14 @@ namespace GUI {
         };
         CommunicateWithCXCloud();
         ~CommunicateWithCXCloud();
-        //  用户参数包列表
+        // User profile list
         int getUserProfileList(std::vector<UserProfileListItem>& vtUserProfileListItem);
-        //  下载用户预设
+        // Download user preset
         int downloadUserPreset(const UserProfileListItem& userProfileListItem, std::string& saveJsonFile);
-        //  请求上传用户参数包
+        // Pre-upload user profile configuration
         int preUpdateProfile_create(const UploadFileInfo& fileInfo, PreUpdateProfileRetInfo& retInfo);
         int preUpdateProfile_update(const UploadFileInfo& fileInfo, PreUpdateProfileRetInfo& retInfo);
-        //  删除用户预设
+        // Delete user preset
         int deleteProfile(const std::string& ssDeleteSettingId);
         const LastError& getLastError() { return m_lastError; }
 

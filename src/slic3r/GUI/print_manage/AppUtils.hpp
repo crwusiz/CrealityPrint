@@ -11,12 +11,12 @@ namespace DM{
 #include <functional>
 #include <mutex>
 #include <thread>
-// ==================== 线程控制核心类 ====================
+// ==================== Thread control core class ====================
 class ThreadController {
 public:
     ThreadController() : stop_requested(false) {}
 
-    // 请求中断
+    // Request stop
     void requestStop() {
         std::lock_guard<std::mutex> lock(mtx);
         stop_requested = true;
@@ -24,14 +24,14 @@ public:
     }
     void reset() {
         std::lock_guard<std::mutex> lock(mtx);
-        stop_requested = false; // 清除中断标志
+        stop_requested = false; // Clear stop flag
     }
-    // 检查中断状态
+    // Check stop state
     bool isStopRequested() const {
         return stop_requested.load(std::memory_order_relaxed);
     }
 
-    // 带超时的等待中断检查
+    // Wait with timeout and check stop flag
     template<typename Rep, typename Period>
     bool waitForStop(const std::chrono::duration<Rep, Period>& timeout) {
         std::unique_lock<std::mutex> lock(mtx);
@@ -56,12 +56,14 @@ public:
 };
 class LANConnectCheck {
 public: 
-    static bool pingHostWithRetry(const std::string& ip, ThreadController& ctrl,  // 注入控制器,
-        int retries = 1, int timeout_ms = 1000, int delay_ms = 200);// 判断设备是否在同一网段（ping）
-    static bool isPortOpen(const std::string& ip, int port, ThreadController& ctrl);    //// 检查80端口，9999端口是否连接正常
+    static bool pingHostWithRetry(const std::string& ip, ThreadController& ctrl,  // Inject controller
+        int retries = 1, int timeout_ms = 1000, int delay_ms = 200); // Check whether device is reachable in LAN (ping)
+    static bool isPortOpen(const std::string& ip, int port, ThreadController& ctrl);    // Check whether ports 80 and 9999 are open
 
     static int checkLan(const std::string& ip, ThreadController& ctrl);
 };
+
+bool is_uos_system();
 
 
 }

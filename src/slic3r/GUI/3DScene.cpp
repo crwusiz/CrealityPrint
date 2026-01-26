@@ -1006,7 +1006,7 @@ int GLVolumeCollection::load_object_volume(
 
             // size_t mem_size = mesh.memsize();
             size_t face_size = mesh.its.indices.size();
-            // ¹ÀËãÄÚ´æÕ¼ÓÃ
+            // Estimate memory usage
             float estimate_mem = 0.6909f * face_size / 1000 * 1024 * 1024;
 
             bool mem_enouge = (avail > 0 && total > 0 && (avail - estimate_mem) / total > 0.2f);

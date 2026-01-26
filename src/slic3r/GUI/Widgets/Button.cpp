@@ -490,7 +490,7 @@ void RoundedPanel::OnPaint(wxPaintEvent& event) {
     wxBufferedPaintDC dc(this);
     wxSize size = GetClientSize();
     if (size.x <= 0 || size.y <= 0) {
-        // �����ť��СΪ���ǳ�С�����������Ϣ
+        // Button size is too small; skip drawing
         wxLogDebug("Button size is too small: %dx%d", size.x, size.y);
         return;
     }
@@ -508,7 +508,7 @@ void RoundedPanel::OnPaint(wxPaintEvent& event) {
         gc->SetPen(wxPen(m_borderColor, 1));
         gc->StrokePath(path);
 
-        // �ͷŻ�ͼ������
+        // Release graphics context
         delete gc;
     }
 
@@ -531,7 +531,7 @@ CustomRoundCornerButton::CustomRoundCornerButton(wxWindow* parent, wxWindowID id
     Bind(wxEVT_LEFT_DOWN, &CustomRoundCornerButton::OnMouseDown, this);
     Bind(wxEVT_LEFT_UP, &CustomRoundCornerButton::OnMouseUp, this);
 
-    // ������С��С
+    // Set minimum size
     SetMinSize(size);
 }
 
@@ -590,7 +590,7 @@ void CustomRoundCornerButton::OnPaint(wxPaintEvent& event) {
     wxBufferedPaintDC dc(this);
     wxSize size = GetClientSize();
     if (size.x <= 0 || size.y <= 0) {
-        // �����ť��СΪ���ǳ�С�����������Ϣ
+        // Button size is too small; skip drawing
         wxLogDebug("Button size is too small: %dx%d", size.x, size.y);
         return;
     }
@@ -618,7 +618,7 @@ void CustomRoundCornerButton::OnPaint(wxPaintEvent& event) {
         gc->SetPen(wxPen(m_borderColor, 1));
         gc->StrokePath(path);
 
-        // �ͷŻ�ͼ������
+        // Release graphics context
         delete gc;
     }
 

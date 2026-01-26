@@ -137,6 +137,7 @@ public:
     ~Sidebar();
     wxString get_filament_map_string();
     void create_printer_preset(int iType = 0);
+    void add_other_printer();
     void remove_unused_filament_combos(const size_t current_extruder_count);
     void remove_unused_filament_combos_delete(const size_t indexcmb);
     void update_all_preset_comboboxes();
@@ -551,6 +552,7 @@ public:
      * -2: send all gcode to target machine */
     int send_gcode(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);
     void send_gcode_legacy(int plate_idx = -1, Export3mfProgressFn proFn = nullptr, bool use_3mf = false);
+    void send_gcode_to_fluidd(int plate_idx = -1, Export3mfProgressFn proFn = nullptr, bool use_3mf = false);
     int export_config_3mf(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);
     //BBS jump to nonitor after print job finished
     void send_calibration_job_finished(wxCommandEvent &evt);

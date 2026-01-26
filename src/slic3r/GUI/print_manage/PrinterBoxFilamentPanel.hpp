@@ -32,7 +32,7 @@ public:
     void SetColor(const wxColour& color);
     wxColour GetColor();
 
-    void update_item_info_by_material(int box_id, const DM::Material& material_info, int box_type = 0); //0=多色盒子 1=外置料架 2=cfsMini
+    void update_item_info_by_material(int box_id, const DM::Material& material_info, int box_type = 0); //0=color selection 1=material selection 2=cfsMini
     void set_sync_state(bool bSync);
     void set_is_ext(bool is_ext);
     void setOriginMaterial(const DM::Material& material_info);
@@ -62,7 +62,7 @@ public:
     OneBoxFilamentColorItem(wxWindow* parent, const wxSize& size);
     ~OneBoxFilamentColorItem();
 
-    void update_ui_item_info_by_material_box_info(const DM::MaterialBox& material_box_info);
+    void update_ui_item_info_by_material_box_info(const DM::MaterialBox& material_box_info, const std::string cfsName = "");
 
     std::vector<OneFilamentColorItem*> m_filament_color_items;
 

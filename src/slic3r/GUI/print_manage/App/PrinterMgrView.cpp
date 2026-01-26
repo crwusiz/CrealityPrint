@@ -47,13 +47,371 @@
 #include "buildinfo.h"
 #include <cmath>
 #include "slic3r/GUI/UploadFile.hpp"
-// For Test::EVENT_SPREAD and other test utilities
 #include "../../../Utils/TestHelper.hpp"
+#ifdef __WXGTK__
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <memory>
+#include <sstream>
+#include <unordered_map>
+#include <thread>
+#include <atomic>
+#include <boost/asio.hpp>
+#include <boost/beast/websocket.hpp>
+#include <boost/beast/core/flat_buffer.hpp>
+#include <boost/beast/core/buffers_to_string.hpp>
 
+#include "../AppUtils.hpp"
+#endif
 namespace pt = boost::property_tree;
 
 namespace Slic3r {
 namespace GUI {
+
+#ifdef __WXGTK__
+static wxString GetWebSocketProxyScript()
+{
+    const char* script =
+        "(function(){"
+        "if(window.__wsProxyInstalled){return;}"
+        "window.__wsProxyInstalled=true;"
+        "function __install(){"
+        "if(!window.wx||!window.wx.postMessage){return false;}"
+        "var STATE_CONNECTING=0,STATE_OPEN=1,STATE_CLOSING=2,STATE_CLOSED=3;"
+        "function ProxyWebSocket(url,protocols){"
+        "this.url=url;this.protocol='';this.readyState=STATE_CONNECTING;"
+        "this.binaryType='blob';this.extensions='';this.bufferedAmount=0;"
+        "this.onopen=null;this.onmessage=null;this.onclose=null;this.onerror=null;"
+        "var id=ProxyWebSocket.__nextId++;this.__id=id;ProxyWebSocket.__sockets[id]=this;"
+        "ProxyWebSocket.__send({type:'open',id:id,url:url,protocols:protocols});"
+        "}"
+        "ProxyWebSocket.__nextId=1;"
+        "ProxyWebSocket.__sockets={};"
+        "ProxyWebSocket.__send=function(msg){"
+        "try{window.wx.postMessage(JSON.stringify({command:'ws_proxy',payload:msg}));}catch(e){}"
+        "};"
+        "ProxyWebSocket.prototype.send=function(data){"
+        "if(this.readyState!==STATE_OPEN&&this.readyState!==STATE_CONNECTING){throw new Error('WebSocket is not open');}"
+        "ProxyWebSocket.__send({type:'send',id:this.__id,data:String(data)});"
+        "};"
+        "ProxyWebSocket.prototype.close=function(code,reason){"
+        "if(this.readyState===STATE_CLOSING||this.readyState===STATE_CLOSED){return;}"
+        "this.readyState=STATE_CLOSING;"
+        "ProxyWebSocket.__send({type:'close',id:this.__id,code:code,reason:reason});"
+        "};"
+        "ProxyWebSocket.CONNECTING=STATE_CONNECTING;"
+        "ProxyWebSocket.OPEN=STATE_OPEN;"
+        "ProxyWebSocket.CLOSING=STATE_CLOSING;"
+        "ProxyWebSocket.CLOSED=STATE_CLOSED;"
+        "ProxyWebSocket.__dispatch=function(evt){"
+        "var s=ProxyWebSocket.__sockets[evt.id];if(!s){return;}"
+        "switch(evt.event){"
+        "case'open':s.readyState=STATE_OPEN;if(typeof s.onopen==='function'){s.onopen({type:'open',target:s});}break;"
+        "case'message':if(typeof s.onmessage==='function'){s.onmessage({type:'message',data:evt.data,target:s});}break;"
+        "case'close':s.readyState=STATE_CLOSED;if(typeof s.onclose==='function'){s.onclose({type:'close',code:evt.code||1000,reason:evt.reason||'',wasClean:!!evt.wasClean,target:s});}delete ProxyWebSocket.__sockets[evt.id];break;"
+        "case'error':if(typeof s.onerror==='function'){s.onerror({type:'error',message:evt.message||'',target:s});}break;"
+        "}"
+        "};"
+        "window.WebSocket=ProxyWebSocket;"
+        "window.__nativeWebSocketCallback=function(evt){ProxyWebSocket.__dispatch(evt);};"
+        "return true;"
+        "}"
+        "if(!__install()){"
+        "var __t=0,__max=200;"
+        "var __timer=setInterval(function(){"
+        "if(__install()||++__t>=__max){clearInterval(__timer);}"
+        "},50);"
+        "}"
+        "})();";
+    return wxString::FromUTF8(script);
+}
+
+namespace {
+
+using tcp = boost::asio::ip::tcp;
+namespace websocket = boost::beast::websocket;
+
+struct WsProxySession : public std::enable_shared_from_this<WsProxySession>
+{
+    int id;
+    std::string url;
+    PrinterMgrView* owner;
+    std::shared_ptr<boost::asio::io_context> ioc;
+    std::unique_ptr<websocket::stream<tcp::socket>> ws;
+    boost::beast::flat_buffer buffer;
+    std::thread thread;
+    std::atomic<bool> closed;
+
+    WsProxySession(int i, const std::string& u, PrinterMgrView* o)
+        : id(i)
+        , url(u)
+        , owner(o)
+        , ioc(std::make_shared<boost::asio::io_context>())
+        , closed(false)
+    {
+    }
+
+    ~WsProxySession()
+    {
+        stop();
+    }
+
+    void start()
+    {
+        auto self = shared_from_this();
+        thread = std::thread([self]() { self->run(); });
+    }
+
+    static void parse_ws_url(const std::string& raw_url, std::string& host, std::string& port, std::string& target)
+    {
+        std::string tmp = raw_url;
+        if (tmp.rfind("ws://", 0) == 0)
+            tmp = tmp.substr(5);
+        else if (tmp.rfind("wss://", 0) == 0)
+            tmp = tmp.substr(6);
+        std::string hostport = tmp;
+        target = "/";
+        std::size_t pos_slash = tmp.find('/');
+        if (pos_slash != std::string::npos) {
+            hostport = tmp.substr(0, pos_slash);
+            target = tmp.substr(pos_slash);
+            if (target.empty())
+                target = "/";
+        }
+        std::size_t pos_colon = hostport.find(':');
+        if (pos_colon == std::string::npos) {
+            host = hostport;
+            port = "80";
+        } else {
+            host = hostport.substr(0, pos_colon);
+            port = hostport.substr(pos_colon + 1);
+            if (port.empty())
+                port = "80";
+        }
+    }
+
+    void run()
+    {
+        try {
+            std::string host;
+            std::string port;
+            std::string target;
+            parse_ws_url(url, host, port, target);
+            tcp::resolver resolver(*ioc);
+            ws.reset(new websocket::stream<tcp::socket>(*ioc));
+            auto results = resolver.resolve(host, port);
+            boost::asio::connect(ws->next_layer(), results.begin(), results.end());
+            ws->handshake(host, target);
+            on_open();
+            do_read();
+            ioc->run();
+        } catch (const std::exception& e) {
+            on_error(e.what());
+            on_close(1006, e.what(), false);
+        }
+    }
+
+    void do_read()
+    {
+        auto self = shared_from_this();
+        ws->async_read(buffer, [self](const boost::system::error_code& ec, std::size_t) {
+            if (ec) {
+                bool wasClean = ec == websocket::error::closed;
+                int code = wasClean ? 1000 : 1006;
+                self->on_close(code, ec.message(), wasClean);
+                return;
+            }
+            std::string data = boost::beast::buffers_to_string(self->buffer.data());
+            self->buffer.consume(self->buffer.size());
+            self->on_message(data);
+            self->do_read();
+        });
+    }
+
+    void send_text(const std::string& text)
+    {
+        auto self = shared_from_this();
+        boost::asio::post(*ioc, [self, text]() {
+            if (!self->ws)
+                return;
+            self->ws->async_write(boost::asio::buffer(text), [self](const boost::system::error_code& ec, std::size_t) {
+                if (ec)
+                    self->on_error(ec.message());
+            });
+        });
+    }
+
+    void close(int code, const std::string& reason)
+    {
+        auto self = shared_from_this();
+        boost::asio::post(*ioc, [self, code, reason]() {
+            if (!self->ws)
+                return;
+            boost::beast::websocket::close_reason cr;
+            cr.code = static_cast<boost::beast::websocket::close_code>(code == 0 ? 1000 : code);
+            cr.reason = reason;
+            self->ws->async_close(cr, [self](const boost::system::error_code& ec) {
+                if (ec)
+                    self->on_error(ec.message());
+                self->ioc->stop();
+            });
+        });
+    }
+
+    void stop()
+    {
+        if (ioc)
+            ioc->stop();
+        if (thread.joinable())
+            thread.join();
+    }
+
+    void on_open()
+    {
+        send_event("open", "", 0, "", true);
+    }
+
+    void on_message(const std::string& data)
+    {
+        send_event("message", data, 0, "", true);
+    }
+
+    void on_error(const std::string& message)
+    {
+        send_event("error", "", 0, message, false);
+    }
+
+    void on_close(int code, const std::string& reason, bool wasClean)
+    {
+        if (closed.exchange(true))
+            return;
+        send_event("close", "", code, reason, wasClean);
+    }
+
+    void send_event(const std::string& event, const std::string& data, int code, const std::string& reason, bool wasClean);
+};
+
+static std::mutex g_ws_proxy_mutex;
+static std::unordered_map<PrinterMgrView*, std::unordered_map<int, std::shared_ptr<WsProxySession>>> g_ws_proxy_sessions;
+
+static void send_ws_event_to_js(PrinterMgrView* view,
+                                int id,
+                                const std::string& event,
+                                const std::string& data,
+                                int code,
+                                const std::string& reason,
+                                bool wasClean)
+{
+    if (!view)
+        return;
+    nlohmann::json j;
+    j["id"] = id;
+    j["event"] = event;
+    if (!data.empty())
+        j["data"] = data;
+    if (code != 0)
+        j["code"] = code;
+    if (!reason.empty())
+        j["reason"] = reason;
+    j["wasClean"] = wasClean;
+    std::string payload = j.dump();
+    std::string encoded = RemotePrint::Utils::url_encode(payload);
+    wxString script = wxString::Format("window.__nativeWebSocketCallback(JSON.parse(decodeURIComponent('%s')));", encoded);
+    wxString copy = script;
+    wxTheApp->CallAfter([view, copy]() {
+        try {
+            view->run_script(copy.ToStdString());
+        } catch (...) {
+        }
+    });
+}
+
+void WsProxySession::send_event(const std::string& event,
+                                const std::string& data,
+                                int code,
+                                const std::string& reason,
+                                bool wasClean)
+{
+    send_ws_event_to_js(owner, id, event, data, code, reason, wasClean);
+}
+
+static void handle_ws_proxy_command(PrinterMgrView* view, const nlohmann::json& payload)
+{
+    if (!view)
+        return;
+    if (!payload.is_object())
+        return;
+    std::string type = payload.value("type", "");
+    int id = payload.value("id", -1);
+    if (id <= 0)
+        return;
+    if (type == "open") {
+        std::string url = payload.value("url", "");
+        auto session = std::make_shared<WsProxySession>(id, url, view);
+        {
+            std::lock_guard<std::mutex> lock(g_ws_proxy_mutex);
+            g_ws_proxy_sessions[view][id] = session;
+        }
+        session->start();
+    } else if (type == "send") {
+        std::string data = payload.value("data", "");
+        std::shared_ptr<WsProxySession> session;
+        {
+            std::lock_guard<std::mutex> lock(g_ws_proxy_mutex);
+            auto it_view = g_ws_proxy_sessions.find(view);
+            if (it_view == g_ws_proxy_sessions.end())
+                return;
+            auto it = it_view->second.find(id);
+            if (it == it_view->second.end())
+                return;
+            session = it->second;
+        }
+        if (session)
+            session->send_text(data);
+    } else if (type == "close") {
+        int code = 0;
+        if (payload.contains("code") && payload["code"].is_number_integer())
+            code = payload["code"].get<int>();
+        std::string reason = payload.value("reason", "");
+        std::shared_ptr<WsProxySession> session;
+        {
+            std::lock_guard<std::mutex> lock(g_ws_proxy_mutex);
+            auto it_view = g_ws_proxy_sessions.find(view);
+            if (it_view == g_ws_proxy_sessions.end())
+                return;
+            auto it = it_view->second.find(id);
+            if (it == it_view->second.end())
+                return;
+            session = it->second;
+            it_view->second.erase(it);
+        }
+        if (session)
+            session->close(code, reason);
+    }
+}
+
+static void cleanup_ws_proxy_for(PrinterMgrView* view)
+{
+    std::unordered_map<int, std::shared_ptr<WsProxySession>> sessions;
+    {
+        std::lock_guard<std::mutex> lock(g_ws_proxy_mutex);
+        auto it = g_ws_proxy_sessions.find(view);
+        if (it != g_ws_proxy_sessions.end()) {
+            std::cout << "[ws_proxy] cleanup view=" << view
+                      << " session_count=" << it->second.size() << std::endl;
+            sessions.swap(it->second);
+            g_ws_proxy_sessions.erase(it);
+        }
+    }
+    for (auto& kv : sessions) {
+        if (kv.second)
+            kv.second->close(1001, "view destroyed");
+    }
+}
+
+} 
+#endif
 
 PrinterMgrView::PrinterMgrView(wxWindow *parent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
@@ -69,6 +427,22 @@ PrinterMgrView::PrinterMgrView(wxWindow *parent)
         return;
     }
     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " m_browser address: " << (void*) m_browser;
+
+#ifdef __WXGTK__
+    bool uos_env = DM::is_uos_system();
+    std::cout << "[PrinterMgrView::PrinterMgrView] is_uos_system=" << (uos_env ? "true" : "false") << std::endl;
+    if (uos_env) {
+        wxString script = GetWebSocketProxyScript();
+        if (!script.IsEmpty()) {
+            std::cout << "[PrinterMgrView::PrinterMgrView] AddUserScript ws_proxy" << std::endl;
+            m_browser->AddUserScript(script);
+        } else {
+            std::cout << "[PrinterMgrView::PrinterMgrView] ws_proxy script empty, skip" << std::endl;
+        }
+    } else {
+        std::cout << "[PrinterMgrView::PrinterMgrView] skip ws_proxy script, not UOS" << std::endl;
+    }
+#endif
 
     m_browser->Bind(wxEVT_WEBVIEW_ERROR, &PrinterMgrView::OnError, this);
     m_browser->Bind(wxEVT_WEBVIEW_LOADED, &PrinterMgrView::OnLoaded, this);
@@ -290,6 +664,10 @@ PrinterMgrView::~PrinterMgrView()
     m_browser->Stop();
     m_browser->RemoveScriptMessageHandler("wx");
 #endif
+
+#ifdef __WXGTK__
+    cleanup_ws_proxy_for(this);
+#endif
     DM::AppMgr::Ins().UnRegister(m_browser);
     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " Start";
     SetEvtHandlerEnabled(false);
@@ -373,6 +751,21 @@ void PrinterMgrView::SendAPIKey()
     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << "[LOAD_URL_ACTION] START. webView=" << (void*) m_browser
                                << ", Backend Ptr BEFORE: " << backend_before ;
     m_browser->AddUserScript(script);
+#ifdef __WXGTK__
+    bool uos_env = DM::is_uos_system();
+    std::cout << "[PrinterMgrView::SendAPIKey] is_uos_system=" << (uos_env ? "true" : "false") << std::endl;
+    if (uos_env) {
+        wxString ws_script = GetWebSocketProxyScript();
+        if (!ws_script.IsEmpty()) {
+            std::cout << "[PrinterMgrView::SendAPIKey] AddUserScript ws_proxy" << std::endl;
+            m_browser->AddUserScript(ws_script);
+        } else {
+            std::cout << "[PrinterMgrView::SendAPIKey] ws_proxy script empty, skip" << std::endl;
+        }
+    } else {
+        std::cout << "[PrinterMgrView::SendAPIKey] skip ws_proxy script, not UOS" << std::endl;
+    }
+#endif
     m_browser->Reload();
 
     void* backend_after = m_browser->GetNativeBackend();
@@ -388,6 +781,25 @@ void PrinterMgrView::OnError(wxWebViewEvent &evt)
       case wxWEBVIEW_NAV_ERR_CONNECTION:
         e = "wxWEBVIEW_NAV_ERR_CONNECTION";
 #if wxUSE_WEBVIEW_EDGE
+        #ifdef __WIN32__
+        if (!wxGetApp().app_config->get_bool("webview_single_process")) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": WebView connection error, switch to single-process and restart.";
+            wxGetApp().app_config->set_bool("webview_single_process", true);
+            wxGetApp().app_config->save();
+            wxMessageBox(_L("WebView failed to start. The application will switch to single-process mode and restart."),
+                         _L("WebView"), wxOK | wxICON_INFORMATION);
+            wxString exe_path = wxStandardPaths::Get().GetExecutablePath();
+            wxString restart_cmd = wxString::Format("\"%s\"", exe_path);
+            long pid = wxExecute(restart_cmd, wxEXEC_ASYNC);
+            if (pid <= 0)
+                BOOST_LOG_TRIVIAL(error) << "[WebViewRuntime] Failed to relaunch Creality Print after enabling single-process.";
+            if (Slic3r::GUI::wxGetApp().mainframe)
+                Slic3r::GUI::wxGetApp().mainframe->Close(true);
+            else
+                wxGetApp().ExitMainLoop();
+            return;
+        }
+        #endif
         if(!m_bHasError)
         {
             m_bHasError = true;
@@ -505,6 +917,16 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
 
         wxString strCmd = j["command"];
         BOOST_LOG_TRIVIAL(trace) << "DeviceDialog::OnScriptMessage;Command:" << strCmd;
+        
+#ifdef __WXGTK__
+        if (strCmd == "ws_proxy") {
+            bool uos_env = DM::is_uos_system();
+            if (uos_env && j.contains("payload")) {
+                handle_ws_proxy_command(this, j["payload"]);
+                return;
+            }
+        }
+#endif
         if(strCmd == "get_oss_info")
         {
             UploadFile uploadFile;
@@ -815,6 +1237,17 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
             wxString strJS = wxString::Format("window.handleStudioCmd('%s');", commandJson.dump());
             run_script(strJS.ToStdString());
         }
+        else if (strCmd == "browse_fluidd_ca_file")
+        {
+            wxString path = openCAFile();
+            if (path.IsEmpty())
+                return ;
+            nlohmann::json commandJson;
+            commandJson["data"] = path.ToUTF8().data();
+            commandJson["command"] = "browse_fluidd_ca_file";
+            wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
+            run_script(strJS.ToStdString());
+        }
         else if (strCmd == "cancel_upload")
         {
             wxString ipAddress  = j["ipAddress"];
@@ -1037,9 +1470,10 @@ bool PrinterMgrView::Show(bool show)
 {
     bool result = wxPanel::Show(show);
 
-    if (show) {
+    if (show && !m_plate_data_sent_on_show) {
         wxString strJS = wxString::Format("window.handleStudioCmd('%s');", get_plate_data_on_show());
         run_script(strJS.ToStdString());
+        m_plate_data_sent_on_show = true;
     }
 
     return result;
@@ -1051,17 +1485,17 @@ void PrinterMgrView::run_script(std::string content)
     WebView::RunScript(m_browser, content);
 }
 std::string getFileNameFromURL(const std::string& url) {
-    // ???std::istringstream?????URL
+    // Use std::istringstream to parse URL
     std::istringstream iss(url);
     std::string segment;
     std::string fileName;
  
-    // ??????????'/'?????��??
+    // Find the last '/' or '\\' as path separator
     size_t lastIndex = url.find_last_of("/\\");
     if (lastIndex != std::string::npos) {
-        fileName = url.substr(lastIndex + 1); // ????????'/'??'\\'????????????
+        fileName = url.substr(lastIndex + 1); // Extract part after last '/' or '\\'
     } else {
-        // ???URL?????'/'????????URL???????????
+        // If URL has no '/', return the whole URL
         fileName = url;
     }
  
@@ -1636,7 +2070,7 @@ int PrinterMgrView::getFileListFromLanDevice(const std::string strIp)
             return -1;
         }
 
-        // RAII����CURL���
+        // RAII helper for CURL handle
         struct CurlGuard
         {
             CURL* handle;
@@ -1651,10 +2085,10 @@ int PrinterMgrView::getFileListFromLanDevice(const std::string strIp)
         curl_easy_setopt(curl, CURLOPT_USERPWD, "anonymous:");
         curl_easy_setopt(curl, CURLOPT_USE_SSL, CURLUSESSL_NONE);
 
-        // ������ʱ�ļ��洢FTP��Ӧ
-        std::string tempFilePath = "/tmp/ftp_listing_temp"; // Linux/Mac��ʱ·��
+        // Store FTP response in a temporary file
+        std::string tempFilePath = "/tmp/ftp_listing_temp"; // Temp path on Linux/Mac
     #if defined(_WIN32)
-        tempFilePath = std::tmpnam(nullptr); // Windows��ʱ�ļ�
+        tempFilePath = std::tmpnam(nullptr); // Temp file path on Windows
     #endif
 
         FILE* fd = nullptr;
@@ -1671,7 +2105,7 @@ int PrinterMgrView::getFileListFromLanDevice(const std::string strIp)
             return -1;
         }
 
-        // RAII�����ļ����
+        // RAII helper for file handle
         struct FileGuard
         {
             FILE* fd;
@@ -1679,34 +2113,34 @@ int PrinterMgrView::getFileListFromLanDevice(const std::string strIp)
             ~FileGuard()
             {
                 if (fd) fclose(fd);
-                // ɾ����ʱ�ļ�
+                // Delete temporary file
                 remove(filePath.c_str());
             }
         } fileGuard{ fd, tempFilePath };
 
-        //������д���ļ�
+        // Write FTP response into file
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fwrite);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, fd);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);  // 连接超时5秒
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);       // 数据传输超时15秒
 
-        // ͬ��ִ������
+        // Execute request synchronously
         CURLcode res = curl_easy_perform(curl);
 
         std::vector<std::string> FileInfoList;
 
         if (res == CURLE_OK)
         {
-            // �����ļ�ָ�뵽��ͷ
+            // Rewind file pointer to beginning
             rewind(fd);
 
-            //��ȡ�ļ����ݲ�����
+            // Read file line by line and parse
             char buffer[1024];
             while (fgets(buffer, sizeof(buffer), fd))
             {
                 std::string line(buffer);
 
-                // �Ƴ����л��з��ͻس���
+                // Remove newline and carriage return characters
                 line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
                 line.erase(std::remove(line.begin(), line.end(), '\n'), line.end());
 
@@ -1750,7 +2184,7 @@ int PrinterMgrView::deleteFileListFromLanDevice(const std::string strIp, const s
         return -1;
     }
 
-    // RAII����CURL���
+    // RAII helper for CURL handle
     struct CurlGuard
     {
         CURL* handle;
@@ -1770,7 +2204,7 @@ int PrinterMgrView::deleteFileListFromLanDevice(const std::string strIp, const s
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);  // 连接超时5秒
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);       // 数据传输超时15秒
 
-    // ͬ��ִ��FTPɾ������
+    // Execute FTP delete command synchronously
     CURLcode res = curl_easy_perform(curl);
 
     curl_slist_free_all(CMDlist);
@@ -1800,14 +2234,14 @@ int PrinterMgrView::uploadeFileLanDevice(const std::string strIp)
     else
         return 0;
 
-    //�Ƿ�Ϊgcode�ļ���
+    // Check whether it is a gcode file
     if (!is_gcode_file(into_u8(input_file)))
     {
         return -1;
     }
 
     {
-        //�������
+        // Notify front-end about upload progress
         nlohmann::json commandJson;
         commandJson["data"] = 30;
         commandJson["command"] = "uploade_file_oldPrinter_progress";
@@ -1832,6 +2266,19 @@ int PrinterMgrView::uploadeFileLanDevice(const std::string strIp)
     {
         return 0;
     }
+}
+
+wxString PrinterMgrView::openCAFile()
+{
+    static const auto filemasks = _L("Certificate files (*.crt, *.pem)|*.crt;*.pem|All files|*.*");
+    wxFileDialog      openFileDialog(this, _L("Open CA certificate file"), "", "", filemasks, wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+    if (openFileDialog.ShowModal() != wxID_CANCEL) {
+        wxString path = openFileDialog.GetPath();
+        return path;
+        //m_optgroup->set_value("printhost_cafile", openFileDialog.GetPath(), true);
+        //m_optgroup->get_field("printhost_cafile")->field_changed();
+    }
+    return "";
 }
 
 std::vector<std::string> PrinterMgrView::get_all_device_macs() const 

@@ -560,7 +560,9 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
 
             if (part.front() == part.back()) {
                 size_t optimal_start_index = 0;
-                // If the polyline was a polygon, there is a high chance it was an overhang. Overhangs that are <60� tend to be very thin areas, so lets get the beginning and end of them and ensure that they are supported.
+                // If the polyline was a polygon, there is a high chance it was an overhang.
+                // Overhangs that are <60 degrees tend to be very thin areas, so get the
+                // beginning and end of them and ensure that they are supported.
                 // The first point of the line will always be supported, so rotate the order of points in this polyline that one of the two corresponding points that are furthest from each other is in the beginning.
                 // The other will be manually added (optimal_end_index)
                 coord_t max_dist2_between_vertecies = 0;
@@ -1178,9 +1180,13 @@ void sample_overhang_area(
             point_count += poly.size();
         const size_t min_support_points = std::max(coord_t(1), std::min(coord_t(3), coord_t(total_length(overhang_area) / connect_length)));
         if (point_count <= min_support_points) {
-            // add the outer wall (of the overhang) to ensure it is correct supported instead. Try placing the support points in a way that they fully support the outer wall, instead of just the with half of the the support line width.
-            // I assume that even small overhangs are over one line width wide, so lets try to place the support points in a way that the full support area generated from them 
-            // will support the overhang (if this is not done it may only be half). This WILL NOT be the case when supporting an angle of about < 60� so there is a fallback, 
+            // Add the outer wall (of the overhang) to ensure it is correctly supported instead.
+            // Try placing the support points so they fully support the outer wall, instead of
+            // just half of the support line width.
+            // I assume that even small overhangs are over one line width wide, so place the
+            // support points so that the full support area generated from them will support
+            // the overhang (if this is not done it may only be half). This WILL NOT be the
+            // case when supporting an angle of about < 60 degrees so there is a fallback,
             // as some support is better than none.
             Polygons reduced_overhang_area = offset(union_ex(overhang_area), - interface_placer.config.support_line_width / 2.2, jtMiter, 1.2);
             polylines = ensure_maximum_distance_polyline(

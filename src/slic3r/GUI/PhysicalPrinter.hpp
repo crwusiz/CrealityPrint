@@ -11,14 +11,13 @@ class PhysicalPrinter
 {
 
 public:
-    PhysicalPrinter(const string& hostType,const string& hostUrl,const string& apiKey, const bool& ignoreCertRevocation);
+    PhysicalPrinter(const int& hostType,const string& hostUrl,const string& apiKey, const string& caFile, const bool& ignoreCertRevocation);
     ~PhysicalPrinter() {};
 
     bool TestConnection(string& info);
-    PrintHostType getPrintHostType(const string& input); 
 
 private:
-    string m_hostType;
+    int m_hostType;
     string m_hostUrl;
     string m_apiKey;
     DynamicPrintConfig* m_config{nullptr};

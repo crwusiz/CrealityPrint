@@ -239,6 +239,7 @@ bool OctoPrint::test(wxString& msg) const
     // it is ok to refer to `msg` from within the closure
     const char *name = get_name();
 
+
     bool res = true;
     auto url = make_url("api/version");
 
@@ -1183,4 +1184,24 @@ wxString PrusaConnect::get_test_failed_msg(wxString& msg) const
 {
     return GUI::format_wxstr("%s: %s", _L("Could not connect to Prusa Connect"), msg);
 }
+
+CrealityPrint::CrealityPrint(DynamicPrintConfig* config): PrusaLink(config){};
+
+bool CrealityPrint::validate_version_text(const boost::optional<std::string> &version_text) const
+{
+    return  true;
+}
+
+wxString CrealityPrint::get_test_ok_msg () const
+{
+    return _(L("Connection to CrealityPrint works correctly."));
+}
+
+wxString CrealityPrint::get_test_failed_msg (wxString &msg) const
+{
+    return GUI::format_wxstr("%s: %s", _L("Could not connect to CrealityPrint"), msg);
+}
+
+
+
 }

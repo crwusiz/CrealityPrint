@@ -1,4 +1,4 @@
-﻿#ifndef slic3r_GCodeProcessor_hpp_
+#ifndef slic3r_GCodeProcessor_hpp_
 #define slic3r_GCodeProcessor_hpp_
 
 #include "libslic3r/GCodeReader.hpp"
@@ -574,7 +574,7 @@ class Print;
 
                 float max_smoothed_v2 = 0;
                 float smooth_delta_v2;
-                float acc=1000.0f; // ���ٶȣ���λ mm/s^2;
+                float acc=1000.0f; // Acceleration, unit mm/s^2
 
                 void reset();
             };

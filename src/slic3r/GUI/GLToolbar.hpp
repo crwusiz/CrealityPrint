@@ -33,6 +33,7 @@ wxDECLARE_EVENT(EVT_GLTOOLBAR_PRINT_SELECT, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLTOOLBAR_SEND_TO_PRINTER, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLTOOLBAR_SEND_TO_PRINTER_ALL, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLTOOLBAR_PRINT_MULTI_MACHINE, SimpleEvent);
+wxDECLARE_EVENT(EVT_GLTOOLBAR_FLUIDD_PRINT_MACHINE, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLTOOLBAR_SEND_TO_LOCAL_NET_PRINTER, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLTOOLBAR_UPLOAD_3MF, SimpleEvent);
 
@@ -331,7 +332,7 @@ public:
         float scale;
 
         float width;
-        float limit_width{-1.0f}; // �����С���������ƣ���������������
+        float limit_width{-1.0f}; // Maximum width for layout; negative means no limit
         float height;
         bool dirty;
         float scroll;

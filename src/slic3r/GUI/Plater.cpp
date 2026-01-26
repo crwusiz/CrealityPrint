@@ -1336,6 +1336,13 @@ wxString Sidebar::get_filament_map_string()
 {
     return p->m_cx_panel_filament_content->get_filament_map_string();
 }
+
+void Sidebar::add_other_printer() 
+{
+    PhysicalPrinterDialog dlg(this->GetParent());
+    dlg.ShowModal();
+}
+
 void Sidebar::create_printer_preset(int iType)
 {
     CreatePrinterPresetDialog dlg(wxGetApp().mainframe, iType);
@@ -1848,18 +1855,22 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id)
     size_t filament_count = p->m_cx_panel_filament_content->size() - 1;
 	if (filament_count <= 0)
 		return;
-    wxBusyCursor busy;
-    if (wxGetApp().preset_bundle->is_the_only_edited_filament(filament_count) || (filament_count == 1)) {
-        wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(wxGetApp().preset_bundle->filament_presets[0], false, "", true);
-    }
-     if (filament_id == size_t(-2)) {
+    if (filament_id == size_t(-2)) {
         filament_id = p->m_menu_filament_id;
     }
-    if (filament_id == - 1) {
+    if (filament_id == size_t(-1)) {
         filament_id = filament_count;
     }
     if (filament_id > filament_count)
         return;
+
+    wxBusyCursor busy;
+    if (wxGetApp().preset_bundle->is_the_only_edited_filament((unsigned int)filament_id) || (filament_count == 1)) {
+        const size_t select_id = (filament_id < filament_count) ? (filament_id + 1) : (filament_id - 1);
+        const auto&  presets   = wxGetApp().preset_bundle->filament_presets;
+        if (select_id < presets.size())
+            wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(presets[select_id], false, "", true);
+    }
 
     if (p->editing_filament >= filament_count) {
         p->editing_filament = -1;
@@ -3054,6 +3065,7 @@ struct Plater::priv
     void on_action_print_all(SimpleEvent&);
     void on_action_export_gcode(SimpleEvent&);
     void on_action_send_gcode(SimpleEvent&);
+    void on_action_send_to_fluidd_machine(SimpleEvent&);
     void on_action_export_sliced_file(SimpleEvent&);
     void on_action_export_all_sliced_file(SimpleEvent&);
     void on_action_select_sliced_plate(wxCommandEvent& evt);
@@ -3713,6 +3725,7 @@ Plater::priv::priv(Plater* q, MainFrame* main_frame)
         q->Bind(EVT_GLTOOLBAR_UPLOAD_3MF, &priv::on_action_upload_3mf, this);
         q->Bind(EVT_GLTOOLBAR_UPLOAD_GCODE, &priv::on_action_upload_gcode, this);
         q->Bind(EVT_GLTOOLBAR_PRINT_MULTI_MACHINE, &priv::on_action_send_to_multi_machine, this);
+        q->Bind(EVT_GLTOOLBAR_FLUIDD_PRINT_MACHINE, &priv::on_action_send_to_fluidd_machine, this);
         q->Bind(EVT_GLCANVAS_PLATE_SELECT, &priv::on_plate_selected, this);
         q->Bind(EVT_DOWNLOAD_PROJECT, &priv::on_action_download_project, this);
         q->Bind(EVT_IMPORT_MODEL_ID, &priv::on_action_request_model_id, this);
@@ -8107,6 +8120,13 @@ void Plater::priv::on_select_preset(wxCommandEvent& evt)
         return;
     }
 
+    //验证fluidd设备的测试代码
+    //if (PresetComboBox::LabelItemType::LABEL_ITEM_WIZARD_OTHER_PRINTER == marker) {
+    //    sidebar->add_other_printer();
+    //    return;
+    //}
+    
+
     auto idx = combo->get_filament_idx();
 
     // BBS:Save the plate parameters before switching
@@ -8811,6 +8831,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent& evt)
 void Plater::priv::on_action_add(SimpleEvent&)
 {
     if (q != nullptr) {
+        size_t objects_before = q->model().objects.size();
         // q->add_model();
         // BBS open file in toolbar add
         auto start = std::chrono::high_resolution_clock::now();
@@ -8821,6 +8842,11 @@ void Plater::priv::on_action_add(SimpleEvent&)
         int  spend_time = duration.count();
         // 输出耗时
         std::cout << "Function took " << spend_time << " seconds to execute." << std::endl;
+        if (q->model().objects.size() > objects_before) {
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
+                AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
+                { AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ADD });
+        }
     }
 }
 
@@ -8829,6 +8855,7 @@ void Plater::priv::on_action_add_plate(SimpleEvent&)
 {
     if (q != nullptr) {
         take_snapshot("add partplate");
+        int plates_before = this->partplate_list.get_plate_count();
         this->partplate_list.create_plate();
         int new_plate = this->partplate_list.get_plate_count() - 1;
         this->partplate_list.select_plate(new_plate);
@@ -8837,6 +8864,11 @@ void Plater::priv::on_action_add_plate(SimpleEvent&)
         // BBS set default view
         // q->get_camera().select_view("topfront");
         q->get_camera().requires_zoom_to_plate = REQUIRES_ZOOM_TO_ALL_PLATE;
+        if (this->partplate_list.get_plate_count() > plates_before) {
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
+                AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
+                { AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ADD_PLATE });
+        }
     }
 }
 
@@ -9236,6 +9268,13 @@ void Plater::priv::on_action_send_gcode(SimpleEvent&)
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received export gcode event\n";
         q->send_gcode_legacy();
+    }
+}
+
+void Plater::priv::on_action_send_to_fluidd_machine(SimpleEvent&)
+{
+    if (q != nullptr) {
+        q->send_gcode_to_fluidd();
     }
 }
 
@@ -17189,6 +17228,100 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         p->export_gcode(fs::path(), false, std::move(upload_job));
     }
 }
+
+void Plater::send_gcode_to_fluidd(int plate_idx, Export3mfProgressFn proFn, bool use_3mf)
+{
+    // if physical_printer is selected, send gcode for this printer
+    // DynamicPrintConfig* physical_printer_config = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config();
+    DynamicPrintConfig* physical_printer_config = &Slic3r::GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    if (!physical_printer_config || p->model.objects.empty())
+        return;
+
+    PrintHostJob upload_job(physical_printer_config);
+    if (upload_job.empty())
+        return;
+
+    upload_job.upload_data.use_3mf = use_3mf;
+
+    // Obtain default output path
+    fs::path default_output_file;
+    try {
+        // Update the background processing, so that the placeholder parser will get the correct values for the ouput file template.
+        // Also if there is something wrong with the current configuration, a pop-up dialog will be shown and the export will not be performed.
+        unsigned int state = this->p->update_restart_background_process(false, false);
+        if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID)
+            return;
+        default_output_file = this->p->background_process.output_filepath_for_project("");
+    } catch (const Slic3r::PlaceholderParserError& ex) {
+        // Show the error with monospaced font.
+        show_error(this, ex.what(), true);
+        return;
+    } catch (const std::exception& ex) {
+        show_error(this, ex.what(), false);
+        return;
+    }
+    default_output_file = fs::path(Slic3r::fold_utf8_to_ascii(default_output_file.string()));
+    if (use_3mf) {
+        default_output_file.replace_extension("3mf");
+    }
+
+    // Repetier specific: Query the server for the list of file groups.
+    wxArrayString groups;
+    {
+        wxBusyCursor wait;
+        upload_job.printhost->get_groups(groups);
+    }
+
+    // PrusaLink specific: Query the server for the list of file groups.
+    wxArrayString storage_paths;
+    wxArrayString storage_names;
+    {
+        wxBusyCursor wait;
+        try {
+            upload_job.printhost->get_storage(storage_paths, storage_names);
+        } catch (const Slic3r::IOError& ex) {
+            show_error(this, ex.what(), false);
+            return;
+        }
+    }
+
+    auto                config = get_app_config();
+    PrintHostSendDialog dlg(default_output_file, upload_job.printhost->get_post_upload_actions(), groups, storage_paths, storage_names,
+                            config->get_bool("open_device_tab_post_upload"));
+    if (dlg.ShowModal() == wxID_OK) {
+        config->set_bool("open_device_tab_post_upload", dlg.switch_to_device_tab());
+        upload_job.switch_to_device_tab    = dlg.switch_to_device_tab();
+        upload_job.upload_data.upload_path = dlg.filename();
+        upload_job.upload_data.post_action = dlg.post_action();
+        upload_job.upload_data.group       = dlg.group();
+        upload_job.upload_data.storage     = dlg.storage();
+
+        // Show "Is printer clean" dialog for PrusaConnect - Upload and print.
+        if (std::string(upload_job.printhost->get_name()) == "PrusaConnect" &&
+            upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
+            GUI::MessageDialog dlg(nullptr, _L("Is the printer ready? Is the print sheet in place, empty and clean?"),
+                                   _L("Upload and Print"), wxOK | wxCANCEL);
+            if (dlg.ShowModal() != wxID_OK)
+                return;
+        }
+
+        if (use_3mf) {
+            // Process gcode
+            const int result = send_gcode(plate_idx, nullptr);
+
+            if (result < 0) {
+                wxString msg = _L("Abnormal print file data. Please slice again");
+                show_error(this, msg, false);
+                return;
+            }
+
+            upload_job.upload_data.source_path = p->m_print_job_data._3mf_path;
+        }
+
+        p->export_gcode(fs::path(), false, std::move(upload_job));
+    }
+}
+
 int Plater::send_gcode(int plate_idx, Export3mfProgressFn proFn)
 {
     int result = 0;

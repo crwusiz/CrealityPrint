@@ -4,7 +4,8 @@
 namespace Slic3r { 
 namespace CxBuildInfo {
 const std::string getVersion() { return std::string(CREALITYPRINT_VERSION); }
-const std::string  getBuildTime() { return std::string(SLIC3R_BUILD_TIME); }
+// Use __DATE__ and __TIME__ instead of cmake-generated timestamp to enable incremental builds
+const std::string  getBuildTime() { return std::string(__DATE__ " " __TIME__); }
 const std::string  getBuildId() { return std::string(SLIC3R_BUILD_ID); }
 const std::string getBuildOs() { return std::string(BUILD_OS); }
 const std::string getBuildType() { return std::string(PROJECT_VERSION_EXTRA); }

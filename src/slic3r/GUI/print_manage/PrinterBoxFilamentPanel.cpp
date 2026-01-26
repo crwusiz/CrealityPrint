@@ -179,7 +179,7 @@ OneBoxFilamentColorItem::~OneBoxFilamentColorItem()
     }
 }
 
-void OneBoxFilamentColorItem::update_ui_item_info_by_material_box_info(const DM::MaterialBox& material_box_info)
+void OneBoxFilamentColorItem::update_ui_item_info_by_material_box_info(const DM::MaterialBox& material_box_info, const std::string cfsName)
 {
     m_box_id = material_box_info.box_id;
     
@@ -242,7 +242,7 @@ void OneBoxFilamentColorItem::update_ui_item_info_by_material_box_info(const DM:
         }
 
     } 
-    else if (1 == material_box_info.box_type) // extra box
+    else if (1 == material_box_info.box_type && (cfsName!= "MF049")) // extra box
     {
         m_cfs_index_info = _L("EXT");
         // if(material_box_info.materials.size() > 0 && material_box_info.materials[0].color.empty())
@@ -466,7 +466,7 @@ void PrinterBoxFilamentPanel::update_box_filament_items()
         for (const auto& materialBox : m_device_data.materialBoxes) {
             OneBoxFilamentColorItem* one_box_item = new OneBoxFilamentColorItem(this, wxDefaultSize);
             assert(one_box_item);
-            one_box_item->update_ui_item_info_by_material_box_info(materialBox);
+            one_box_item->update_ui_item_info_by_material_box_info(materialBox,m_device_data.cfsName);
 
             m_filament_box_items.push_back(one_box_item);
             for (const auto& material : materialBox.materials) {

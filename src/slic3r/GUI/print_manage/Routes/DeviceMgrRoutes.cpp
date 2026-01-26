@@ -18,6 +18,7 @@
 #include "slic3r/GUI/AnalyticsDataUploadManager.hpp"
 #include "libslic3r/Time.hpp"
 #include "slic3r/GUI/PhysicalPrinter.hpp"
+#include "slic3r/GUI/SystemId/SystemId.hpp"
 
 using namespace Slic3r;
 namespace DM {
@@ -32,6 +33,16 @@ namespace DM {
             AppUtils::PostMsg(browse, strJS.ToStdString());
             return true;
             });
+
+        this->Handler({"get_system_id"}, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            nlohmann::json commandJson;
+            commandJson["command"] = "get_system_id";
+            commandJson["data"]    = SystemId::get_system_id();
+            std::string commandStr = commandJson.dump(-1, ' ', true);
+            wxString    strJS      = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandStr));
+            AppUtils::PostMsg(browse, strJS.ToStdString());
+            return true;
+        });
 
         this->Handler({ "request_all_device", "get_devices" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
             nlohmann::json commandJson;
@@ -290,6 +301,25 @@ namespace DM {
             DM::DeviceMgr::Ins().AddDevice(group, device);
             return true;
             });
+
+        this->Handler({ "add_device_fluidd" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            wxString strJS = wxString::Format("handleStudioCmd(%s)", json_data.dump(-1, ' ', true));
+            DM::DeviceMgr::Data device;
+            device.address = json_data["address"];
+            device.mac = json_data["mac"];
+            device.model = json_data["model"];
+            device.connectType = json_data["type"];
+            device.oldPrinter = false;
+            device.deviceUI = json_data["deviceUI"];
+            device.apiKey = json_data["apiKey"];
+            device.hostType = json_data["hostType"];
+            device.caFile = json_data["caFile"];
+            device.ignoreCertRevocation = json_data["ignoreCertRevocation"];
+            std::string group = json_data["group"];
+
+            DM::DeviceMgr::Ins().AddDevice(group, device);
+            return true;
+            });
         this->Handler({"remove_to_first"}, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
             DM::DeviceMgr::Data device;
             std::string         name = json_data["name"];
@@ -384,21 +414,21 @@ namespace DM {
 
         this->Handler({"test_fluidd_device"},[](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
             
+            int deviceType = json_data["type"].get<int>();
             std::string deviceUrl  = json_data["url"].get<std::string>();
-            //std::string deviceType = json_data["type"].get<std::string>();
-            //std::string deviceUrl  = json_data["url"].get<std::string>();
-            //bool        ignoreCertRevocation = json_data["ignoreCertRevocation"].get<std::string>();
+            std::string deviceApi  = json_data["api"].get<std::string>();
+            std::string caFile  = json_data["caFile"].get<std::string>();
+            bool ignoreCertRevocation = json_data["ignoreCertRevocation"].get<bool>();
 
-            //预留接口
-            GUI::PhysicalPrinter PhyPrinter("", deviceUrl, "", false);
+            GUI::PhysicalPrinter PhyPrinter(deviceType, deviceUrl, deviceApi, caFile,ignoreCertRevocation);
             string               info      = "";
             bool isSuccess =  PhyPrinter.TestConnection(info);
             nlohmann::json commandJson;
-            commandJson["command"] = "test_fluidd_device";
+            commandJson["command"] = "test_fluidd_device_status";
             commandJson["result"] = (isSuccess ? 1 : 0);
             commandJson["info"] = info;
 
-            wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump()));
+            wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
             wxGetApp().CallAfter([browse,strJS]{ AppUtils::PostMsg(browse,strJS.ToStdString());});
 
             return true;
@@ -448,6 +478,5 @@ namespace DM {
                 AppUtils::PostMsg(browse, commandJson);
             return true;
             });
-
     }
 }

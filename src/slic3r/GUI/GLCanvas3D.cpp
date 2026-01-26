@@ -1,4 +1,4 @@
-﻿#include "libslic3r/libslic3r.h"
+#include "libslic3r/libslic3r.h"
 #include "GLCanvas3D.hpp"
 
 #include <igl/unproject.h>
@@ -47,6 +47,8 @@
 #include <slic3r/GUI/GUI_Utils.hpp>
 #include "slic3r/GUI/Widgets/SideButton.hpp"
 #include "slic3r/Utils/TestHelper.hpp"
+#include "slic3r/GUI/print_manage/data/DataCenter.hpp"
+
 #if ENABLE_RETINA_GL
 #include "slic3r/Utils/RetinaHelper.hpp"
 #endif
@@ -89,6 +91,7 @@
 
 #include <imguizmo/ImGuizmo.h>
 #include "libslic3r/common_header/common_header.h"
+
 static constexpr const float TRACKBALLSIZE = 0.8f;
 
 static Slic3r::ColorRGBA DEFAULT_BG_LIGHT_COLOR      = {0xe1 / 255.0, 0xe4 / 255.0, 0xe9 / 255.0, 1.0f};
@@ -4247,6 +4250,12 @@ void GLCanvas3D::on_mouse_wheel(wxMouseEvent& evt)
             m_layers_slider->on_mouse_wheel(evt);
             m_moves_slider->on_mouse_wheel(evt);
         } else if (m_canvas_type == CanvasView3D) {
+            if (ImGui::GetCurrentContext()) {
+                ImGuiIO& io = ImGui::GetIO();
+                const float wheel_y = (float)evt.GetWheelRotation() / (float)evt.GetWheelDelta();
+                io.MouseWheel += wheel_y;
+                io.WantCaptureMouse;
+            }
             IMSlider* cliper = get_gcode_viewer().get_cliper_slider();
             cliper->on_mouse_wheel(evt);
         }
@@ -9456,6 +9465,10 @@ void GLCanvas3D::_rectangular_selection_picking_pass()
         Camera* camera = &main_camera;
         if (use_framebuffer) {
             // setup a camera which covers only the selection rectangle
+            // Keep the same projection type as the main camera (ortho vs perspective),
+            // otherwise rectangular selection may fail in orthographic view.
+            framebuffer_camera.set_type(main_camera.get_type());
+            
             const std::array<int, 4>& viewport    = camera->get_viewport();
             const double              near_left   = camera->get_near_left();
             const double              near_bottom = camera->get_near_bottom();
@@ -10147,7 +10160,7 @@ void GLCanvas3D::_render_slice_control() const
                          ImVec2(drop_pos.x, drop_pos.y + drop_size.y - 1.0f),
                          sep_col, 1.0f);
             ImVec2 drop_min_slice = drop_pos;
-            if (ImGui::IsItemClicked() || ImGui::IsItemHovered()) ImGui::OpenPopup("^##id0");
+            if (ImGui::IsItemClicked()) ImGui::OpenPopup("^##id0");
             // Popup menu width equals main+dropdown width; white menu background; no padding
             {
                 ImVec4 dark_bg = ImVec4(0x59/255.f, 0x59/255.f, 0x5D/255.f, 1.0f); // #59595D
@@ -10199,6 +10212,70 @@ void GLCanvas3D::_render_slice_control() const
         //}, wcfg);
     //config.prepareWindow(DispConfig::e_wt_print, windows, scale);
     //config.processWindows("Print", [&]() {
+
+        const DM::Device& current_device = DM::DataCenter::Ins().get_current_device_data();
+        if (current_device.deviceType == 1001)  //fluidd 设备
+        {
+            static int s_fst = 0;
+            std::vector<std::string> s_fluidd_print_string{_u8L("Send print"), _u8L("Export G-code"), _u8L("Upload to CrealityCloud")};
+
+             bool enprint = wxGetApp().mainframe->get_enable_print_status(false);
+            if (enprint) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+            }
+            auto sendGCodeItem = ImGui::GetCursorScreenPos();
+            if (config.normalButton(s_fluidd_print_string[s_fst], bigcfg, enprint ? 2 : 1)) {
+                 if (wxGetApp().mainframe) {
+            
+                     //eSendToLocalNetPrinter
+                     MainFrame::PrintSelectType pst = MainFrame::eSendToFluiddPrinter; 
+                     if (s_fst == 1)pst = MainFrame::eExportSlicedFile;
+                     else if (s_fst ==2)pst = MainFrame::eUploadGcode;
+                     wxGetApp().mainframe->print_plate(pst);
+                 }
+            }
+                
+            ImVec2 sendGCodeSize = ImGui::GetItemRectSize();
+            #ifdef __APPLE__
+                sendGCodeItem = ImVec2(sendGCodeItem.x/scale,sendGCodeItem.y/scale);
+                sendGCodeSize = ImVec2(sendGCodeSize.x/scale,sendGCodeSize.y/scale);
+                wxRect sendGCodeRec  = wxRect(sendGCodeItem.x, sendGCodeItem.y + 37, sendGCodeSize.x, sendGCodeSize.y);
+            #else
+                wxRect sendGCodeRec  = wxRect(sendGCodeItem.x, sendGCodeItem.y + 37 * scale, sendGCodeSize.x, sendGCodeSize.y);
+            #endif
+            m_SenderBtnRec = sendGCodeRec;
+            
+            if (enprint) {
+                ImGui::PopStyleColor();
+            }
+            config.prepareWindow(DispConfig::e_wt_fluidd_print_list, windows, scale);
+            ImGui::SameLine();
+            int ret = config.popupButton("^##id1", smallcfg, s_fluidd_print_string, bigcfg);
+            if (ret >= 0)
+            {
+                s_fst = ret;
+                if (s_fluidd_print_string[s_fst] == _u8L("Send print")) 
+                {
+                    wxGetApp().mainframe->m_print_select = MainFrame::eSendToFluiddPrinter;
+                }
+                else if (s_fluidd_print_string[s_fst] == _u8L("Export G-code"))
+                {
+                    wxGetApp().mainframe->m_print_select = MainFrame::eExportSlicedFile;
+                }
+                else if (s_fluidd_print_string[s_fst] == _u8L("Upload to CrealityCloud")) {
+                    wxGetApp().mainframe->m_print_select = MainFrame::eUploadGcode;
+                }
+                if (wxGetApp().mainframe) {
+                    MainFrame::PrintSelectType pst = MainFrame::eSendToFluiddPrinter; 
+                    if (s_fst == 1)
+                        pst = MainFrame::eExportSlicedFile;
+                    else if (s_fst == 2)
+                        pst = MainFrame::eUploadGcode;
+                    wxGetApp().mainframe->print_plate(pst);
+                }
+            }
+        } 
+        else
         {
         static int s_pst = 0;
             std::vector<std::string> s_print_string{_u8L("Send print"), 
@@ -10316,7 +10393,7 @@ void GLCanvas3D::_render_slice_control() const
                      ImVec2(drop_pos_p.x, drop_pos_p.y + drop_size_p.y - 1.0f),
                      sep_col_p, 1.0f);
         ImVec2 drop_min_print = drop_pos_p;
-        if (ImGui::IsItemClicked() || ImGui::IsItemHovered()) ImGui::OpenPopup("^##id1");
+        if (ImGui::IsItemClicked()) ImGui::OpenPopup("^##id1");
         {
             ImVec4 dark_bg2 = ImVec4(0x59/255.f, 0x59/255.f, 0x5D/255.f, 1.0f); // #59595D
             ImVec4 light_bg2 = config.getColor(DispConfig::e_ct_white);
@@ -12785,7 +12862,7 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
     }
 #if AUTOMATION_TOOL
 
-#ifdef _WIN32 // ������־
+#ifdef _WIN32 // Output automation log on Windows
     if (AutomationMgr::enabled()) {
         if (state) {
             AutomationMgr::outputLog(text, 1);

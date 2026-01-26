@@ -785,7 +785,7 @@ bool verify_update_print_object_regions(
                         callback_invalidate(region.region->config(), cfg, diff);
                         region.region->config_apply_only(cfg, diff, false);
                         if (std::find(diff.begin(), diff.end(), "wall_loops") != diff.end()) {
-                            // diff �а��� "wall_loops"
+                            // diff contains "wall_loops"
                             return false;
                         }
 
@@ -1660,10 +1660,10 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                         model_object->volumes[n]->set_world_mesh(std::move(its));
                     }
 
-                    //// ��ȡ��ǰģ�͵ľ�ȷ��Χ��
+                    //// Get current model exact bounding box
                     //const Slic3r::BoundingBoxf3& obj_box = model_object->belt_bounding_box_exact();
                     //Vec3d                        offset(0.0, model_instance_transformation.data()[13] - obj_box.min.y(), -obj_box.min.z());
-                    //// ����ƽ�Ʊ任����
+                    //// Apply translation transform
                     //Geometry::Transformation _trafo2;
                     //_trafo2.set_offset(offset);
                     //for (int n = 0; n < model_object->volumes.size(); n++) 
@@ -1763,7 +1763,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
             bool                  is_first = true;
             for (ModelObject* model_object : m_model.objects) 
             {
-                // ��ȡ��ǰģ�͵ľ�ȷ��Χ��
+                // Get current model exact bounding box
                 const Slic3r::BoundingBoxf3& obj_box = model_object->belt_bounding_box_exact();
                 
 
@@ -1772,7 +1772,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 {
                     for (int n = 0; n < model_object->volumes.size(); n++) {
                         Geometry::Transformation model_instance_transformation = model_object->instances[n]->get_transformation();
-                        // ����ƽ�Ʊ任����
+                        // Apply translation transform
                         Vec3d offset(0.0, -obj_box.min.y(), -obj_box.min.z()+ model_instance_transformation.get_offset().y());
                         Geometry::Transformation _trafo2;
                         _trafo2.set_offset(offset);

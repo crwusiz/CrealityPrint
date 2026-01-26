@@ -150,10 +150,10 @@ static bool customComparator(const PrinterInfo& a, const PrinterInfo& b)
     auto getPriority = [](const std::string& name) {
         for (size_t i = 0; i < order.size(); ++i) {
             if (toLowerAndContains(name, order[i])) {
-                return i; // �������ȼ�����
+                return i; // Higher priority for earlier keywords
             }
         }
-        return order.size(); // �����������������������ȼ�
+        return order.size(); // Lowest priority if no keyword matches
     };
 
     return getPriority(a.name) < getPriority(b.name);

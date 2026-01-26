@@ -276,6 +276,18 @@
         {
             "key": "single_extruder_multi_material",
             "type": "1"
+        },
+		{
+            "key": "flush_box_first_clean_length",
+            "type": "2"
+        },
+		{
+            "key": "flush_box_need_clean_length",
+            "type": "2"
+        },
+		{
+            "key": "flush_box_need_clean_length_max",
+            "type": "2"
         }
     ]
 }

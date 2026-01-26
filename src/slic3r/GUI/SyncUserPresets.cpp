@@ -735,7 +735,7 @@ int SyncUserPresets::doCheckNeedSyncConfigToCXCloud()
     BOOST_LOG_TRIVIAL(warning) << "SyncUserPresets doCheckNeedSyncConfigToCXCloud start...";
     int nRet = 0;
 
-    if (CXCloudDataCenter::getInstance().getDownloadConfigToLocalState() == ENDownloadConfigState::ENDCS_CXCLOUD_NO_CONFIG) { //  ������û�������ļ�
+    if (CXCloudDataCenter::getInstance().getDownloadConfigToLocalState() == ENDownloadConfigState::ENDCS_CXCLOUD_NO_CONFIG) { // No config downloaded yet
         PreUpdateProfileRetInfo retInfo;
         UploadFileInfo          fileInfo;
         std::string             outFileName = "";

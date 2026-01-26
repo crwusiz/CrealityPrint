@@ -130,7 +130,8 @@ Vec3f sample_power_cosine_hemisphere(const Vec2f &samples, float power) {
 std::vector<float> raycast_visibility(const AABBTreeIndirect::Tree<3, float> &raycasting_tree,
                                       const indexed_triangle_set &triangles,
                                       const TriangleSetSamples &samples,
-                                      size_t negative_volumes_start_index) {
+                                      size_t negative_volumes_start_index,
+                                      SeamPosition seam_position = spAligned) {
   BOOST_LOG_TRIVIAL(debug)
       << "SeamPlacer: raycast visibility of " << samples.positions.size() << " samples over " << triangles.indices.size()
       << " triangles: end";
@@ -153,7 +154,7 @@ std::vector<float> raycast_visibility(const AABBTreeIndirect::Tree<3, float> &ra
   std::vector<float> result(samples.positions.size());
   tbb::parallel_for(tbb::blocked_range<size_t>(0, result.size()),
                     [&triangles, &precomputed_sample_directions, model_contains_negative_parts, negative_volumes_start_index,
-                     &raycasting_tree, &result, &samples](tbb::blocked_range<size_t> r) {
+                     &raycasting_tree, &result, &samples, seam_position](tbb::blocked_range<size_t> r) {
                       // Maintaining hits memory outside of the loop, so it does not have to be reallocated for each query.
                       std::vector<igl::Hit> hits;
                       for (size_t s_idx = r.begin(); s_idx < r.end(); ++s_idx) {
@@ -162,7 +163,12 @@ std::vector<float> raycast_visibility(const AABBTreeIndirect::Tree<3, float> &ra
                                                         / (SeamPlacer::sqr_rays_per_sample_point * SeamPlacer::sqr_rays_per_sample_point);
 
                         const Vec3f &center = samples.positions[s_idx];
-                        const Vec3f &normal = samples.normals[s_idx];
+                        const Vec3f& normal = samples.normals[s_idx];
+                        if (seam_position == spAlignedBack) {
+                            const float front_adjustment = std::clamp((normal.dot(Vec3f(0.0f, -1.0f, 0.0f)) + 1.2f) * 0.5f, 0.0f, 1.0f);
+                            result[s_idx] += front_adjustment;
+                        }
+
                         // apply the local direction via Frame struct - the local_dir is with respect to +Z being forward
                         Frame f;
                         f.set_from_z(normal);
@@ -620,7 +626,8 @@ std::pair<size_t, size_t> find_previous_and_next_perimeter_point(const std::vect
 
 // Computes all global model info - transforms object, performs raycasting
 void compute_global_occlusion(GlobalModelInfo &result, const PrintObject *po,
-                              std::function<void(void)> throw_if_canceled) {
+                              std::function<void(void)> throw_if_canceled,
+                              SeamPosition seam_position = spAligned) {
   BOOST_LOG_TRIVIAL(debug)
       << "SeamPlacer: gather occlusion meshes: start";
   auto obj_transform = po->trafo_centered();
@@ -695,7 +702,7 @@ void compute_global_occlusion(GlobalModelInfo &result, const PrintObject *po,
   BOOST_LOG_TRIVIAL(debug)
       << "SeamPlacer: build AABB tree: end";
   result.mesh_samples_visibility = raycast_visibility(raycasting_tree, triangle_set, result.mesh_samples,
-                                                      negative_volumes_start_index);
+                                                      negative_volumes_start_index, seam_position);
   throw_if_canceled();
 #ifdef DEBUG_FILES
   result.debug_export(triangle_set);
@@ -744,7 +751,7 @@ struct SeamComparator {
   // should return if a is better seamCandidate than b
   bool is_first_better(const SeamCandidate &a, const SeamCandidate &b, const Vec2f &preffered_location = Vec2f { 0.0f,
                                                                                                                0.0f }) const {
-    if (setup == SeamPosition::spAligned && a.central_enforcer != b.central_enforcer) {
+    if ((setup == SeamPosition::spAligned || setup == SeamPosition::spAlignedBack) && a.central_enforcer != b.central_enforcer) {
       return a.central_enforcer;
     }
 
@@ -793,7 +800,7 @@ struct SeamComparator {
   // Also used by the random seam generator.
   bool is_first_not_much_worse(const SeamCandidate &a, const SeamCandidate &b) const {
     // Blockers/Enforcers discrimination, top priority
-    if (setup == SeamPosition::spAligned && a.central_enforcer != b.central_enforcer) {
+    if ((setup == SeamPosition::spAligned || setup == SeamPosition::spAlignedBack) && a.central_enforcer != b.central_enforcer) {
       // Prefer centers of enforcers.
       return a.central_enforcer;
     }
@@ -1486,8 +1493,9 @@ void SeamPlacer::init(const Print &print, std::function<void(void)> throw_if_can
       gather_enforcers_blockers(global_model_info, po);
       throw_if_canceled_func();
       if (configured_seam_preference == spAligned || configured_seam_preference == spNearest ||
+          configured_seam_preference == spAlignedBack ||
           configured_seam_preference == spAssemble_zgap) {
-        compute_global_occlusion(global_model_info, po, throw_if_canceled_func);
+        compute_global_occlusion(global_model_info, po, throw_if_canceled_func, configured_seam_preference);
       }
       throw_if_canceled_func();
       BOOST_LOG_TRIVIAL(debug)
@@ -1497,6 +1505,7 @@ void SeamPlacer::init(const Print &print, std::function<void(void)> throw_if_can
           << "SeamPlacer: gather_seam_candidates: end";
       throw_if_canceled_func();
       if (configured_seam_preference == spAligned || configured_seam_preference == spNearest ||
+          configured_seam_preference == spAlignedBack ||
           configured_seam_preference == spAssemble_zgap) {
         BOOST_LOG_TRIVIAL(debug)
             << "SeamPlacer: calculate_candidates_visibility : start";
@@ -1534,6 +1543,7 @@ void SeamPlacer::init(const Print &print, std::function<void(void)> throw_if_can
     }
     throw_if_canceled_func();
     if (configured_seam_preference == spAligned || configured_seam_preference == spRear 
+        || configured_seam_preference == spAlignedBack
         || configured_seam_preference == spAssemble_zgap) {
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: align_seam_points : start";

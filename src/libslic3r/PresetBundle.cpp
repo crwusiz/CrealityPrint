@@ -961,6 +961,10 @@ bool PresetBundle::import_json_presets(PresetsConfigSubstitutions &            s
             ConfigOptionString *option_str = dynamic_cast<ConfigOptionString *>(inherits_config);
             inherits_value                 = option_str->value;
             inherit_preset                 = collection->find_preset(inherits_value, false, true);
+            if (inherit_preset == nullptr && inherits_value.find("  @") != std::string::npos) {
+                boost::replace_all(inherits_value, "  @", " @");
+                inherit_preset = collection->find_preset(inherits_value, false, true);
+            }
         }
         if (inherit_preset) {
             new_config = inherit_preset->config;

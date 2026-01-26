@@ -298,6 +298,7 @@ CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(SupportDistPriority)
 static t_config_enum_values s_keys_map_SeamPosition {
     { "nearest",         spNearest },
     { "aligned",         spAligned },
+    { "aligned_back",    spAlignedBack },
     { "back",            spRear }, 
     { "random",          spRandom}, 
     { "assemble_zgap",        spAssemble_zgap},
@@ -1742,6 +1743,30 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(1.3));
+
+    def = this->add("flush_box_first_clean_length", coInt);
+    def->label = L("Flush length (first segment)");
+    def->tooltip = L("First segment length used to split flush_length into flush_length_1..N for change filament G-code.");
+    def->sidetext = L("mm");
+    def->min = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(90));
+
+    def = this->add("flush_box_need_clean_length", coInt);
+    def->label = L("Flush length (standard segment)");
+    def->tooltip = L("Standard segment length used to split flush_length into flush_length_1..N for change filament G-code.");
+    def->sidetext = L("mm");
+    def->min = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(70));
+
+    def = this->add("flush_box_need_clean_length_max", coInt);
+    def->label = L("Flush length (max segment)");
+    def->tooltip = L("Maximum segment length used to split flush_length into flush_length_1..N for change filament G-code.");
+    def->sidetext = L("mm");
+    def->min = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(100));
 
     def   = this->add("multicolor_method", coBool);
     def->label   = L("multicolor method");
@@ -4519,11 +4544,13 @@ void PrintConfigDef::init_fff_params()
     def->enum_keys_map = &ConfigOptionEnum<SeamPosition>::get_enum_values();
     def->enum_values.push_back("nearest");
     def->enum_values.push_back("aligned");
+    def->enum_values.push_back("aligned_back");
     def->enum_values.push_back("back");
     def->enum_values.push_back("random");
     def->enum_values.push_back("assemble_zgap");
     def->enum_labels.push_back(L("Nearest"));
     def->enum_labels.push_back(L("Aligned"));
+    def->enum_labels.push_back(L("Aligned back"));
     def->enum_labels.push_back(L("Back"));
     def->enum_labels.push_back(L("Random"));
     def->enum_labels.push_back(L("Assemble zgap"));

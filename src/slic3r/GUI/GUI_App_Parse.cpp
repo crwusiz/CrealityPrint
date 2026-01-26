@@ -84,10 +84,10 @@ namespace GUI {
 			{
                 if(init_params->argc < 3)
 					return;
-                //�������ԣ�ֱ���˳�
+                // If parameters are valid, run automation directly
                 AutomationMgr::set3mfPath(init_params->argv[2]); //
-                AutomationMgr::setFuncType(1); //GCode  
-                // ���������
+                AutomationMgr::setFuncType(1); // GCode
+                // Handle special \"scale\" automation case
                 if (boost::algorithm::contains(init_params->argv[2], "scale")) {
                     if (init_params->argc < 4)
                         return;

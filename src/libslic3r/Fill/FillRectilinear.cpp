@@ -3013,8 +3013,8 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
         {
 			bool is_vaild_flag = true;
             Polylines fill_lines2;
-			std::map<size_t, std::set<coord_t>> map_flid_deletes;//ÿ�������-�ڲ��ᱻɾ��������դ��㼯
-			std::map<size_t, std::pair<coord_t, coord_t>> map_flid_deltas;//ÿ������ߣ���ͷβ��ģ����������--��--����һ��դ����롣
+			std::map<size_t, std::set<coord_t>> map_flid_deletes; // For each line id, inner points to delete
+			std::map<size_t, std::pair<coord_t, coord_t>> map_flid_deltas; // For each line id, offset at head and tail
 			std::map<size_t, coord_t> map_flid_lens;
 			std::vector<size_t> fill_lines_counts;
 
@@ -3030,14 +3030,14 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
                 //testout(pl);
             }
 
-            //����߿� ����.
+            // Sort boundary lines by X coordinate
 			std::sort(polylines_out2.begin(), polylines_out2.end(), [](const Polyline& a, const Polyline& b) {
 				return (a.points[0].x() < b.points[0].x() || a.points[a.points.size() - 1].x() < b.points[b.points.size() - 1].x());
 				});
 
-            //����: poly_with_offset  �� polylines_out2 �� segs  �����Ѿ���ת����ȷ�� ��ֱ��� ��̬
+            // Note: poly_with_offset, polylines_out2 and segs are already transformed to correct, axis-aligned state
 
-			std::unordered_map<int64_t, size_t> map_coords_fl_id;//����hashmap
+			std::unordered_map<int64_t, size_t> map_coords_fl_id; // Coordinate hash map for fast lookup
             unsigned int lineid = 0;
             for (const SegmentedIntersectionLine& vline : segs)
             {
@@ -3055,7 +3055,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
             size_t testcount = 0;
             auto itr_end = map_coords_fl_id.end();
 
-            //��������
+            // Neighbor search around intersection
             auto get_itr = [&](coord_t& x, coord_t& y) {
                 for (auto i : {0,-1,1})//,-2,2
                 {
@@ -3071,7 +3071,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
                 }
                 return map_coords_fl_id.end();
             };
-            //��ȡ �����������
+            // Get all valid vertical segment lines
             for (size_t m = 0; m < polylines_out2.size(); m++)
             {
                 Polyline& pol = polylines_out2[m];
@@ -3099,7 +3099,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
                 }
             }
 
-            //���� ����������� 
+            // Sort vertical segment lines by X (descending)
 			std::sort(fill_lines_shuzi.begin(), fill_lines_shuzi.end(), [](const Polyline& a, const Polyline& b) {
 				return (a.points[0].x() > b.points[0].x() );
 				});
@@ -3112,7 +3112,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 			const size_t  n_h_segments = (bounding_box.max.y() - bounding_box.min.y() + line_spacing - 1) / line_spacing;
             coord_t addy0 = (n_h_segments* line_spacing - (bounding_box.max.y() - bounding_box.min.y())) / 2;
             coord_t y0 = bounding_box.max.y()+ addy0;
-            //���鹹��y��λ����ȫ�ֶ���
+            // Align y so that all grid lines are globally aligned
             y0 = (y0+(line_spacing/2)) / line_spacing *line_spacing;
             coord_t x0 = bounding_box.min.x();
             coord_t xn = bounding_box.max.x();
@@ -3127,9 +3127,9 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 
 			if (is_vaild_flag)
 			{
-				//��ֱ����
+				// Vertical grid lines
 				Polylines polylines1 = std::move(fill_lines_shuzi);
-				//ˮƽ����
+				// Horizontal grid lines
 				Polylines polylines2 = std::move(fill_lines_shuiping);
 
 				const coord_t& base_x0 = polylines1[0].points[0].x();
@@ -3153,7 +3153,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 
 					coord_t cur_x = polylines1[i].points[0].x();
 
-					if (std::abs(cur_x - pre_x) > 100)//10-4�������Ϊ���
+					if (std::abs(cur_x - pre_x) > 100)// If X gap is larger than threshold, start a new grid id
 					{
 						pre_x = cur_x;
 						glid++;
@@ -3246,7 +3246,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
                 coord_t add_x = (root_grid_x * root_grid_edge_len - x_segcount) / 2.0;
                 coord_t add_y = (root_grid_y * root_grid_edge_len - y_segcount) / 2.0;
 
-				//ȫ�ֶ�������
+				// Adjust grid so that it is globally aligned
 				if (root_grid_edge_len != 0)
 				{
                     if (this->layer_id == 2)
@@ -3281,7 +3281,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 				}
 
 
-				//�����ǹ������������,�ݹ�������Ҫɾ����դ���
+				// Recursively process grid cells that need to delete redundant points
 				for (size_t gridi = 0; gridi < root_grid_x; gridi++)
 				{
 					for (size_t gridj = 0; gridj < root_grid_y; gridj++)
@@ -3398,7 +3398,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
                 
                 polylines_out2.clear();
 				using coords_pair = std::pair<std::pair<coord_t, coord_t>, std::pair<coord_t, coord_t>>;
-				std::map<coords_pair, size_t> map_coords_fl_id;//����hashmap
+				std::map<coords_pair, size_t> map_coords_fl_id; // Coordinate hash map for line id
 				for (size_t m = 0; m < fill_lines2.size(); m++)
 				{
 					Polyline& p1 = fill_lines2[m];
@@ -3412,7 +3412,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 					map_coords_fl_id[key] = m;
 				}
 
-				//��polylines_out������� fill_lines2 �߶Σ������Ҫ���и�ֶΡ�
+				// Match segments in polylines_out with segments in fill_lines2, break where needed
 
 				auto cal_new_point = [&](coord_t& d_0, coord_t& d_n,
 					Point& p0, Point& p1,
@@ -3437,27 +3437,27 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 
 					bool is_vertical_shuzhi_line = fl_id < fill_lines_counts[0];
 					bool is_orign_order = true;
-					if (is_vertical_shuzhi_line == true)//����
+					if (is_vertical_shuzhi_line == true)// Vertical line
 					{
 						if (y2 > y)
 						{
-							is_orign_order = false;//�߶ε�������˳��ߵ�
+							is_orign_order = false; // Segment direction is opposite to expected
 						}
 					}
-					else//����
+					else// Horizontal line
 					{
 						if (x2 < x)
 						{
-							is_orign_order = false;//�߶ε�������˳��ߵ�
+							is_orign_order = false; // Segment direction is opposite to expected
 						}
 					}
 					bool is_need_swap = false;
-					if (is_vertical_shuzhi_line != is_orign_order)//���
+					if (is_vertical_shuzhi_line != is_orign_order)// Need to swap endpoints
 					{
 						is_need_swap = true;
 					}
-					*p0 = &fill_lines2[fl_id].points[0];  //�ϵ� ���� ���
-					*p1 = &fill_lines2[fl_id].points[1];  //�µ� ���� �ҵ�
+					*p0 = &fill_lines2[fl_id].points[0];  // Upper / left endpoint
+					*p1 = &fill_lines2[fl_id].points[1];  // Lower / right endpoint
 					auto [d_0, d_n] = map_flid_deltas[fl_id];
 					return std::make_tuple(is_vertical_shuzhi_line, is_need_swap, d_0, d_n);
 				};
@@ -3480,7 +3480,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 						auto itr = map_coords_fl_id.find(key);
 
 						if (itr == map_coords_fl_id.end()) {
-							is_keepsame = true;// �ߵ������ʾ�� ��fill_lines2����û���ҵ� ���߶Ρ�
+							is_keepsame = true; // Segment does not appear in fill_lines2, keep as is
 						}
 						else {
 							auto fl_id = itr->second;
@@ -3488,7 +3488,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 							{								
                                 is_keepsame = true;
 							}
-							else //�иǰ�߶�
+							else // Need to cut current segment
 							{
 								bool is_vertical_shuzhi_line = false;
 								bool is_need_swap = false;
@@ -3499,14 +3499,14 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 								Point& p1 = *p11;
 
                                 is_need_swap = !is_need_swap;
-								//ɾ���㼯,���˳���ǣ����ϵ��� ���� "���ҵ���" �����˳��Ҫ�ر�ע��
+								// Use delete-point set, note order of points is important
 								std::set<coord_t>& tmpset = map_flid_deletes[fl_id];
                                 coord_t minVal = *tmpset.begin();
                                 coord_t maxVal = *std::prev(tmpset.end());
 
 								Point newp0 = cal_new_point(d_0, d_n, p0, p1, fl_id, minVal, is_vertical_shuzhi_line);
 								Point newp1 = cal_new_point(d_0, d_n, p0, p1, fl_id, maxVal, is_vertical_shuzhi_line);
-								if (is_need_swap)//���
+								if (is_need_swap)// Swap endpoints if needed
 								{
 									std::swap(newp0, newp1);
 								}
@@ -3521,7 +3521,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 
 								pol_new.points.clear();
 
-								//����һ��gridline����ֶ����,ɾ���ĵ㼯�ǲ������ģ�Ҳ�����м�ĳЩ�߶��ǲ���Ҫɾ����
+								// For one grid line, deleted point set may be discontinuous; some segments should not be removed
 								if (maxVal - minVal + 1 != tmpset.size())
 								{
 									std::vector<std::pair<coord_t, coord_t>> intervals;
@@ -3551,7 +3551,7 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
 									{
 										Point np0 = cal_new_point(d_0, d_n, p0, p1, fl_id, curpair.first, is_vertical_shuzhi_line);
 										Point np1 = cal_new_point(d_0, d_n, p0, p1, fl_id, curpair.second, is_vertical_shuzhi_line);
-										if (is_need_swap)//���
+										if (is_need_swap)// Swap endpoints if needed
 										{
 											std::swap(np0, np1);
 										}
@@ -3715,11 +3715,11 @@ bool FillRectilinear::fill_surface_by_multilines(const Surface *surface, FillPar
   //add by wxj start
     bool is_vaild_flag = params.config && params.config->ai_infill.value == true && params.extrusion_role == erInternalInfill && sweep_params.size()==2 && fill_lines_counts[1]> fill_lines_counts[0] && fill_lines.size() > 4;
     //bool is_vaild_flag = params.config  && params.extrusion_role == erInternalInfill && sweep_params.size() == 2 && fill_lines_counts[1] > fill_lines_counts[0] && fill_lines.size() > 4;
-    std::map<size_t, std::set<coord_t>> map_flid_deletes;//ÿ�������-�ڲ��ᱻɾ��������դ��㼯
+    std::map<size_t, std::set<coord_t>> map_flid_deletes; // For each line id, inner points to delete
     std::map<size_t, std::set<coord_t>> map_flid_splits;
-    std::map<size_t, std::pair<coord_t, coord_t>> map_flid_deltas;//ÿ������ߣ���ͷβ��ģ����������--��--����һ��դ����롣
+    std::map<size_t, std::pair<coord_t, coord_t>> map_flid_deltas; // For each line id, offset at head and tail
     std::map<size_t, coord_t> map_flid_lens;
-	Polylines polylines_out2;//�滻 polylines_out ��Ϊ�������
+	Polylines polylines_out2; // Replacement for polylines_out after processing
     
     if (is_vaild_flag)
     {
@@ -3731,14 +3731,14 @@ bool FillRectilinear::fill_surface_by_multilines(const Surface *surface, FillPar
         }
         
         if (bValid) {
-        //��ֱ����
+        // Vertical grid lines
         Polylines polylines1; polylines1.clear();
         polylines1.insert(polylines1.end(), fill_lines.begin(), fill_lines.begin() + fill_lines_counts[0]);
         std::for_each(polylines1.begin(), polylines1.end(), [](Polyline& pl) {pl.rotate(45. / 180. * PI); });
 
         //testout(polylines1);
 
-        //ˮƽ����
+        // Horizontal grid lines
         Polylines polylines2; polylines2.clear();
         polylines2.insert(polylines2.end(), fill_lines.begin() + fill_lines_counts[0], fill_lines.end());
         std::for_each(polylines2.begin(), polylines2.end(), [](Polyline& pl) {pl.rotate(45. / 180. * PI); });
@@ -3766,7 +3766,7 @@ bool FillRectilinear::fill_surface_by_multilines(const Surface *surface, FillPar
 
             coord_t cur_x = polylines1[i].points[0].x();
 
-             if (std::abs(cur_x - pre_x) > 100)//10-4�������Ϊ���
+             if (std::abs(cur_x - pre_x) > 100)// If X gap is larger than threshold, start a new grid id
             {
                 pre_x = cur_x;
                 glid++;
@@ -3859,7 +3859,7 @@ bool FillRectilinear::fill_surface_by_multilines(const Surface *surface, FillPar
         coord_t add_x = (root_grid_x * root_grid_edge_len - x_segcount) / 2.0;
         coord_t add_y = (root_grid_y * root_grid_edge_len - y_segcount) / 2.0;
 
-        //ȫ�ֶ�������
+        // Adjust grid so that it is globally aligned
         if (root_grid_edge_len != 0)
         {
             this->layer_id;
@@ -3890,7 +3890,7 @@ bool FillRectilinear::fill_surface_by_multilines(const Surface *surface, FillPar
         }
 
 
-        //�����ǹ������������,�ݹ�������Ҫɾ����դ���
+        // Recursively process grid cells that need to delete redundant points
         for (size_t gridi = 0; gridi < root_grid_x; gridi++)
         {
             for (size_t gridj = 0; gridj < root_grid_y; gridj++)
@@ -3989,7 +3989,7 @@ bool FillRectilinear::fill_surface_by_multilines(const Surface *surface, FillPar
             }
         }
 
-        //��¼���ѵ㣬Ϊ�����TSPʹ��
+        // Record deleted points for later TSP post-processing
         for (auto itr = map_flid_deletes.begin(); itr != map_flid_deletes.end(); itr++)
         {
             size_t fid = itr->first;
@@ -4034,7 +4034,7 @@ bool FillRectilinear::fill_surface_by_multilines(const Surface *surface, FillPar
 
 
 
-        fill_lines2 = fill_lines;//����
+        fill_lines2 = fill_lines; // Backup original fill_lines
         }
     }
     //add by wxj end
@@ -4057,7 +4057,7 @@ if ((params.pattern == ipLateralLattice || params.pattern == ipLateralHoneycomb 
     if (is_vaild_flag)
     {
         using coords_pair = std::pair<std::pair<coord_t, coord_t>, std::pair<coord_t, coord_t>>;
-        std::map<coords_pair, size_t> map_coords_fl_id;//����hashmap
+        std::map<coords_pair, size_t> map_coords_fl_id; // Coordinate hash map for line id
         for (size_t m = 0; m < fill_lines2.size(); m++)
         {
             Polyline& p1 = fill_lines2[m];
@@ -4071,7 +4071,7 @@ if ((params.pattern == ipLateralLattice || params.pattern == ipLateralHoneycomb 
             map_coords_fl_id[key] = m;
         }
 
-        //��polylines_out������� fill_lines2 �߶Σ������Ҫ���и�ֶΡ�
+        // Match segments in polylines_out with segments in fill_lines2, break where needed
 
         auto cal_new_point = [&](coord_t& d_0, coord_t& d_n,
             Point& p0, Point& p1, 
@@ -4096,27 +4096,27 @@ if ((params.pattern == ipLateralLattice || params.pattern == ipLateralHoneycomb 
 
 			bool is_vertical_shuzhi_line = fl_id < fill_lines_counts[0];
 			bool is_orign_order = true;
-			if (is_vertical_shuzhi_line == true)//����
+			if (is_vertical_shuzhi_line == true)// Vertical line
 			{
 				if (y2 > y)
 				{
-					is_orign_order = false;//�߶ε�������˳��ߵ�
+					is_orign_order = false; // Segment direction is opposite to expected
 				}
 			}
-			else//����
+			else// Horizontal line
 			{
 				if (x2 < x)
 				{
-					is_orign_order = false;//�߶ε�������˳��ߵ�
+					is_orign_order = false; // Segment direction is opposite to expected
 				}
 			}
 			bool is_need_swap = false;
-			if (is_vertical_shuzhi_line != is_orign_order)//���
+			if (is_vertical_shuzhi_line != is_orign_order)// Need to swap endpoints
 			{
 				is_need_swap = true;
 			}
-			*p0 = &fill_lines2[fl_id].points[0];  //�ϵ� ���� ���
-			*p1 = &fill_lines2[fl_id].points[1];  //�µ� ���� �ҵ�
+			*p0 = &fill_lines2[fl_id].points[0];  // Upper / left endpoint
+			*p1 = &fill_lines2[fl_id].points[1];  // Lower / right endpoint
 			auto [d_0, d_n] = map_flid_deltas[fl_id];
             return std::make_tuple(is_vertical_shuzhi_line, is_need_swap, d_0, d_n);
         };
@@ -4139,13 +4139,13 @@ if ((params.pattern == ipLateralLattice || params.pattern == ipLateralHoneycomb 
                 auto itr = map_coords_fl_id.find(key);
 
                 if (itr == map_coords_fl_id.end()) {
-                    is_keepsame = true;// �ߵ������ʾ�� ��fill_lines2����û���ҵ� ���߶Ρ�
+                    is_keepsame = true; // Segment does not appear in fill_lines2, keep as is
                 }
                 else {
                     auto fl_id = itr->second;
                     if (map_flid_deletes.find(fl_id) == map_flid_deletes.end())
                     {
-                        //������
+                        // Check whether we need to split this segment
                         auto itr_split = map_flid_splits.find(fl_id);
                         if (itr_split == map_flid_splits.end())
                         {
@@ -4188,7 +4188,7 @@ if ((params.pattern == ipLateralLattice || params.pattern == ipLateralHoneycomb 
                         }
                         
                     }
-					else //�иǰ�߶�
+							else // Need to cut current segment
                     {
 						bool is_vertical_shuzhi_line = false;
 						bool is_need_swap = false;
@@ -4199,14 +4199,14 @@ if ((params.pattern == ipLateralLattice || params.pattern == ipLateralHoneycomb 
 						Point& p1 = *p11;
 
 
-                        //ɾ���㼯,���˳���ǣ����ϵ��� ���� "���ҵ���" �����˳��Ҫ�ر�ע��
+                        // Use delete-point set, note order of points is important
                         std::set<coord_t>& tmpset = map_flid_deletes[fl_id];
                         coord_t minVal = *tmpset.begin();
                         coord_t maxVal = *std::prev(tmpset.end());
 
 						Point newp0 = cal_new_point(d_0, d_n, p0, p1, fl_id, minVal, is_vertical_shuzhi_line);
 						Point newp1 = cal_new_point(d_0, d_n, p0, p1, fl_id, maxVal, is_vertical_shuzhi_line);
-						if (is_need_swap)//���
+						if (is_need_swap)// Swap endpoints if needed
 						{
 							std::swap(newp0, newp1);
 						}
@@ -4221,7 +4221,7 @@ if ((params.pattern == ipLateralLattice || params.pattern == ipLateralHoneycomb 
 
 						pol_new.points.clear();
 
-                        //����һ��gridline����ֶ����,ɾ���ĵ㼯�ǲ������ģ�Ҳ�����м�ĳЩ�߶��ǲ���Ҫɾ����
+                        // For one grid line, deleted point set may be discontinuous; some segments should not be removed
                         if (maxVal-minVal+1 != tmpset.size())
                         {
 							std::vector<std::pair<coord_t, coord_t>> intervals;
@@ -4251,7 +4251,7 @@ if ((params.pattern == ipLateralLattice || params.pattern == ipLateralHoneycomb 
                             {
 								Point np0 = cal_new_point(d_0, d_n, p0, p1, fl_id, curpair.first, is_vertical_shuzhi_line);
 								Point np1 = cal_new_point(d_0, d_n, p0, p1, fl_id, curpair.second, is_vertical_shuzhi_line);
-								if (is_need_swap)//���
+								if (is_need_swap)// Swap endpoints if needed
 								{
 									std::swap(np0, np1);
 								}

@@ -211,7 +211,7 @@ namespace Slic3r
         if (value < 0)
             return false;
 
-        //检测在第几个区间
+        // Determine which limit configuration applies to current value
         std::vector<LimitData> limit_data;
         if (limitType == LimitType::LIMIT_MESS) {
             limit_data = vctacceleration_limit_mass;
@@ -268,7 +268,7 @@ namespace Slic3r
         if (value < 0)
             return false;
 
-        //检测在第几个区间
+        // Determine which limit configuration applies to current value
         std::vector<LimitData> limit_data;
         if (limitType == LimitType::LIMIT_MESS) {
             limit_data = vctacceleration_limit_mass;
@@ -326,7 +326,7 @@ namespace Slic3r
         if (value < 0)
             return false;
 
-        //检测在第几个区间
+        // Determine which limit configuration applies to current value
         std::vector<LimitData> limit_data;
         if (limitType == LimitType::LIMIT_MESS) {
             limit_data = vctacceleration_limit_mass;

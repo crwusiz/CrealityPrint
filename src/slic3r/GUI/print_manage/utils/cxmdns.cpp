@@ -170,7 +170,7 @@ namespace cxnet
 	{
 		std::vector<machine_info> retmachineInfos;
 		const char* hostname = "cxslice-host";
-		//初始化网络环境
+		// Initialize network environment
 #ifdef _WIN32
 		WORD versionWanted = MAKEWORD(1, 1);
 		WSADATA wsaData;

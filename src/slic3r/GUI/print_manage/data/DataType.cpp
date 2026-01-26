@@ -108,6 +108,14 @@ namespace DM{
                 data.isMultiColorDevice = safe_get_json_field(device, "IsMultiColorDevice", jvalue::boolean, false);
                 data.oldPrinter         = safe_get_json_field(device, "oldPrinter", jvalue::boolean, false);
 
+                if (data.deviceType == 1001){
+                    data.apiKey             = safe_get_json_field(device, "apiKey", jvalue::string, std::string(""));
+                    data.deviceUI           = safe_get_json_field(device, "deviceUI", jvalue::string, std::string(""));
+                    data.hostType           = safe_get_json_field(device, "hostType", jvalue::number_integer, 1);
+                    data.caFile             = safe_get_json_field(device, "caFile", jvalue::string, std::string(""));
+                    data.ignoreCertRevocation   = safe_get_json_field(device, "ignoreCertRevocation", jvalue::boolean, false);
+                }
+
                 if (need_update_box_info)
                 {
                     if (device.contains("boxsInfo") && device["boxsInfo"].contains("boxColorInfo")) {
@@ -125,6 +133,16 @@ namespace DM{
                                 box_color_info.cId = safe_get_json_field((json) box_info, "cId", jvalue::string, std::string(""), true);
                             }
                             data.boxColorInfos.push_back(box_color_info);
+                        }
+
+                    }
+
+                    if (device.contains("boxsInfo") && device["boxsInfo"].is_object()) {
+                        auto& boxsInfo = device["boxsInfo"];
+                        if (boxsInfo.contains("cfsName") && boxsInfo["cfsName"].is_string()) {
+
+                            //MF003(CFS)   MF040(CFSLite)   MF046(CFSMini)   MF049(CFSNano)
+                            data.cfsName = boxsInfo["cfsName"].get<std::string>();
                         }
                     }
 

@@ -769,6 +769,9 @@ CreateFilamentPresetDialog::CreateFilamentPresetDialog(wxWindow *parent)
     Layout();
     Fit();
 
+
+    CenterOnParent();
+
 	wxGetApp().UpdateDlgDarkUI(this);
 }
 
@@ -1633,10 +1636,8 @@ CreatePrinterPresetDialog::CreatePrinterPresetDialog(wxWindow *parent,int iType)
     Layout();
     Fit();
 
-    wxSize screen_size = wxGetDisplaySize();
-    int    dialogX     = (screen_size.GetWidth() - GetSize().GetWidth()) / 2;
-    int    dialogY     = (screen_size.GetHeight() - GetSize().GetHeight()) / 2;
-    SetPosition(wxPoint(dialogX, dialogY));
+
+    CenterOnParent();
 
     wxGetApp().UpdateDlgDarkUI(this);
 }

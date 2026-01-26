@@ -1,5 +1,7 @@
 #include "Check3mfVendor.hpp"
 #include <list>
+#include <thread>
+#include <boost/log/core.hpp>
 #include "I18N.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
@@ -61,11 +63,25 @@ bool Check3mfVendor::get3mfConfig(const DynamicPrintConfig& config_loaded, Dynam
         }
         std::string vendor;
         if (printerPreset->is_system) {
-            vendor = printerPreset->vendor->id;
+            if (printerPreset->vendor == nullptr) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " vendor null for system printer preset=" << printerPreset->name << " tid=" << std::this_thread::get_id();
+                if (auto core = boost::log::core::get())
+                    core->flush();
+                vendor = "Creality";
+            } else {
+                vendor = printerPreset->vendor->id;
+            }
         } else {
             Preset* parentPreset = wxGetApp().preset_bundle->printers.find_preset(printerPreset->inherits());
             if (parentPreset != nullptr) {
-                vendor = parentPreset->vendor->id;
+                if (parentPreset->vendor == nullptr) {
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " vendor null for parent printer preset=" << parentPreset->name << " child=" << printerPreset->name << " tid=" << std::this_thread::get_id();
+                    if (auto core = boost::log::core::get())
+                        core->flush();
+                    vendor = "Creality";
+                } else {
+                    vendor = parentPreset->vendor->id;
+                }
             } else {
                 vendor = "Creality";
             }
@@ -84,7 +100,14 @@ bool Check3mfVendor::get3mfConfig(const DynamicPrintConfig& config_loaded, Dynam
         {
             ConfigOptionStrings* optFilaments = new_config_loaded.option<ConfigOptionStrings>("default_filament_profile", false);
             if (optFilaments != nullptr) {
-                defaultFilament = optFilaments->vserialize()[0];
+                auto values = optFilaments->vserialize();
+                if (!values.empty()) {
+                    defaultFilament = values.front();
+                } else {
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " default_filament_profile empty for printer preset=" << printerPreset->name << " tid=" << std::this_thread::get_id();
+                    if (auto core = boost::log::core::get())
+                        core->flush();
+                }
             }
         }
         Preset* filamentPreset = wxGetApp().preset_bundle->filaments.find_preset(defaultFilament);
@@ -326,8 +349,8 @@ bool Check3mfVendor::isCreality3mf(const std::string& fileName)
         if (!open_zip_reader(&archive, fileName)) {
             break;
         }
-        //  1���ж��Ƿ���Metadata/creality.config�������˵����creality3mf������ļ�
-        //  2���ж�Creality�����Ƿ���3D/3dmodel.model��
+        // 1) Check whether Metadata/creality.config exists to mark it as Creality 3MF.
+        // 2) If not, check whether Creality appears in 3D/3dmodel.model.
         const char* crealityConfig = "Metadata/creality.config";
         int file_index = mz_zip_reader_locate_file(&archive, crealityConfig, nullptr, 0);
         if (file_index < 0) {
@@ -488,14 +511,14 @@ ChoosePresetDlg::ChoosePresetDlg(wxWindow* parent, const std::string& printerSet
             presetName = item.substr(2);
         }
 
-        //  ��ȡ����һ�������ϵͳԤ��
+        // Get index of the first Creality system preset
         if (firstCrealityPresetIdx == -1 && /*item.find("Creality") != std::string::npos*/
             preset != nullptr && preset->is_system && 
             (preset->name.find("Creality") != std::string::npos||preset->name.find("SPARKX") != std::string::npos)) {
             firstCrealityPresetIdx = i;
         }
 
-        //  ��ȡ��3mf�ļ��е�Ԥ��
+        // Get index of the printer preset referenced by 3mf file
         if (!printerSettingId.empty() && defaultPrinterSettingId == -1 && presetName == printerSettingId &&
             preset != nullptr && !preset->is_project_embedded){
             defaultPrinterSettingId = i;

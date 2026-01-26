@@ -65,15 +65,14 @@ inline Point normal(Point pt, double scale)
 {
     double length = scale_(sqrt(vsize2_with_unscale(pt)));
 
-    //避免normal函数除0，因为normal函数没有考虑向量长度为0的情况
-    //解决bug https://zentao.creality.com/zentao/bug-view-13831.html
-    //在这个文件的2785行调用该函数，会出现除0情况
+    // Ensure normal length is not zero; normal is undefined when length is zero.
+    // Fix for bug https://zentao.creality.com/zentao/bug-view-13831.html (call at line 2785).
     if (length > std::numeric_limits<double>::epsilon())
     {
          return pt * (scale / length);
     }
 
-    //如果输入的向量是长度为0，返回一个0长度的向量，不进行单位化和缩放操作
+    // When length is zero, return a zero-length vector at origin as a fallback.
     return Point(0, 0);
 }
 
@@ -1859,7 +1858,7 @@ void TreeSupport::generate_toolpaths()
                                 // Don't need extra walls if we have infill. Extra walls may overlap with the infills.
                                 size_t        min_wall_count = offset(poly, -scale_(support_spacing * 1.5)).empty() ? 1 : 0;
 
-                                //如果是树的枝干轮廓，墙的层数必须大于1，否则树干会有破损
+                                // Increase the number of support structure walls to at least 1 to prevent gaps
                                 if (area_group.node_type != ePolygon)
                                 {
                                     _wall_count = std::max(size_t(1), _wall_count);
@@ -3393,7 +3392,7 @@ void TreeSupport::drop_nodes()
                         } else {
                             direction = neighbour - node.position;
                         }
-                        // do not move to neighbor that's too far away (即使以最大速度移动，在接触热床之前都无法汇聚)
+                        // Do not move to a neighbor that is too far away (to avoid being unable to connect before collapsing)
                         float dist2_to_neighbor = vsize2_with_unscale(direction);
 
                         coordf_t branch_bottom_radius = calc_radius(node.dist_mm_to_top + node.print_z);

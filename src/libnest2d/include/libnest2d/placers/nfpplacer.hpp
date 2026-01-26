@@ -848,7 +848,7 @@ private:
                 pile.emplace_back(mitem.transformedShape());
                 // pile_area += mitem.area();
             }
-            auto merged_pile = nfp::merge(pile); // 合并固定零件轮廓  可以多个
+            auto merged_pile = nfp::merge(pile); // Merge fixed shapes and auto-arrange them
             if (!merged_pile.empty())
                 pbb = sl::boundingBox(merged_pile);
 
@@ -863,9 +863,9 @@ private:
 
                 nfps = calcnfp(item, binbb, Lvl<MaxNfpLevel::value>());
                 // if (!config_.calConcave)
-                //     nfps = calcnfp(item, binbb, Lvl<MaxNfpLevel::value>()); // 凸包nfps
+                //     nfps = calcnfp(item, binbb, Lvl<MaxNfpLevel::value>()); // NFP for concave shapes
                 // else
-                //     nfps = calcnfp(item, nfp::NfpLevel::BOTH_CONCAVE); // 凹包nfps
+                //     nfps = calcnfp(item, nfp::NfpLevel::BOTH_CONCAVE);     // NFP for both concave shapes
                 // nfps = calcnfp(item, Lvl<MaxNfpLevel::value>());
 
                 auto iv = item.referenceVertex();
@@ -975,7 +975,7 @@ private:
                             best_score = mr.score;
                             optimum    = o;
                         } else {
-                            best_overfit = std::min(miss, best_overfit); // 进入此  表明放不下  不会重叠
+                            best_overfit = std::min(miss, best_overfit); // Update best overfit value
                         }
                     }
                 }

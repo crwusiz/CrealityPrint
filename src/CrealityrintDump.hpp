@@ -22,6 +22,7 @@
 
 struct SystemInfo {
     wxString osDescription;
+    wxString cpuModel;
     wxString graphicsCardVendor;
     wxString openGLVersion;
     wxString build;
