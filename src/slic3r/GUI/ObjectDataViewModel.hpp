@@ -61,6 +61,7 @@ enum class InfoItemType
     CustomSupports,
     //CustomSeam,
     MmuSegmentation,
+    FuzzySkin,
     //Sinking
     CutConnectors,
 };

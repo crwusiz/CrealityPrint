@@ -119,6 +119,10 @@ public:
 	// See also ca_file_supported().
 	Http& ca_file(const std::string &filename);
 
+	// Control TLS certificate and hostname verification for this request.
+	Http& ssl_verify_peer(bool set);
+	Http& ssl_verify_host(bool set);
+
 	// Add a HTTP multipart form field
 	Http& form_add(const std::string &name, const std::string &contents);
 	// Add a HTTP multipart form file data contents, `name` is the name of the part

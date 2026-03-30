@@ -4,6 +4,8 @@
 #include "libslic3r.h"
 #include <string>
 #include <charconv>
+#include <algorithm>
+#include <cstring>
 #include "Extruder.hpp"
 #include "Point.hpp"
 #include "PrintConfig.hpp"
@@ -258,20 +260,32 @@ public:
     }
 
     void emit_string(const std::string &s) {
-        strncpy(ptr_err.ptr, s.c_str(), s.size());
-        ptr_err.ptr += s.size();
+        // Keep one byte reserved for '\n' emitted in string().
+        if (ptr_err.ptr >= buf_end - 1)
+            return;
+        const size_t avail = size_t((buf_end - 1) - ptr_err.ptr);
+        const size_t n = std::min(avail, s.size());
+        if (n == 0)
+            return;
+        memcpy(ptr_err.ptr, s.data(), n);
+        ptr_err.ptr += n;
     }
 
     void emit_comment(bool allow_comments, const std::string &comment) {
         if (allow_comments && ! comment.empty()) {
-            *ptr_err.ptr ++ = ' '; *ptr_err.ptr ++ = ';'; *ptr_err.ptr ++ = ' ';
+            // Keep one byte reserved for '\n' emitted in string().
+            if (ptr_err.ptr < buf_end - 1) *ptr_err.ptr ++ = ' ';
+            if (ptr_err.ptr < buf_end - 1) *ptr_err.ptr ++ = ';';
+            if (ptr_err.ptr < buf_end - 1) *ptr_err.ptr ++ = ' ';
             this->emit_string(comment);
         }
     }
 
     std::string string() {
+        if (ptr_err.ptr >= buf_end)
+            ptr_err.ptr = buf_end - 1;
         *ptr_err.ptr ++ = '\n';
-        return std::string(this->buf, ptr_err.ptr - buf);
+        return std::string(this->buf, ptr_err.ptr - this->buf);
     }
 
 protected:

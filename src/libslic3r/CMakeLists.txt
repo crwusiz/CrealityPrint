@@ -51,6 +51,8 @@ set(lisbslic3r_sources
     Algorithm/PathSorting.hpp
     Algorithm/RegionExpansion.hpp
     Algorithm/RegionExpansion.cpp
+    Algorithm/LineSplit.cpp
+    Algorithm/LineSplit.hpp
     AnyPtr.hpp
     BoundingBox.cpp
     BoundingBox.hpp
@@ -60,6 +62,7 @@ set(lisbslic3r_sources
     FaceDetector.hpp
     Brim.cpp
     Brim.hpp
+    BrimEarsPoint.hpp
     BuildVolume.cpp
     BuildVolume.hpp
     Circle.cpp
@@ -193,6 +196,9 @@ set(lisbslic3r_sources
     GCode/PostProcessor.hpp
     GCode/PressureEqualizer.cpp
     GCode/PressureEqualizer.hpp
+    GCode/InterestRegion.hpp
+    GCode/AppearanceUnderExtrusionAccelRecoveryFilter.cpp
+    GCode/AppearanceUnderExtrusionAccelRecoveryFilter.hpp
     GCode/PrintExtents.cpp
     GCode/PrintExtents.hpp
     GCode/RetractWhenCrossingPerimeters.cpp
@@ -299,6 +305,8 @@ set(lisbslic3r_sources
     NSVGUtils.hpp
     ObjectID.cpp
     ObjectID.hpp
+    OverhangDetector.hpp
+    OverhangDetector.cpp
     OverhangOptimization.cpp
     OverhangOptimization.hpp
 	ParameterUtils.cpp
@@ -524,10 +532,12 @@ set(lisbslic3r_sources
     calib.cpp
 	GCode/Thumbnails.cpp
 	GCode/Thumbnails.hpp
-	Interlocking/InterlockingGenerator.hpp
-    Interlocking/InterlockingGenerator.cpp
-	Interlocking/VoxelUtils.hpp
-    Interlocking/VoxelUtils.cpp
+    Feature/FuzzySkin/FuzzySkin.cpp
+    Feature/FuzzySkin/FuzzySkin.hpp
+	Feature/Interlocking/InterlockingGenerator.hpp
+    Feature/Interlocking/InterlockingGenerator.cpp
+	Feature/Interlocking/VoxelUtils.hpp
+    Feature/Interlocking/VoxelUtils.cpp
     GlobalConfig.cpp
     GlobalConfig.hpp
 )
@@ -678,6 +688,7 @@ target_link_libraries(libslic3r
     ${OCCT_LIBS}
     Clipper2
     mcut
+    noise::noise
     JPEG::JPEG
     qoi
     )

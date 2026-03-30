@@ -7,6 +7,8 @@
 #include "SurfaceCollection.hpp"
 #include "ExtrusionEntityCollection.hpp"
 #include "BoundingBox.hpp"
+#include <libslic3r/Print.hpp>
+
 namespace Slic3r {
 
 class ExPolygon;
@@ -81,7 +83,11 @@ public:
     void    slices_to_fill_surfaces_clipped();
     void    prepare_fill_surfaces();
     //BBS
-    void    make_perimeters(const SurfaceCollection &slices, SurfaceCollection* fill_surfaces, ExPolygons* fill_no_overlap, std::vector<LoopNode> &loop_nodes);
+    void    make_perimeters(const SurfaceCollection& slices,
+                            const LayerRegionPtrs&   compatible_regions,
+                            SurfaceCollection*       fill_surfaces,
+                            ExPolygons*              fill_no_overlap,
+                            std::vector<LoopNode>&   loop_nodes);
     void    process_external_surfaces(const Layer *lower_layer, const Polygons *lower_layer_covered);
     double  infill_area_threshold() const;
     // Trim surfaces by trimming polygons. Used by the elephant foot compensation at the 1st layer.
@@ -186,6 +192,7 @@ public:
         return false;
     }
     void                    make_perimeters();
+    bool                    is_perimeter_compatible(const PrintRegion& a, const PrintRegion& b);
     // BBS
     void                    calculate_perimeter_continuity(std::vector<LoopNode>& prev_nodes);
     void                    record_cooling_node_for_each_extrusion();

@@ -6672,6 +6672,9 @@ ExportConfigsDialog::ExportCase ExportConfigsDialog::archivePresetToFile() {
     show_export_result(export_case);
     if (ExportCase::EXPORT_SUCCESS != export_case)
         return ExportCase::EXPORT_SUCCESS;
+    
+    // Fire export_preset analytics event after successful export
+    wxGetApp().plater()->export_preset_event("");
 
     EndModal(wxID_OK);
 

@@ -82,11 +82,13 @@ public:
         MeshBoolean,
         FdmSupports,
         Seam,
+        FuzzySkin,
         MmuSegmentation,
         Emboss,
         Svg,
         Measure,
         Simplify,
+        BrimEars,
         //SlaSupports,
         // BBS
         //FaceRecognition,
@@ -118,6 +120,7 @@ private:
 
     GLCanvas3D& m_parent;
     bool m_enabled;
+    bool m_pending_update{false};
     std::vector<std::unique_ptr<GLGizmoBase>> m_gizmos;
     GLTexture m_icons_texture;
     bool m_icons_texture_dirty;
@@ -260,6 +263,7 @@ public:
             return nullptr;
     }
 
+    bool is_paint_gizmo();
     ClippingPlane get_clipping_plane() const;
     ClippingPlane get_assemble_view_clipping_plane() const;
     bool wants_reslice_supports_on_undo() const;

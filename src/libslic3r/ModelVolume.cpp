@@ -30,6 +30,7 @@ void ModelVolume::reset_extra_facets()
     this->supported_facets.reset();
     this->seam_facets.reset();
     this->mmu_segmentation_facets.reset();
+    this->fuzzy_skin_facets.reset();
 }
 
 static void invalidate_translations(ModelObject* object, const ModelInstance* src_instance)
@@ -336,6 +337,7 @@ size_t ModelVolume::split(unsigned int max_extruders)
             this->exterior_facets.reset();
             this->supported_facets.reset();
             this->seam_facets.reset();
+            this->fuzzy_skin_facets.reset();
         }
         else
             this->object->volumes.insert(this->object->volumes.begin() + (++ivolume), new ModelVolume(object, *this, std::move(mesh)));
@@ -396,6 +398,7 @@ void ModelVolume::assign_new_unique_ids_recursive()
     supported_facets.set_new_unique_id();
     seam_facets.set_new_unique_id();
     mmu_segmentation_facets.set_new_unique_id();
+    fuzzy_skin_facets.set_new_unique_id();
 }
 
 void ModelVolume::rotate(double angle, Axis axis)

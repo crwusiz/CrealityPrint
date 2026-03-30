@@ -4,6 +4,7 @@
 #include <functional>
 #include <mutex>
 #include <condition_variable>
+#include "nlohmann/json.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -64,7 +65,39 @@ enum class AnalyticsDataEventType {
     ANALYTICS_MODEL_ACTION_PAINT,
     ANALYTICS_MODEL_ACTION_EMBOSS,
     ANALYTICS_MODEL_ACTION_ASSEMBLY_VIEW,
-    ANALYTICS_MODEL_ACTION_AI_SERVICE
+    ANALYTICS_AI_SERVICE_CALL,
+    ANALYTICS_GOTO_WIKI,
+    ANALYTICS_GOTO_SUPPORT,
+    ANALYTICS_TAB_HOME,
+    ANALYTICS_SLICE_SINGLE_COMPLETE,
+    ANALYTICS_SLICE_ALL_COMPLETE,
+    ANALYTICS_PRINT_SEND,
+    ANALYTICS_PRINT_BEGIN,
+    ANALYTICS_PRINT_ERROR,
+    // Click events
+    ANALYTICS_CLICK_SEND_SINGLE,
+    ANALYTICS_CLICK_SEND_MULTI,
+    // File project events
+    ANALYTICS_FILE_PROJECT_NEW,
+    ANALYTICS_FILE_PROJECT_OPEN,
+    ANALYTICS_FILE_PROJECT_SAVE,
+    ANALYTICS_FILE_PROJECT_SAVE_AS,
+    // File model events
+    ANALYTICS_FILE_IMPORT_MODEL,
+    ANALYTICS_FILE_EXPORT_MODEL,
+    // File preset events
+    ANALYTICS_FILE_IMPORT_PRESET,
+    ANALYTICS_FILE_EXPORT_PRESET,
+    // File GCode events
+    ANALYTICS_FILE_EXPORT_GCODE_SINGLE,
+    ANALYTICS_FILE_EXPORT_GCODE_ALL,
+    // Model action events
+    ANALYTICS_MODEL_BOOLEAN
+};
+
+struct AnalyticsEventPayload {
+    AnalyticsDataEventType type;
+    nlohmann::json data;
 };
 
 struct AnalyticsProjectInfo {
@@ -93,6 +126,7 @@ public:
     ~AnalyticsDataUploadManager();
 
     void triggerUploadTasks(AnalyticsUploadTiming triggerTiming, const std::vector<AnalyticsDataEventType>& dataEventTypes, int plate_idx = 0, const std::string& device_mac = "");
+    void triggerUploadTasksWithPayload(const AnalyticsEventPayload& payload, int plate_idx = 0, const std::string& device_mac = "");
 
     void mark_analytics_project_info(const std::string& full_url,
                                                const std::string& model_id,
@@ -103,11 +137,6 @@ public:
     void set_analytics_project_info_valid(bool valid);
     void clear_analytics_project_info();
 
-    // slice822 click event logging
-    // Parameters:
-    //  - module: module name (function_module)
-    //  - id: module id (module_id)
-    // Builds payload: { slice822: { event_type, function_module, module_id, app_version, operating_system, timestamp } }
     static void uploadSlice822ClickEvent(const std::string& module, int id=1);
 
 private:
@@ -161,7 +190,13 @@ private:
     void uploadModelActionPaintEvent();
     void uploadModelActionEmbossEvent();
     void uploadModelActionAssemblyViewEvent();
-    void uploadModelActionAiServiceEvent();
+    void uploadAiServiceCallEvent();
+
+    void track_model_action(const std::string& event_name, nlohmann::json& js);
+    
+    // Delayed sending of print_send event to ensure frontend page is ready
+    void track_model_action_delayed_print_send(const nlohmann::json& js);
+    void on_delayed_print_send_timer(nlohmann::json js);
 
 private:
     AnalyticsProjectInfo m_analytics_project_info;

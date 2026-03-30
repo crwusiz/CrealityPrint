@@ -135,6 +135,8 @@ private:
     wxBitmap m_model_store_bitmap;
     wxBitmap m_model_store_hover_bitmap;
 
+    std::atomic<int> m_set_maximized_size_count{0};
+
     // Track spacer items and their logical DIP sizes so they can be resized on DPI changes.
     std::vector<std::pair<wxAuiToolBarItem*, int>> m_spacer_items;
 

@@ -52,6 +52,7 @@ struct SupportParameters {
         this->support_material_interface_flow = Slic3r::support_material_interface_flow(&object, float(slicing_params.layer_height));
     	this->raft_interface_flow                = support_material_interface_flow;
 
+
         //ironing interface
         coordf_t ironing_layer_height = slicing_params.layer_height;
         coordf_t ironing_spacing      = 0.f;
@@ -71,6 +72,13 @@ struct SupportParameters {
         }
         this->support_material_ironing_flow = Slic3r::support_material_ironing_flow(&object, ironing_layer_height, ironing_width);
         this->support_material_ironing_flow.set_spacing(ironing_spacing);
+
+        this->ironing         = object_config.support_ironing;
+        this->ironing_flow    = support_material_interface_flow.with_height(support_material_interface_flow.height() * 0.01 *
+                                                                            object_config.support_ironing_flow.value);
+        this->ironing_spacing = object_config.support_ironing_spacing;
+        this->ironing_pattern = object_config.support_ironing_pattern;
+
 
         // Calculate a minimum support layer height as a minimum over all extruders, but not smaller than 10um.
         this->support_layer_height_min = scaled<coord_t>(0.01);
@@ -205,7 +213,7 @@ struct SupportParameters {
             if (is_tree(object_config.support_type))
             {
                 // organic support doesn't work with variable layer heights (including adaptive layer height and height range modifier, see #4313)
-                if (!object.has_variable_layer_heights && !object_config.overhang_optimization.getBool() && !slicing_params.soluble_interface)
+                if (!object.has_variable_layer_heights && !object_config.overhang_optimization.getBool() /*&& !slicing_params.soluble_interface*/)
                 {
                     BOOST_LOG_TRIVIAL(warning) << "tree support default to organic support";
                     support_style = smsTreeOrganic;
@@ -294,5 +302,10 @@ struct SupportParameters {
 		
     bool independent_layer_height = false;
     const double thresh_big_overhang =/*Slic3r::sqr(scale_(10))*/scale_(10);
+
+    bool ironing;
+    Flow ironing_flow; // Flow at the interface ironing.
+    InfillPattern ironing_pattern;
+    float         ironing_spacing;
 };
 } // namespace Slic3r

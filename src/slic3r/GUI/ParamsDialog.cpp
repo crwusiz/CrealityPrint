@@ -13,7 +13,51 @@ typedef pt::ptree JSON;
 namespace Slic3r { 
 namespace GUI {
 
-
+// Get the work area (screen minus taskbar) for the display containing the given window
+static wxRect get_display_client_area(wxWindow* window) {
+    const auto idx = wxDisplay::GetFromWindow(window);
+    wxDisplay display(idx != wxNOT_FOUND ? idx : 0u);
+    return display.GetClientArea();
+}
+static wxSize get_params_dialog_default_size(wxWindow* window)
+{
+    return window->FromDIP(wxSize(1300, 650));
+}
+static void adjust_dialog_in_screen(DPIDialog* dialog, int max_dip_w = 0, int max_dip_h = 0) {
+    wxRect screen_rect = get_display_client_area(dialog);
+    int    pos_x       = dialog->GetPosition().x;
+    int    pos_y       = dialog->GetPosition().y;
+    int    size_x      = dialog->GetSize().x;
+    int    size_y      = dialog->GetSize().y;
+    int max_w = (int)(screen_rect.width * 0.90);
+    int max_h = (int)(screen_rect.height * 0.90);
+    if (max_dip_w > 0) max_w = std::min(max_w, (int)dialog->FromDIP(max_dip_w));
+    if (max_dip_h > 0) max_h = std::min(max_h, (int)dialog->FromDIP(max_dip_h));
+    bool resized = false;
+    if (size_x > max_w) { size_x = max_w; resized = true; }
+    if (size_y > max_h) { size_y = max_h; resized = true; }
+    if (resized) { dialog->SetSize(size_x, size_y); }
+    int dialog_x = pos_x;
+    int dialog_y = pos_y;
+    if (dialog_x + size_x > screen_rect.x + screen_rect.width) {
+        dialog_x = screen_rect.x + screen_rect.width - size_x;
+    }
+    if (dialog_y + size_y > screen_rect.y + screen_rect.height) {
+        dialog_y = screen_rect.y + screen_rect.height - size_y;
+    }
+    if (dialog_x < screen_rect.x) { dialog_x = screen_rect.x; }
+    if (dialog_y < screen_rect.y) { dialog_y = screen_rect.y; }
+    if (pos_x != dialog_x || pos_y != dialog_y) {
+        dialog->SetPosition(wxPoint(dialog_x, dialog_y));
+    }
+}
+static void apply_params_dialog_size(DPIDialog* dialog)
+{
+    dialog->SetSizeHints(wxDefaultSize, wxDefaultSize);
+    dialog->SetMinSize(wxDefaultSize);
+    dialog->SetSize(get_params_dialog_default_size(dialog));
+    adjust_dialog_in_screen(dialog, 1300, 650);
+}
 ParamsDialog::ParamsDialog(wxWindow * parent)
 	: DPIDialog(parent, wxID_ANY,  "", wxDefaultPosition,
 		wxDefaultSize, wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER)
@@ -21,31 +65,17 @@ ParamsDialog::ParamsDialog(wxWindow * parent)
 	m_panel = new ParamsPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBK_LEFT | wxTAB_TRAVERSAL);
 	auto* topsizer = new wxBoxSizer(wxVERTICAL);
 	topsizer->Add(m_panel, 1, wxALL | wxEXPAND, 0, NULL);
-
-    int un = em_unit();
-	//SetSizerAndFit(topsizer);
-    
-    SetMinSize({130 * em_unit(), 65 * em_unit()});
-    SetSize({130 * em_unit(), 65 * em_unit()});
-    SetSizer(topsizer);
-    //topsizer->SetSizeHints(this);
-
-    //this->SetMinSize(wxSize(80 * em_unit(), 30 * em_unit()));
-    //this->SetSizer(topSizer);
-    //topSizer->SetSizeHints(this);
-
+	SetSizer(topsizer);
 	Layout();
-    
+    apply_params_dialog_size(this);
 	Center();
+    adjust_dialog_in_screen(this, 1300, 650);
     Bind(wxEVT_SHOW, [this](auto &event) {
         if (IsShown()) {
-            wxPoint position = GetPosition();
-            if (position.y < 0 && abs(position.y)<20)
-            {
-                wxSize newSize = wxSize(110 * em_unit(), 65 * em_unit() + position.y*2);
-                SetSize(newSize);
-                SetPosition(wxPoint(position.x, GetParent()->GetPosition().y));
-            }
+            m_winDisabler = new wxWindowDisabler(this);
+        } else {
+            delete m_winDisabler;
+            m_winDisabler = nullptr;
         }
     });
 	Bind(wxEVT_CLOSE_WINDOW, [this](auto& event) {
@@ -90,20 +120,23 @@ void ParamsDialog::Popup()
 #ifdef __WIN32__
     Reparent(wxGetApp().mainframe);
 #endif
+    apply_params_dialog_size(this);
     Center();
+    adjust_dialog_in_screen(this, 1300, 650);
     if (m_panel && m_panel->get_current_tab()) {
         bool just_edit = false;
         if (!m_editing_filament_id.empty()) just_edit = true;
         dynamic_cast<Tab *>(m_panel->get_current_tab())->set_just_edit(just_edit);
     }
     Show();
+    adjust_dialog_in_screen(this, 1300, 650);
 }
 
 void ParamsDialog::on_dpi_changed(const wxRect &suggested_rect)
 {
-	Fit();
-	SetSize({75 * em_unit(), 60 * em_unit()});
-	m_panel->msw_rescale();
+    m_panel->msw_rescale();
+    Layout();
+    apply_params_dialog_size(this);
 	Refresh();
 }
 

@@ -579,6 +579,15 @@ ImVec2 ImGuiWrapper::calc_text_size(const wxString &text,
     return size;
 }
 
+float ImGuiWrapper::find_widest_text(std::vector<wxString>& text_list)
+{
+    float width = .0f;
+    for (const wxString& text : text_list) {
+        width = std::max(width, this->calc_text_size(text).x);
+    }
+    return width;
+}
+
 ImVec2 ImGuiWrapper::calc_button_size(const wxString &text, const ImVec2 &button_size) const
 {
     const ImVec2        text_size = this->calc_text_size(text);
@@ -1020,7 +1029,7 @@ bool ImGuiWrapper::checkbox(const wxString &label, bool &value)
     return ImGui::Checkbox(label_utf8.c_str(), &value);
 }
 
-bool ImGuiWrapper::bbl_checkbox(const wxString &label, bool &value)
+bool ImGuiWrapper::bbl_checkbox(const wxString& label, bool& value, bool enabled, bool b_dark_mode)
 {
     bool result;
     bool b_value = value;
@@ -1030,8 +1039,24 @@ bool ImGuiWrapper::bbl_checkbox(const wxString &label, bool &value)
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, COL_CREALITY);
         ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.00f, 1.00f, 1.00f, 1.00f));  
     }
+    if (!enabled) {
+        float factor = b_value ? 0.8f : 1.0f;
+        if (b_dark_mode) {
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(factor * 39.0f / 255.0f, factor * 39.0f / 255.0f, factor * 39.0f / 255.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(factor * 108.0f / 255.0f, factor * 108.0f / 255.0f, factor * 108.0f / 255.0f, 1.0f));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_FrameBg,
+                                  ImVec4(factor * 230.0f / 255.0f, factor * 230.0f / 255.0f, factor * 230.0f / 255.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(factor * 163.0f / 255.0f, factor * 163.0f / 255.0f, factor * 163.0f / 255.0f, 1.0f));
+        }
+    }
+
     auto label_utf8 = into_u8(label);
     result          = ImGui::BBLCheckbox(label_utf8.c_str(), &value);
+
+    if (!enabled) {
+        ImGui::PopStyleColor(2);
+    }
 
     if (b_value) { ImGui::PopStyleColor(4);}
     return result;
@@ -1072,6 +1097,19 @@ void ImGuiWrapper::text(const wxString &label)
     ImGuiWrapper::text(label_utf8.c_str());
 }
 
+void ImGuiWrapper::warning_text(const char* label)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGuiWrapper::to_ImVec4(ColorRGB::WARNING()));
+    this->text(label);
+    ImGui::PopStyleColor();
+}
+
+void ImGuiWrapper::warning_text(const wxString& all_text)
+{
+    auto label_utf8 = into_u8(all_text);
+    warning_text(label_utf8.c_str());
+}
+
 void ImGuiWrapper::text_colored(const ImVec4& color, const char* label)
 {
     ImGui::TextColored(color, "%s", label);
@@ -1086,6 +1124,19 @@ void ImGuiWrapper::text_colored(const ImVec4& color, const wxString& label)
 {
     auto label_utf8 = into_u8(label);
     ImGuiWrapper::text_colored(color, label_utf8.c_str());
+}
+
+void ImGuiWrapper::error_text_wrapped(const char* text, float wrap_width)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGuiWrapper::to_ImVec4(to_rgba(ColorRGB::ERROR_COLOR(), 1.0f)));
+    this->text_wrapped(text, wrap_width);
+    ImGui::PopStyleColor();
+}
+
+void ImGuiWrapper::error_text_wrapped(const wxString& text, float wrap_width)
+{
+    auto label_utf8 = into_u8(text);
+    error_text_wrapped(label_utf8.c_str(), wrap_width);
 }
 
 void ImGuiWrapper::text_wrapped(const char *label, float wrap_width)
@@ -1980,6 +2031,26 @@ bool ImGuiWrapper::pop_bold_font() {
         return false;
     }
 }
+bool ImGuiWrapper::push_bold_font_24()
+{
+    if (bold_font_24) {
+        ImGui::PushFont(bold_font_24);
+        return true;
+    }
+    if (bold_font) {
+        ImGui::PushFont(bold_font);
+        return true;
+    }
+    return false;
+}
+bool ImGuiWrapper::pop_bold_font_24()
+{
+    if (bold_font_24 || bold_font) {
+        ImGui::PopFont();
+        return true;
+    }
+    return false;
+}
 bool ImGuiWrapper::push_font_by_name(std::string font_name)
 {
     auto sys_font = im_fonts_map.find(font_name);
@@ -2091,6 +2162,10 @@ ImU32 ImGuiWrapper::to_ImU32(const ColorRGBA& color)
 ImVec4 ImGuiWrapper::to_ImVec4(const ColorRGBA& color)
 {
     return { color.r(), color.g(), color.b(), color.a() };
+}
+
+ImVec4 ImGuiWrapper::to_ImVec4(const ColorRGB &color) {
+    return {color.r(), color.g(), color.b(), 1.0};
 }
 
 ColorRGBA ImGuiWrapper::from_ImU32(const ImU32& color)
@@ -2867,6 +2942,12 @@ void ImGuiWrapper::init_font(bool compress)
         }
     }
 
+    ImFontConfig cfg_24 = ImFontConfig();
+    cfg_24.OversampleH = cfg_24.OversampleV = 1;
+    bold_font_24 = io.Fonts->AddFontFromFileTTF((Slic3r::resources_dir() + "/fonts/" + font_name_bold).c_str(), 24.0f, &cfg_24, ranges.Data);
+    if (bold_font_24 == nullptr)
+        bold_font_24 = bold_font;
+
 #ifdef _WIN32
     // Render the text a bit larger (see GLCanvas3D::_resize() and issue #3401), but only if the scale factor
     // for the Display is greater than 300%.
@@ -3597,6 +3678,47 @@ void ImGuiWrapper::clipboard_set(void* /* user_data */, const char* text)
     }
 }
 
+void ImGuiWrapper::reset_imgui_input_state()
+{
+    if (!ImGui::GetCurrentContext()) return;
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Mouse
+    for (int i = 0; i < IM_ARRAYSIZE(io.MouseDown); ++i) io.MouseDown[i] = false;
+    io.MouseWheel  = 0.0f;
+    io.MouseWheelH = 0.0f;
+
+    // ✅ Modifiers must be cleared (these are the most likely to get "stuck" after overlays/focus loss)
+    io.KeyCtrl  = false;
+    io.KeyShift = false;
+    io.KeyAlt   = false;
+    io.KeySuper = false;
+
+    // Optional: if you're still using the legacy KeysDown backend and might lose KEY_UP events, clear it as well
+    for (int i = 0; i < IM_ARRAYSIZE(io.KeysDown); ++i)
+        io.KeysDown[i] = false;
+
+    // Optional: prevent weird capture behavior if some widget/control remained "active"
+    ImGui::ClearActiveID();
+}
+
+void ImGuiWrapper::reset_imgui_keyboard_state()
+{
+    if (!ImGui::GetCurrentContext()) return;
+    ImGuiIO& io = ImGui::GetIO();
+
+    io.KeyCtrl  = false;
+    io.KeyShift = false;
+    io.KeyAlt   = false;
+    io.KeySuper = false;
+
+    for (int i = 0; i < IM_ARRAYSIZE(io.KeysDown); ++i)
+        io.KeysDown[i] = false;
+
+    ImGui::ClearActiveID();
+}
+
+
 bool IMTexture::load_from_svg_file(const std::string& filename, unsigned width, unsigned height, ImTextureID& texture_id)
 {
     NSVGimage* image = nsvgParseFromFile(filename.c_str(), "px", 96.0f);
@@ -3622,6 +3744,84 @@ bool IMTexture::load_from_svg_file(const std::string& filename, unsigned width, 
     nsvgRasterize(rast, image, 0, 0, scale, data.data(), width, height, width * 4);
 
     bool compress = false;
+    GLint last_texture;
+    unsigned m_image_texture{ 0 };
+    unsigned char* pixels = (unsigned char*)(&data[0]);
+
+    glsafe(::glGetIntegerv(GL_TEXTURE_BINDING_2D, &last_texture));
+    glsafe(::glGenTextures(1, &m_image_texture));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, m_image_texture));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+    glsafe(::glPixelStorei(GL_UNPACK_ROW_LENGTH, 0));
+    glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels));
+
+    // Store our identifier
+    texture_id = (ImTextureID)(intptr_t)m_image_texture;
+
+    // Restore state
+    glsafe(::glBindTexture(GL_TEXTURE_2D, last_texture));
+
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+
+    return true;
+}
+
+static void recolor_greenish_pixels(unsigned char* rgba, int n_pixels, bool to_white)
+{
+    const unsigned char out = to_white ? 255 : 0;
+
+    for (int i = 0; i < n_pixels; i++) {
+        unsigned char* p = rgba + i * 4;
+        const unsigned char r = p[0];
+        const unsigned char g = p[1];
+        const unsigned char b = p[2];
+        const unsigned char a = p[3];
+
+        if (a == 0)
+            continue;
+
+        // Heuristic: "green-ish" pixels (covers #17CC5F plus antialiased edges).
+        // Keep non-green strokes (often gray) unchanged.
+        const int g_dominance = int(g) - std::max(int(r), int(b));
+        const bool greenish   = (g_dominance >= 25) && (g >= 60) && (r <= 200) && (b <= 200);
+        if (!greenish)
+            continue;
+
+        p[0] = out;
+        p[1] = out;
+        p[2] = out;
+    }
+}
+
+bool IMTexture::load_from_svg_file_recolor_green(const std::string& filename, unsigned width, unsigned height, ImTextureID& texture_id, bool to_white)
+{
+    NSVGimage* image = nsvgParseFromFile(filename.c_str(), "px", 96.0f);
+    if (image == nullptr) {
+        return false;
+    }
+
+    float scale = (float)width / std::max(image->width, image->height);
+
+    int n_pixels = width * height;
+
+    if (n_pixels <= 0) {
+        nsvgDelete(image);
+        return false;
+    }
+
+    NSVGrasterizer* rast = nsvgCreateRasterizer();
+    if (rast == nullptr) {
+        nsvgDelete(image);
+        return false;
+    }
+
+    std::vector<unsigned char> data(n_pixels * 4, 0);
+    nsvgRasterize(rast, image, 0, 0, scale, data.data(), width, height, width * 4);
+
+    recolor_greenish_pixels(data.data(), n_pixels, to_white);
+
     GLint last_texture;
     unsigned m_image_texture{ 0 };
     unsigned char* pixels = (unsigned char*)(&data[0]);

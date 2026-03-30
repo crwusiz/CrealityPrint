@@ -169,7 +169,7 @@ void ProgressBar::doRender(wxDC &dc)
 {
     if (m_step >= m_max) m_step = m_max;
     wxSize size   = GetSize();
-    dc.SetPen(wxPen(m_progress_background_colour, 1));
+    dc.SetPen(*wxTRANSPARENT_PEN);
     dc.SetBrush(wxBrush(m_progress_background_colour));
     if (m_radius == 0) {
         dc.DrawRectangle(0, 0, size.x, size.y);
@@ -182,7 +182,7 @@ void ProgressBar::doRender(wxDC &dc)
         m_proportion = float(size.x * float(this->m_step) / float(this->m_max));
         if (m_proportion < m_radius * 2 && m_proportion != 0) { m_proportion = m_radius * 2; }
 
-        dc.SetPen(wxPen(m_progress_colour_disable, 1));
+        dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(wxBrush(m_progress_colour_disable));
         if (m_radius == 0) {
             dc.DrawRectangle(0, 0, m_proportion, size.y);
@@ -202,7 +202,7 @@ void ProgressBar::doRender(wxDC &dc)
         m_proportion = float(size.x * float(this->m_step) / float(this->m_max));
         if (m_proportion < m_radius * 2  && m_proportion != 0) { m_proportion = m_radius * 2; }
 
-        dc.SetPen(wxPen(m_progress_colour, 1));
+        dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(wxBrush(m_progress_colour));
         if (m_radius == 0) {
             dc.DrawRectangle(0, 0, m_proportion, size.y);

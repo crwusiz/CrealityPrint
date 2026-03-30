@@ -24,23 +24,31 @@ SyncUserPresets& SyncUserPresets::getInstance()
 int SyncUserPresets::startup()
 {
     BOOST_LOG_TRIVIAL(warning) << "SyncUserPresets startup";
-    if (m_bRunning) {
+    if (m_bRunning.load()) {
         return 1;
     }
+    m_bStoped.store(false);
+    m_bRunning.store(true);
+    if (m_thread.joinable()) {
+        m_thread.join();
+    }
     m_thread = std::thread(&SyncUserPresets::onRun, this);
-    m_thread.detach();
-    return 0; 
+    return 0;
 }
 
 void SyncUserPresets::shutdown()
 {
     BOOST_LOG_TRIVIAL(warning) << "SyncUserPresets shutdown";
-    if (!m_bRunning.load())
+    if (!m_bRunning.load() && !m_thread.joinable())
         return;
     m_bRunning.store(false);
+    m_bSync.store(false);
     std::unique_lock<std::mutex> lock(m_mutexQuit);
     m_cvQuit.wait(lock, [this](){ return m_bStoped.load(); });
     lock.unlock();
+    if (m_thread.joinable()) {
+        m_thread.join();
+    }
     BOOST_LOG_TRIVIAL(warning) << "SyncUserPresets shutdown end";
 }
 void SyncUserPresets::startSync() // 同步工作的启动
@@ -110,7 +118,6 @@ void SyncUserPresets::logout() {
 
 void SyncUserPresets::onRun()
 {
-    m_bRunning.store(true);
     std::list<ENSyncCmd> lstSyncCmd;
     while (m_bRunning.load()) {
         if (!m_bSync.load()) 
@@ -146,6 +153,9 @@ void SyncUserPresets::onRun()
         m_mutexLstSyncCmd.unlock();
 
         for (auto cmd : lstSyncCmd) {
+            if (!m_bRunning.load()) {
+                break;
+            }
             m_syncThreadState = ENSyncThreadState::ENTS_IDEL_CHECK;
             if (cmd == ENSyncCmd::ENSC_SYNC_TO_LOCAL) {
                 m_syncThreadState = ENSyncThreadState::ENTS_SYNC_TO_LOCAL;
@@ -155,9 +165,12 @@ void SyncUserPresets::onRun()
                     CXCloudDataCenter::getInstance().setDownloadPresetState(ENDownloadPresetState::ENDPS_DOWNLOAD_FAILED);
                     continue;
                 }
-                while (wxGetApp().plater()->isLoadingGCode()) {
+                while (m_bRunning.load() && wxGetApp().plater()->isLoadingGCode()) {
                     BOOST_LOG_TRIVIAL(warning) << "SyncUserPresets isLoadingGCode...";
                     std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                }
+                if (!m_bRunning.load()) {
+                    break;
                 }
                 wxGetApp().CallAfter([=] { 
                     //delLocalUserPresetsInUiThread(syncToLocalRetInfo);
@@ -199,6 +212,7 @@ void SyncUserPresets::onRun()
         //  检测是否配置文件需要同步到创想云
         doCheckNeedSyncConfigToCXCloud();
     }
+    m_bRunning.store(false);
     m_bStoped.store(true);
     m_cvQuit.notify_one();
     BOOST_LOG_TRIVIAL(warning) << "SyncUserPresets thread quited";

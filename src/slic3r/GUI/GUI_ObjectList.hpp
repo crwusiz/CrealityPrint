@@ -174,9 +174,15 @@ public:
 
         ImTextureID& get_texture_id() { return m_texture_id; };
 
+        // Only for a small subset of icons we want to unify with right-click menu SVGs.
+        ImTextureID get_custom_texture_id(IM_TEXTURE_NAME name, bool selected) const;
+
     private:
         ImTextureID m_texture_id;
         bool        m_valid = false;
+
+        std::array<ImTextureID, texCount> m_custom_texture_ids{};
+        std::array<ImTextureID, texCount> m_custom_texture_ids_selected{};
     };
 
     struct ObjList_Png_Texture_Wrapper
@@ -298,6 +304,9 @@ private:
                                                            // update_settings_items - updating canvas selection is undesirable,
                                                            // because it would turn off the gizmos (mainly a problem for the SLA gizmo)
 
+    bool m_scroll_req_imgui = false;
+    ObjectDataViewModelNode* m_scroll_target_imgui = nullptr;
+    
     wxDataViewItem m_last_selected_item {nullptr};
 
     std::unique_ptr<ObjList_Png_Texture_Wrapper> m_png_textures;
@@ -722,6 +731,9 @@ public:
         wxDataViewItemArray& selecteds);
 
     void render_current_device_name(const float max_right);
+
+    void request_scroll_to_node_imgui(ObjectDataViewModelNode* node);
+    void consume_scroll_request_imgui(ObjectDataViewModelNode* node, float center = 0.5f);
 };
 
 

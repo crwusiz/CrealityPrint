@@ -108,12 +108,31 @@ void SelectionInfo::on_update()
 
     m_model_object = nullptr;
 
+    
+    /* 旧代码，测试无问题后可删
     // BBS still keep object pointer when selection is volume
     // if (selection.is_single_full_instance()) {
     if (!selection.is_empty()) {
         m_model_object = selection.get_model()->objects[selection.get_object_idx()];
         m_z_shift = selection.get_first_volume()->get_sla_shift_z();
     }
+    */
+
+    if (selection.is_empty())
+        return;
+    const Model* model = selection.get_model();
+    if (!model)
+        return;
+    const int obj_idx = selection.get_object_idx();
+    if (obj_idx < 0 || obj_idx >= int(model->objects.size()))
+        return;
+
+    m_model_object = model->objects[obj_idx];
+
+    if (const auto* volume = selection.get_first_volume()) {
+        m_z_shift = volume->get_sla_shift_z();
+    }
+
 }
 
 void SelectionInfo::on_release()
@@ -327,6 +346,11 @@ void ObjectClipper::render_cut(const std::vector<size_t>* ignore_idxs) const
     }
 }
 
+void ObjectClipper::set_position_to_init_layer()
+{
+    m_clp.reset(new ClippingPlane({0, 0, 1}, 0.1));
+    get_pool()->get_canvas()->set_as_dirty();
+}
 
 int ObjectClipper::get_number_of_contours() const
 {
@@ -366,17 +390,22 @@ std::vector<Vec3d> ObjectClipper::point_per_contour() const
 }
 
 
-void ObjectClipper::set_position_by_ratio(double pos, bool keep_normal)
+void ObjectClipper::set_position_by_ratio(double pos, bool keep_normal, bool vertical_normal)
 {
     const ModelObject* mo = get_pool()->selection_info()->model_object();
     int active_inst = get_pool()->selection_info()->get_active_instance();
     double z_shift = get_pool()->selection_info()->get_sla_shift();
 
-    //Vec3d camera_dir = wxGetApp().plater()->get_camera().get_dir_forward();
-    //if (abs(camera_dir(0)) > EPSILON || abs(camera_dir(1)) > EPSILON)
-    //    camera_dir(2) = 0;
+    Vec3d normal;
+    if(vertical_normal) {
+        normal = {0, 0, 1};
+    } else {
+        // Vec3d camera_dir = wxGetApp().plater()->get_camera().get_dir_forward();
+        // if (abs(camera_dir(0)) > EPSILON || abs(camera_dir(1)) > EPSILON)
+        //    camera_dir(2) = 0;
 
-    Vec3d normal = (keep_normal && m_clp) ? m_clp->get_normal() : /*-camera_dir;*/ -wxGetApp().plater()->get_camera().get_dir_forward();
+        normal = (keep_normal && m_clp) ? m_clp->get_normal() : /*-camera_dir;*/ -wxGetApp().plater()->get_camera().get_dir_forward();
+    }
     Vec3d center;
 
     if (get_pool()->get_canvas()->get_canvas_type() == GLCanvas3D::CanvasAssembleView) {

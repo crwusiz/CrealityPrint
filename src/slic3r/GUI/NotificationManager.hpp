@@ -264,6 +264,7 @@ public:
     void set_download_URL_paused(size_t id);
     void set_download_URL_canceled(size_t id);
     void set_download_URL_error(size_t id, const std::string& text);
+    void close_download_URL_notification(size_t id);
 
 	// notifications with progress bar
 	// slicing progress
@@ -277,8 +278,10 @@ public:
 	void set_slicing_progress_hidden();
 	// Add a print time estimate to an existing SlicingProgress notification. Set said notification to SP_COMPLETED state.
 	void set_slicing_complete_print_time(const std::string& info, bool sidebar_colapsed);
-	void set_slicing_progress_export_possible();
-	// ProgressIndicator notification
+		void set_slicing_progress_export_possible();
+		// Returns snapshot of slicing progress notification (if present).
+		nlohmann::json get_slicing_progress_snapshot() const;
+		// ProgressIndicator notification
 	// init adds hidden instance of progress indi notif that should always live (goes to hidden instead of erasing)
 	void init_progress_indicator();
 	// functions equal to ProgressIndicator class
@@ -643,12 +646,18 @@ private:
         }
         void	set_percentage(float percent) override
         {
+            const bool was_done_or_error = (m_percentage < 0.f || m_percentage >= 1.f);
+            const bool now_done_or_error = (percent < 0.f || percent >= 1.f);
+
             m_percentage = percent;
             if (m_percentage >= 1.f) {
                 m_notification_start = GLCanvas3D::timestamp_now();
                 m_state = EState::Shown;
             } else
                 m_state = EState::NotFading;
+
+            if (was_done_or_error != now_done_or_error)
+                init();
         }
         size_t	get_download_id() { return m_download_id; }
         void	set_user_action_callback(std::function<bool(DownloaderUserAction, int)> user_action_callback) { m_user_action_callback = user_action_callback; }
@@ -656,6 +665,13 @@ private:
         void    set_error_message(const std::string& message) { m_error_message = message; }
         bool    compare_text(const std::string& text) const override { return false; };
     protected:
+        void    set_next_window_size(ImGuiWrapper& imgui) override;
+        void    bbl_render_left_sign(ImGuiWrapper& imgui,
+                                    const float win_size_x, const float win_size_y,
+                                    const float win_pos_x, const float win_pos_y) override;
+        void    render_text(ImGuiWrapper& imgui,
+                            const float win_size_x, const float win_size_y,
+                            const float win_pos_x, const float win_pos_y) override;
         void	render_close_button(ImGuiWrapper& imgui,
                                     const float win_size_x, const float win_size_y,
                                     const float win_pos_x, const float win_pos_y) override;

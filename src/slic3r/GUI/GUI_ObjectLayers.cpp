@@ -235,7 +235,10 @@ void ObjectLayers::update_layers_list()
 void ObjectLayers::update_scene_from_editor_selection() const
 {
     // needed to show the visual hints in 3D scene
-    wxGetApp().plater()->canvas3D()->handle_layers_data_focus_event(m_selectable_range, m_selection_type);
+    // Layer-range editor hints are intended for the editable 3D scene only.
+    // Do not route this event to current canvas (e.g. Preview), otherwise
+    // Preview shows sidebar indicators unexpectedly.
+    wxGetApp().plater()->get_view3D_canvas3D()->handle_layers_data_focus_event(m_selectable_range, m_selection_type);
 }
 
 void ObjectLayers::UpdateAndShow(const bool show)

@@ -266,6 +266,21 @@ public:
         PrintRegion     *region { nullptr };
     };
 
+    struct LayerRangeRegions;
+    struct FuzzySkinPaintedRegion
+    {
+        enum class ParentType { VolumeRegion, PaintedRegion };
+
+        ParentType   parent_type { ParentType::VolumeRegion };
+        // Index of a parent VolumeRegion or PaintedRegion.
+        int          parent { -1 };
+        // Pointer to PrintObjectRegions::all_regions.
+        PrintRegion *region { nullptr };
+
+        PrintRegion *parent_print_object_region(const LayerRangeRegions &layer_range) const;
+        int          parent_print_object_region_id(const LayerRangeRegions &layer_range) const;
+    };
+
     // One slice over the PrintObject (possibly the whole PrintObject) and a list of ModelVolumes and their bounding boxes
     // possibly clipped by the layer_height_range.
     struct LayerRangeRegions
@@ -280,6 +295,7 @@ public:
         // Sorted in the order of their source ModelVolumes, thus reflecting the order of region clipping, modifier overrides etc.
         std::vector<VolumeRegion>   volume_regions;
         std::vector<PaintedRegion>  painted_regions;
+        std::vector<FuzzySkinPaintedRegion> fuzzy_skin_painted_regions;
 
         bool has_volume(const ObjectID id) const {
             auto it = lower_bound_by_predicate(this->volumes.begin(), this->volumes.end(), [id](const VolumeExtents &l) { return l.volume_id < id; });
@@ -430,6 +446,8 @@ public:
     bool                        has_support_material()  const { return this->has_support() || this->has_raft(); }
     // Checks if the model object is painted using the multi-material painting gizmo.
     bool                        is_mm_painted()         const { return this->model_object()->is_mm_painted(); }
+    // Checks if the model object is painted using the fuzzy skin painting gizmo.
+    bool                        is_fuzzy_skin_painted() const { return this->model_object()->is_fuzzy_skin_painted(); }
 
     // returns 0-based indices of extruders used to print the object (without brim, support and other helper extrusions)
     std::vector<unsigned int>   object_extruders() const;
@@ -567,6 +585,8 @@ private:
     size_t               m_id;
     void apply_conical_overhang();
 
+    bool m_has_support_outside = false;
+
  public:
     bool has_support_message() { return m_cache_support_necessary != SupportNecessaryType::NoNeedSupp; }
     //BBS: When printing multi-material objects, this settings will make slicer to clip the overlapping object parts one by the other.
@@ -574,6 +594,9 @@ private:
     // This was a per-object setting and now we default enable it.
     static bool clip_multipart_objects;
     static bool infill_only_where_needed;
+
+    bool has_support_outside() const { return m_has_support_outside; }
+    void set_has_support_outside(bool value) { m_has_support_outside = value; }
 };
 
 struct FakeWipeTower
@@ -990,6 +1013,9 @@ private:
     ConflictResultOpt m_conflict_result;
     FakeWipeTower     m_fake_wipe_tower;
     
+    //Creality:
+    ToolpathOutsideResultOpt m_toolpath_outside_result;
+
     //SoftFever: calibration
     Calib_Params m_calib_params;
 

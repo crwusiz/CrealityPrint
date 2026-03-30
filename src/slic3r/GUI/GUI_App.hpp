@@ -97,6 +97,9 @@ class PrinterPresetConfig;
 class UITour;
 class LoginDialog;
 
+// Forward declaration
+struct PackageInfo;
+
 enum FileType
 {
     FT_STEP,
@@ -267,6 +270,10 @@ private:
 
     //BBS
     bool m_is_closing {false};
+    // Deferred restore-project: set true at startup when a pending hot-update is
+    // waiting so that the "Update Ready" dialog appears before the "Restore
+    // unsaved project?" prompt.
+    bool m_restore_project_deferred {false};
     Slic3r::DeviceManager* m_device_manager { nullptr };
     Slic3r::UserManager* m_user_manager { nullptr };
     Slic3r::TaskManager* m_task_manager { nullptr };
@@ -294,6 +301,7 @@ private:
     std::shared_ptr<int> m_user_sync_token;
     bool             m_is_dark_mode{ false };
     bool             m_adding_script_handler { false };
+    bool             m_webview_runtime_repair_prompted { false };
     bool             m_side_popup_status{false};
     bool             m_show_http_errpr_msgdlg{false};
     wxString         m_info_dialog_content;
@@ -316,6 +324,8 @@ private:
 
     //app close time
     std::chrono::steady_clock::time_point m_app_close_time;
+
+    void            schedule_software_launch_analytics();
 
   public:
       //try again when subscription fails
@@ -341,6 +351,13 @@ private:
     HttpServer*     get_server() { return &m_http_server;}
     std::map<std::string, bool> test_url_state;
     void            reinit_downloader();
+
+    // Update packages for hot update (public for access from ReleaseNote)
+    std::vector<PackageInfo> m_update_packages;
+    std::string m_update_version;
+    std::string m_update_base_package_name;
+    std::string m_update_file_url;
+
     //BBS: remove GCodeViewer as seperate APP logic
     explicit GUI_App(bool enable_test = false);
     //explicit GUI_App(EAppMode mode = EAppMode::Editor);
@@ -399,6 +416,7 @@ private:
 #if wxUSE_WEBVIEW_EDGE
     void            init_webview_runtime();
     void            reinstall_webview_runtime();
+    bool            mark_webview_runtime_repair_prompted();
 #endif
     static unsigned get_colour_approx_luma(const wxColour& colour);
     static bool     dark_mode();
@@ -518,8 +536,17 @@ private:
 
     void            check_update(bool show_tips, int by_user);
     void            check_new_version(bool show_tips = false, int by_user = 0);
+    void            trigger_deferred_restore_project();
     void            check_new_version_sf(bool show_tips = false, int by_user = 0);
     void            check_new_version_cx(bool show_tips = false, int by_user = 0);
+    void            check_new_version_cx_updated(bool show_tips = false, int by_user = 0);
+    void            check_new_version_local(bool show_tips = false, int by_user = 0);
+    void            process_update_packages(const std::vector<PackageInfo>& updater_packages, 
+                                           const std::string& version, 
+                                           const std::string& base_package_name,
+                                           const std::string& manual_url = std::string(),
+                                           bool show_tips = false, 
+                                           int by_user = 0);
     void            request_new_version(int by_user);
     void            enter_force_upgrade();
     void            set_skip_version(bool skip = true);

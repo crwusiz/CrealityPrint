@@ -854,7 +854,7 @@ bool GLGizmoHollow::on_is_activable() const
      const Selection& selection = m_parent.get_selection();
     bool res = (wxGetApp().preset_bundle->printers.get_edited_preset().printer_technology() == ptSLA) ?
                 selection.is_single_full_instance() :
-                selection.is_single_full_instance() || selection.is_single_volume() || selection.is_single_modifier();
+                selection.is_from_single_instance() && !selection.is_mixed() && !selection.is_wipe_tower();
     if (res)
         res &= !selection.contains_sinking_volumes();
 
@@ -995,8 +995,16 @@ void GLGizmoHollow::reload_cache()
 
 
 void GLGizmoHollow::on_set_hover_id()
-{
-    if (int(m_c->selection_info()->model_object()->sla_drain_holes.size()) <= m_hover_id)
+{ 
+    //if (int(m_c->selection_info()->model_object()->sla_drain_holes.size()) <= m_hover_id)
+    //    m_hover_id = -1;
+
+    const ModelObject* mo = m_c->selection_info()->model_object();
+    if (!mo) {
+        m_hover_id = -1;
+        return;
+    }
+    if (int(mo->sla_drain_holes.size()) <= m_hover_id)
         m_hover_id = -1;
 }
 

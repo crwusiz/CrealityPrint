@@ -22,12 +22,16 @@
 #include <wx/progdlg.h>
 #include <wx/clipbrd.h>
 #include <wx/dcgraph.h>
+#include <wx/stdpaths.h>
+#include <wx/filename.h>
+#include <wx/dir.h>
 #include <miniz.h>
 #include <algorithm>
 #include "Plater.hpp"
 #include "BitmapCache.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "libslic3r/common_header/common_header.h"
+#include <boost/log/trivial.hpp>
 namespace Slic3r { namespace GUI {
 
 wxDEFINE_EVENT(EVT_SECONDARY_CHECK_CONFIRM, wxCommandEvent);
@@ -308,7 +312,6 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
 {
     std::string icon_path = (boost::format("%1%/images/%2%.ico") % resources_dir() % Slic3r::CxBuildInfo::getIconName()).str();
     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
-    SetSize(FromDIP(760), FromDIP(736));
     SetBackgroundColour(*wxWHITE);
     wxBoxSizer *m_sizer_main = new wxBoxSizer(wxVERTICAL);
     auto        m_line_top   = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
@@ -387,14 +390,15 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
                                                    wxHL_ALIGN_LEFT);
     m_link_open_in_browser->SetFont(Label::Body_14);
     
-    StateColor btn_bg_green(std::pair<wxColour, int>(wxColour(21, 191, 89), StateColor::Pressed), std::pair<wxColour, int>(wxColour(21, 191, 89), StateColor::Hovered),
-                            std::pair<wxColour, int>(wxColour(142, 142, 159), StateColor::Normal));
+    StateColor btn_bg_green(std::pair<wxColour, int>(wxColour(18, 162, 76), StateColor::Pressed), std::pair<wxColour, int>(wxColour(40, 210, 100), StateColor::Hovered),
+                            std::pair<wxColour, int>(wxColour(21, 191, 89), StateColor::Normal));
 
     StateColor btn_bg_white(std::pair<wxColour, int>(wxColour(206, 206, 206), StateColor::Pressed), std::pair<wxColour, int>(wxColour(238, 238, 238), StateColor::Hovered),
                             std::pair<wxColour, int>(*wxWHITE, StateColor::Normal));
 
     m_button_download = new Button(btnsBg, _L("Download"));
-    m_button_download->SetBackgroundColor(btn_bg_white);
+    m_button_download->SetBackgroundColor(btn_bg_green);
+    m_button_download->SetTextColor(wxColour(255, 255, 255));
     m_button_download->SetBorderColor(wxColour(38, 46, 48));
     m_button_download->SetFont(Label::Body_12);
     m_button_download->SetSize(wxSize(FromDIP(104), FromDIP(32)));
@@ -402,7 +406,22 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
     m_button_download->SetCornerRadius(FromDIP(4));
 
     m_button_download->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &e) {
-        EndModal(wxID_YES);
+        // For minor updates, use local hot update process
+        if (!m_is_major_update) {
+            // Use saved update packages directly
+            if (!wxGetApp().m_update_packages.empty()) {
+                wxGetApp().process_update_packages(wxGetApp().m_update_packages, 
+                                                   wxGetApp().m_update_version, 
+                                                   wxGetApp().m_update_base_package_name,
+                                                   wxGetApp().m_update_file_url,
+                                                   true, 1);
+            }
+            EndModal(wxID_NO);
+            return;
+        } else {
+            // For major updates, use original online update process
+            EndModal(wxID_YES);
+        }
     });
 
     m_button_skip_version = new Button(btnsBg, _L("Skip this Version"));
@@ -494,7 +513,20 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
     Layout();
     Fit();
 
-    SetMinSize(GetSize());
+    // Ensure dialog fits on screen and set specific size for 1980*1080 resolution
+    wxSize screen_size = wxGetDisplaySize();
+    wxSize dialog_size = GetSize();
+    
+    // Ensure dialog fits on screen
+    if (dialog_size.x > screen_size.x * 0.8) {
+        dialog_size.x = static_cast<int>(screen_size.x * 0.8);
+    }
+    if (dialog_size.y > screen_size.y * 0.7) {
+        dialog_size.y = static_cast<int>(screen_size.y * 0.7);
+    }
+    
+    SetSize(dialog_size);
+    SetMinSize(dialog_size);
 
     Centre(wxBOTH);
     wxGetApp().UpdateDlgDarkUI(this);
@@ -515,6 +547,13 @@ wxWebView* UpdateVersionDialog::CreateTipView(wxWindow* parent)
 void UpdateVersionDialog::isUser(bool isUser) 
 { 
     m_button_skip_version->Show(!isUser); 
+}
+
+void UpdateVersionDialog::set_update_info(bool is_major_update, const std::string& version_str, const std::string& update_url)
+{
+    m_is_major_update = is_major_update;
+    m_version_str = version_str;
+    m_update_url = update_url;
 }
 
 void UpdateVersionDialog::OnLoaded(wxWebViewEvent& event)
@@ -640,9 +679,21 @@ void UpdateVersionDialog::update_version_info(wxString release_note, wxString ve
         m_scrollwindows_release_note->SetSizer(sizer_text_release_note);
         m_scrollwindows_release_note->Layout();
         m_scrollwindows_release_note->Fit();
-        SetMinSize(wxSize(FromDIP(720), FromDIP(680)));
-        SetMaxSize(wxSize(FromDIP(720), FromDIP(680)));
-        SetSize(wxSize(720, 680));
+        
+        // Ensure dialog fits on screen
+        wxSize screen_size = wxGetDisplaySize();
+        wxSize dialog_size(FromDIP(720), FromDIP(680));
+        
+        if (dialog_size.x > screen_size.x * 0.8) {
+            dialog_size.x = static_cast<int>(screen_size.x * 0.8);
+        }
+        if (dialog_size.y > screen_size.y * 0.7) {
+            dialog_size.y = static_cast<int>(screen_size.y * 0.7);
+        }
+        
+        SetMinSize(dialog_size);
+        SetMaxSize(dialog_size);
+        SetSize(dialog_size);
         Centre(wxBOTH);
     }
 

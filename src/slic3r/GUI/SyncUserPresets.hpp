@@ -4,6 +4,7 @@
 #include <thread>
 #include <mutex>
 #include <list>
+#include <atomic>
 #include <condition_variable>
 
 #include "CommunicateWithCXCloud.hpp"

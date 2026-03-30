@@ -863,27 +863,40 @@ void PresetUpdater::priv::sync_plugins(std::string http_url, std::string plugin_
     get_cached_plugins_version(cached_version, force_upgrade);
     if (!cached_version.empty()) {
         bool need_delete_cache = false;
-        Semver current_semver = curr_version;
-        Semver cached_semver = cached_version;
+        auto current_semver_opt = Semver::parse(curr_version);
+        auto cached_semver_opt  = Semver::parse(cached_version);
+        if (!current_semver_opt) {
+            need_delete_cache = true;
+            BOOST_LOG_TRIVIAL(warning) << boost::format("current version string '%1%' can not be parsed, will ignore cached plugins version") % curr_version;
+        }
+        if (!cached_semver_opt) {
+            need_delete_cache = true;
+            BOOST_LOG_TRIVIAL(warning) << boost::format("cached plugins version string '%1%' can not be parsed, will ignore cached plugins") % cached_version;
+        }
 
-        int curent_patch_cc = current_semver.patch()/100;
-        int cached_patch_cc = cached_semver.patch()/100;
-        int curent_patch_dd = current_semver.patch()%100;
-        int cached_patch_dd = cached_semver.patch()%100;
-        if ((cached_semver.maj() != current_semver.maj())
-            || (cached_semver.min() != current_semver.min())
-            || (curent_patch_cc != cached_patch_cc))
-        {
-            need_delete_cache = true;
-            BOOST_LOG_TRIVIAL(info) << boost::format("cached plugins version %1% not match with current %2%")%cached_version%curr_version;
-        }
-        else if (cached_patch_dd <= curent_patch_dd) {
-            need_delete_cache = true;
-            BOOST_LOG_TRIVIAL(info) << boost::format("cached plugins version %1% not newer than current %2%")%cached_version%curr_version;
-        }
-        else {
-            BOOST_LOG_TRIVIAL(info) << boost::format("cached plugins version %1% newer than current %2%")%cached_version%curr_version;
-            plugin_version = cached_version;
+        if (!need_delete_cache) {
+            const Semver &current_semver = *current_semver_opt;
+            const Semver &cached_semver  = *cached_semver_opt;
+
+            int curent_patch_cc = current_semver.patch() / 100;
+            int cached_patch_cc = cached_semver.patch() / 100;
+            int curent_patch_dd = current_semver.patch() % 100;
+            int cached_patch_dd = cached_semver.patch() % 100;
+            if ((cached_semver.maj() != current_semver.maj())
+                || (cached_semver.min() != current_semver.min())
+                || (curent_patch_cc != cached_patch_cc))
+            {
+                need_delete_cache = true;
+                BOOST_LOG_TRIVIAL(info) << boost::format("cached plugins version %1% not match with current %2%")%cached_version%curr_version;
+            }
+            else if (cached_patch_dd <= curent_patch_dd) {
+                need_delete_cache = true;
+                BOOST_LOG_TRIVIAL(info) << boost::format("cached plugins version %1% not newer than current %2%")%cached_version%curr_version;
+            }
+            else {
+                BOOST_LOG_TRIVIAL(info) << boost::format("cached plugins version %1% newer than current %2%")%cached_version%curr_version;
+                plugin_version = cached_version;
+            }
         }
 
         if (need_delete_cache) {
@@ -1002,17 +1015,30 @@ void PresetUpdater::priv::sync_printer_config(std::string http_url)
     } catch (...) {}
     if (!cached_version.empty()) {
         bool   need_delete_cache = false;
-        Semver current_semver    = curr_version;
-        Semver cached_semver     = cached_version;
+        auto current_semver_opt = Semver::parse(curr_version);
+        auto cached_semver_opt  = Semver::parse(cached_version);
+        if (!current_semver_opt) {
+            need_delete_cache = true;
+            BOOST_LOG_TRIVIAL(warning) << boost::format("current version string '%1%' can not be parsed, will ignore cached printer config version") % curr_version;
+        }
+        if (!cached_semver_opt) {
+            need_delete_cache = true;
+            BOOST_LOG_TRIVIAL(warning) << boost::format("cached printer config version string '%1%' can not be parsed, will ignore cached printer config") % cached_version;
+        }
 
-        if ((cached_semver.maj() != current_semver.maj()) || (cached_semver.min() != current_semver.min())) {
-            need_delete_cache = true;
-            BOOST_LOG_TRIVIAL(info) << boost::format("cached printer config version %1% not match with current %2%") % cached_version % curr_version;
-        } else if (cached_semver.patch() <= current_semver.patch()) {
-            need_delete_cache = true;
-            BOOST_LOG_TRIVIAL(info) << boost::format("cached printer config version %1% not newer than current %2%") % cached_version % curr_version;
-        } else {
-            using_version = cached_version;
+        if (!need_delete_cache) {
+            const Semver &current_semver = *current_semver_opt;
+            const Semver &cached_semver  = *cached_semver_opt;
+
+            if ((cached_semver.maj() != current_semver.maj()) || (cached_semver.min() != current_semver.min())) {
+                need_delete_cache = true;
+                BOOST_LOG_TRIVIAL(info) << boost::format("cached printer config version %1% not match with current %2%") % cached_version % curr_version;
+            } else if (cached_semver.patch() <= current_semver.patch()) {
+                need_delete_cache = true;
+                BOOST_LOG_TRIVIAL(info) << boost::format("cached printer config version %1% not newer than current %2%") % cached_version % curr_version;
+            } else {
+                using_version = cached_version;
+            }
         }
 
         if (need_delete_cache) {
@@ -1096,6 +1122,7 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
             std::string vendor_name = path.filename().string();
             // Remove the .json suffix.
             vendor_name.erase(vendor_name.size() - 5);
+            const bool is_core_vendor = (vendor_name == PresetBundle::BBL_BUNDLE);
             if (enabled_config_update) {
                 if ( fs::exists(path_in_vendor)) {
                     if (enabled_vendors.find(vendor_name) != enabled_vendors.end()) {
@@ -1109,7 +1136,7 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
                             bundles.push_back(vendor_name);
                         }
                     }
-                    else {
+                    else if (!is_core_vendor) {
                         //need to be removed because not installed
                         fs::remove(path_in_vendor);
                         const auto path_of_vendor = vendor_path / vendor_name;
@@ -1117,11 +1144,11 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
                             fs::remove_all(path_of_vendor);
                     }
                 }
-                else if ((vendor_name == PresetBundle::BBL_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) {//if vendor has no file, copy it from resource for BBL
+                else if (is_core_vendor || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) {//if vendor has no file, copy it from resource for BBL
                     bundles.push_back(vendor_name);
                 }
             }
-            else if ((vendor_name == PresetBundle::BBL_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) { //always update configs from resource to vendor for BBL
+            else if (is_core_vendor || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) { //always update configs from resource to vendor for BBL
                 bundles.push_back(vendor_name);
             }
         }
@@ -1175,16 +1202,25 @@ Updates PresetUpdater::priv::get_printer_config_updates(bool update) const
         boost::algorithm::trim(curr_version);
     } catch (...) {}
 
-    if (!curr_version.empty()) {
-        Semver curr_ver = curr_version;
-        Semver resc_ver   = resc_version;
+    if (!curr_version.empty() && !resc_version.empty()) {
+        auto curr_ver_opt = Semver::parse(curr_version);
+        auto resc_ver_opt = Semver::parse(resc_version);
+        if (curr_ver_opt && resc_ver_opt) {
+            const Semver &curr_ver = *curr_ver_opt;
+            const Semver &resc_ver = *resc_ver_opt;
 
-        bool version_match = ((resc_ver.maj() == curr_ver.maj()) && (resc_ver.min() == curr_ver.min()));
+            bool version_match = ((resc_ver.maj() == curr_ver.maj()) && (resc_ver.min() == curr_ver.min()));
 
-        if (!version_match || (curr_ver < resc_ver)) {
-            BOOST_LOG_TRIVIAL(info) << "[CrealityPrint Updater]:found newer version " << resc_version << " from resource, old version " << curr_version;
+            if (!version_match || (curr_ver < resc_ver)) {
+                BOOST_LOG_TRIVIAL(info) << "[CrealityPrint Updater]:found newer version " << resc_version << " from resource, old version " << curr_version;
+            } else {
+                return {};
+            }
         } else {
-            return {};
+            if (!curr_ver_opt)
+                BOOST_LOG_TRIVIAL(warning) << boost::format("[CrealityPrint Updater]:current version string '%1%' can not be parsed, will not skip update based on version") % curr_version;
+            if (!resc_ver_opt)
+                BOOST_LOG_TRIVIAL(warning) << boost::format("[CrealityPrint Updater]:resource version string '%1%' can not be parsed, will not skip update based on version") % resc_version;
         }
     }
     Updates updates;

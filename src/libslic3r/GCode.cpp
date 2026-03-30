@@ -24,6 +24,8 @@
 #include "libslic3r/format.hpp"
 #include "Time.hpp"
 #include "GCode/ExtrusionProcessor.hpp"
+#include "GCode/AppearanceUnderExtrusionAccelRecoveryFilter.hpp"
+#include "GCode/InterestRegion.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -35,6 +37,7 @@
 #include <stdlib.h>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <string_view>
 
 #include <regex>
@@ -2748,7 +2751,6 @@ namespace DoExport {
         double total_used_filament   = 0.0;
         double total_weight          = 0.0;
         double total_cost            = 0.0;
-        const bool is_multicolor_method = config.multicolor_method;
 
         auto calc_statistics = [&](const std::map<size_t, double>& total_volumes_per_extruder) {
             for (auto volume : total_volumes_per_extruder) {
@@ -2769,10 +2771,6 @@ namespace DoExport {
         };
 
         calc_statistics(result.print_statistics.total_volumes_per_extruder);
-        // BBS/Creality: flush volume is tracked separately, add it to totals for weight/length/cost
-        // 多色新方案已经在 total_volumes_per_extruder 中包含冲刷体积，避免重复。
-        if (!is_multicolor_method)
-            calc_statistics(result.print_statistics.flush_per_filament);
 
         print_statistics.total_extruded_volume = total_extruded_volume;
         print_statistics.total_used_filament   = total_used_filament;
@@ -3037,6 +3035,79 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
     //    DoExport::update_print_estimated_times_stats(m_processor, print->m_print_statistics);
     DoExport::update_print_estimated_stats(m_processor, m_writer.extruders(), print->m_print_statistics, print->config());
     if (result != nullptr) {
+        // Cache interest regions for GUI preview (available only for sliced 3mf workflow).
+        {
+            const auto& moves = m_processor.get_result().moves;
+
+            std::vector<size_t> ssid_to_moveid_map;
+            ssid_to_moveid_map.reserve(moves.size());
+            for (size_t move_id = 0; move_id < moves.size(); ++move_id) {
+                if (moves[move_id].type != EMoveType::Seam)
+                    ssid_to_moveid_map.push_back(move_id);
+            }
+
+            const InterestRegion::AppearanceUnderExtrusionDefinition def;
+            const auto& object_ids = m_processor.get_result().object_id_by_move_id;
+
+            // Build per-object safe params (label object id -> accel_safe / velocity_safe) for dynamic defect span cap.
+            std::unordered_map<int, std::pair<float, float>> safe_params_by_object_id;
+            safe_params_by_object_id.reserve(print->num_object_instances());
+            for (const PrintObject* obj : print->objects()) {
+                const PrintObjectConfig& ocfg = obj->config();
+                const float accel_safe = static_cast<float>(ocfg.msao_safe_accel.value);
+                const float v_safe     = static_cast<float>(ocfg.msao_safe_velocity.value);
+                for (const PrintInstance& inst : obj->instances()) {
+                    const int label_id = inst.model_instance->get_labeled_id();
+                    safe_params_by_object_id[label_id] = { accel_safe, v_safe };
+                }
+            }
+
+            const PrintObjectConfig& default_ocfg  = print->default_object_config();
+            const float             default_accel = static_cast<float>(default_ocfg.msao_safe_accel.value);
+            const float             default_v_safe = static_cast<float>(default_ocfg.msao_safe_velocity.value);
+
+            const AppearanceUnderExtrusionAccelRecoveryConfig aue_params;
+            auto defect_cap_base_mm = [&](float v_low_mm_s, int object_id) -> double {
+                float accel_safe = default_accel;
+                float v_safe     = default_v_safe;
+                if (auto it = safe_params_by_object_id.find(object_id); it != safe_params_by_object_id.end()) {
+                    accel_safe = it->second.first;
+                    v_safe     = it->second.second;
+                }
+                if (!(accel_safe > 0.0f) || !(v_safe > 0.0f))
+                    return 0.0;
+                return InterestRegion::compute_aue_L_safe_total_mm(v_low_mm_s, v_safe, accel_safe,
+                                                                   aue_params.L_safe_transition_mm, aue_params.L_safe_cruise_mm);
+            };
+
+            const InterestRegion::InterestRegion region =
+                InterestRegion::detect_appearance_under_extrusion_interest_region(moves, ssid_to_moveid_map, def, &object_ids, defect_cap_base_mm);
+
+            if (region.empty()) {
+                m_processor.result().custom_interest_by_move_id.clear();
+            } else {
+                std::vector<unsigned char>& cache = m_processor.result().custom_interest_by_move_id;
+                cache.assign(moves.size(), 0);
+
+                for (const auto& obj : region.objects) {
+                    if (!obj)
+                        continue;
+                    for (const InterestRegion::TaggedSpan& ts : obj->spans()) {
+                        const size_t first = std::max<size_t>(ts.span.first_end_ssid, 1);
+                        const size_t last  = std::min(ts.span.last_end_ssid, ssid_to_moveid_map.size() - 1);
+                        if (last < first)
+                            continue;
+
+                        const unsigned char v = static_cast<unsigned char>(ts.tag);
+                        for (size_t end_ssid = first; end_ssid <= last; ++end_ssid) {
+                            const size_t move_id_end = ssid_to_moveid_map[end_ssid];
+                            if (move_id_end < cache.size())
+                                cache[move_id_end] = std::max(cache[move_id_end], v);
+                        }
+                    }
+                }
+            }
+        }
         //*result = std::move(m_processor.extract_result());
         result->take(m_processor.extract_result());   //optimize:replace copy assign
         // set the filename to the correct value
@@ -3393,7 +3464,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
 
     file.write_format("; HEADER_BLOCK_START\n");
 
-     const ConfigOptionBool* is_cloud_slicer = config().option<ConfigOptionBool>("Is_Cloud_Slicer");
+     const ConfigOptionBool* is_cloud_slicer = print.full_print_config().option<ConfigOptionBool>("Is_Cloud_Slicer");
     if (is_cloud_slicer != nullptr) {
          if (is_cloud_slicer->value) {
             file.write_format("; generated by %s on %s\n", Slic3r::header_slic3r_generated_cloud().c_str(),
@@ -4584,6 +4655,22 @@ void GCode::process_layers(
             return pressure_equalizer->process_layer(std::move(in));
         });
 
+    std::unordered_map<int, AppearanceUnderExtrusionAccelRecoveryFilter::ObjectParams> aue_object_params;
+    aue_object_params.reserve(print_object_instances_ordering.size());
+    for (const PrintInstance* instance : print_object_instances_ordering) {
+        const int               label_id = instance->model_instance->get_labeled_id();
+        const PrintObjectConfig& ocfg     = instance->print_object->config();
+        aue_object_params[label_id]      = { ocfg.msao_recovery_enable.value, static_cast<float>(ocfg.msao_safe_accel.value), static_cast<float>(ocfg.msao_safe_velocity.value) };
+    }
+
+    AppearanceUnderExtrusionAccelRecoveryFilter aue_accel_filter(print.config(), print.default_object_config(), std::move(aue_object_params), m_writer.get_gcode_flavor());
+    const auto aue_accel_recovery = tbb::make_filter<std::string, std::string>(slic3r_tbb_filtermode::serial_in_order,
+        [&aue_accel_filter](std::string in) -> std::string {
+            LayerResult layer{ std::move(in), size_t(0), false, false, size_t(0), 0.0f, false };
+            return aue_accel_filter.process_layer(std::move(layer)).gcode;
+        });
+
+
     std::vector<std::vector<PerExtruderAdjustments>> layers_extruder_adjustments(layers_to_print.size());
 
     const auto parsing = tbb::make_filter<LayerResult, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
@@ -4768,14 +4855,14 @@ void GCode::process_layers(
     // BBS: apply cooling
     // The pipeline elements are joined using const references, thus no copying is performed.
     if (m_spiral_vase && m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & parsing & cooling & write_gcode & fan_mover & output);
+        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & parsing & cooling & write_gcode & aue_accel_recovery & fan_mover & output);
     else if (m_spiral_vase)
-        tbb::parallel_pipeline(12, generator & spiral_mode & parsing & cooling & write_gcode & fan_mover & output);
+        tbb::parallel_pipeline(12, generator & spiral_mode & parsing & cooling & write_gcode & aue_accel_recovery & fan_mover & output);
     else if (!m_config.z_direction_outwall_speed_continuous) {
         if (m_pressure_equalizer)
-            tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & write_gcode & fan_mover & output);
+            tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & write_gcode & aue_accel_recovery & fan_mover & output);
         else
-            tbb::parallel_pipeline(12, generator & parsing & cooling & write_gcode & fan_mover & output);
+            tbb::parallel_pipeline(12, generator & parsing & cooling & write_gcode & aue_accel_recovery & fan_mover & output);
     } else {
         if (m_pressure_equalizer)
             tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & build_node);
@@ -4793,7 +4880,7 @@ void GCode::process_layers(
 
         smooth_calculator.smooth_layer_speed();
 
-        tbb::parallel_pipeline(12, calculate_layer_time & write_gcode & fan_mover & output);
+        tbb::parallel_pipeline(12, calculate_layer_time & write_gcode & aue_accel_recovery & fan_mover & output);
     }
 }
 
@@ -4867,6 +4954,22 @@ void GCode::process_layers(
         [pressure_equalizer = this->m_pressure_equalizer.get()](LayerResult in) -> LayerResult {
              return pressure_equalizer->process_layer(std::move(in));
         });
+
+    std::unordered_map<int, AppearanceUnderExtrusionAccelRecoveryFilter::ObjectParams> aue_object_params;
+    if (!layers_to_print.empty() && layers_to_print.front().original_object != nullptr) {
+        const PrintObject*      aue_object = layers_to_print.front().original_object;
+        const int               label_id   = aue_object->instances()[single_object_idx].model_instance->get_labeled_id();
+        const PrintObjectConfig& ocfg      = aue_object->config();
+        aue_object_params[label_id]       = { ocfg.msao_recovery_enable.value, static_cast<float>(ocfg.msao_safe_accel.value), static_cast<float>(ocfg.msao_safe_velocity.value) };
+    }
+
+    AppearanceUnderExtrusionAccelRecoveryFilter aue_accel_filter(print.config(), print.default_object_config(), std::move(aue_object_params), m_writer.get_gcode_flavor());
+    const auto aue_accel_recovery = tbb::make_filter<std::string, std::string>(slic3r_tbb_filtermode::serial_in_order,
+        [&aue_accel_filter](std::string in) -> std::string {
+            LayerResult layer{ std::move(in), size_t(0), false, false, size_t(0), 0.0f, false };
+            return aue_accel_filter.process_layer(std::move(layer)).gcode;
+        });
+
 
     // BBS: get objects and nodes info, for better arrange
     const ConstPrintObjectPtrsAdaptor& objects = print.objects();
@@ -4988,14 +5091,14 @@ void GCode::process_layers(
     // BBS: apply cooling
     // The pipeline elements are joined using const references, thus no copying is performed.
     if (m_spiral_vase && m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & parsing & cooling & write_gcode & fan_mover & output);
+        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & parsing & cooling & write_gcode & aue_accel_recovery & fan_mover & output);
     else if (m_spiral_vase)
-        tbb::parallel_pipeline(12, generator & spiral_mode & parsing & cooling & write_gcode & fan_mover & output);
+        tbb::parallel_pipeline(12, generator & spiral_mode & parsing & cooling & write_gcode & aue_accel_recovery & fan_mover & output);
     else if (!m_config.z_direction_outwall_speed_continuous) {
         if (m_pressure_equalizer)
-            tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & write_gcode & fan_mover & output);
+            tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & write_gcode & aue_accel_recovery & fan_mover & output);
         else
-            tbb::parallel_pipeline(12, generator & parsing & cooling & write_gcode & fan_mover & output);
+            tbb::parallel_pipeline(12, generator & parsing & cooling & write_gcode & aue_accel_recovery & fan_mover & output);
     } else {
         if (m_pressure_equalizer)
             tbb::parallel_pipeline(12, generator & pressure_equalizer & parsing & cooling & build_node);
@@ -5014,7 +5117,7 @@ void GCode::process_layers(
 
         smooth_calculator.smooth_layer_speed();
 
-        tbb::parallel_pipeline(12, calculate_layer_time & write_gcode & fan_mover & output);
+        tbb::parallel_pipeline(12, calculate_layer_time & write_gcode & aue_accel_recovery & fan_mover & output);
     }
 }
 
@@ -5623,20 +5726,37 @@ std::string GCode::generate_skirt(const Print&                     print,
 {
     bool        first_layer = (layer.id() == 0 && abs(layer.bottom_z()) < EPSILON);
     std::string gcode;
+    // Under draft shield, trim first-layer skirt where it overlaps brim so we do not double-extrude.
+    // For per-object skirt trim against this object's brim; for combined skirt trim against all brims.
     const bool  trim_first_layer = first_layer &&
-        print.config().draft_shield != DraftShield::dsDisabled &&
-        print.config().skirt_type == stPerObject &&
-        object_for_brim != nullptr;
+        print.config().draft_shield != DraftShield::dsDisabled;
     Polygons    brim_polys;
     if (trim_first_layer) {
         auto append_brim_polys = [&brim_polys](const ExtrusionEntityCollection& brim) {
             brim.polygons_covered_by_width(brim_polys, float(SCALED_EPSILON));
         };
-        if (auto it = print.m_brimMap.find(object_for_brim->id()); it != print.m_brimMap.end() && !it->second.empty())
-            append_brim_polys(it->second);
-        if (auto it = print.m_supportBrimMap.find(object_for_brim->id()); it != print.m_supportBrimMap.end() && !it->second.empty())
-            append_brim_polys(it->second);
+        if (object_for_brim != nullptr) {
+            if (auto it = print.m_brimMap.find(object_for_brim->id()); it != print.m_brimMap.end() && !it->second.empty())
+                append_brim_polys(it->second);
+            if (auto it = print.m_supportBrimMap.find(object_for_brim->id()); it != print.m_supportBrimMap.end() && !it->second.empty())
+                append_brim_polys(it->second);
+        } else {
+            for (const auto &it : print.m_brimMap)
+                if (!it.second.empty())
+                    append_brim_polys(it.second);
+            for (const auto &it : print.m_supportBrimMap)
+                if (!it.second.empty())
+                    append_brim_polys(it.second);
+        }
         if (!brim_polys.empty()) {
+            ExPolygons brim_clip_ex = union_ex(brim_polys);
+            for (ExPolygon &ex : brim_clip_ex)
+                ex.holes.clear();
+            const float clip_margin = 0.25f * float(std::max(print.brim_flow().scaled_spacing(), print.skirt_flow().scaled_spacing()));
+            if (clip_margin > 0.f)
+                brim_clip_ex = offset_ex(brim_clip_ex, clip_margin, jtRound, SCALED_RESOLUTION);
+            brim_polys = to_polygons(brim_clip_ex);
+
             for (Polygon &poly : brim_polys)
                 poly.translate(-offset.x(), -offset.y());
         }
@@ -6490,11 +6610,18 @@ LayerResult GCode::process_layer(
 
                     ExtrusionRole support_extrusion_role = instance_to_print.object_by_extruder.support_extrusion_role;
                     bool is_overridden = support_extrusion_role == erSupportMaterialInterface ? support_intf_overridden : support_overridden;
-                    if (is_overridden == (print_wipe_extrusions != 0))
+                    if (is_overridden == (print_wipe_extrusions != 0)) {
                         gcode += this->extrude_support(
-                            // support_extrusion_role is erSupportMaterial, erSupportTransition, erSupportMaterialInterface or erMixed for all extrusion paths.
-                            instance_to_print.object_by_extruder.support->chained_path_from(m_last_pos, support_extrusion_role));
+                            // support_extrusion_role is erSupportMaterial, erSupportTransition, erSupportMaterialInterface or erMixed for
+                            // all extrusion paths.
+                            /*instance_to_print.object_by_extruder.support->chained_path_from(m_last_pos, support_extrusion_role) */
+                            *instance_to_print.object_by_extruder.support, support_extrusion_role);
 
+                        // Make sure ironing is the last
+                        if (support_extrusion_role == erMixed || support_extrusion_role == erSupportMaterialInterface) {
+                            gcode += this->extrude_support(*instance_to_print.object_by_extruder.support, erIroning);
+                        }
+                    }
                     m_layer = layer_to_print.layer();
                     m_object_layer_over_raft = object_layer_over_raft;
                 }
@@ -7239,55 +7366,57 @@ std::string GCode::extrude_infill(const Print &print, const std::vector<ObjectBy
     return gcode;
 }
 
-std::string GCode::extrude_support(const ExtrusionEntityCollection &support_fills)
+std::string GCode::extrude_support(const ExtrusionEntityCollection& support_fills, const ExtrusionRole support_extrusion_role)
 {
-    static constexpr const char *support_label            = "support material";
-    static constexpr const char *support_interface_label  = "support material interface";
-    const char* support_transition_label = "support transition";
+    static constexpr const char* support_label            = "support material";
+    static constexpr const char* support_interface_label  = "support material interface";
+    static constexpr const char* support_transition_label = "support transition";
+    static constexpr const char* support_ironing_label    = "support ironing";
 
-    auto support_path = [&](std::string& gcode, bool ironing) {
-        for (const ExtrusionEntity* ee : support_fills.entities) {
+    std::string gcode;
+    if (!support_fills.entities.empty()) {
+        ExtrusionEntitiesPtr extrusions;
+        extrusions.reserve(support_fills.entities.size());
+        for (ExtrusionEntity* ee : support_fills.entities) {
+            const auto role = ee->role();
+            if ((role == support_extrusion_role) || (support_extrusion_role == erMixed && role != erIroning)) {
+                extrusions.emplace_back(ee);
+            }
+        }
+        if (extrusions.empty())
+            return gcode;
+
+        //chain_and_reorder_extrusion_entities(extrusions, &m_last_pos);
+
+        const double support_speed           = m_config.support_speed.value;
+        const double support_interface_speed = m_config.get_abs_value("support_interface_speed");
+        for (const ExtrusionEntity* ee : extrusions) {
             ExtrusionRole role = ee->role();
             assert(role == erSupportMaterial || role == erSupportMaterialInterface || role == erSupportTransition || role == erIroning);
-            if (!ironing && (role == erIroning)){
-                    continue;
-            } else if (ironing && (role != erIroning)) {
-                    continue;
-            }
-            const char* label = (role == erSupportMaterial) ?support_label :((role == erSupportMaterialInterface) ? support_interface_label : support_transition_label);
+            const char* label = (role == erSupportMaterial) ?
+                                    support_label :
+                                    ((role == erSupportMaterialInterface) ?
+                                         support_interface_label :
+                                         ((role == erIroning) ? support_ironing_label : support_transition_label));
             // BBS
-            //const double speed = (role == erSupportMaterial) ? support_speed : support_interface_speed;
-            const double speed = -1.0;
-            const ExtrusionPath* path = dynamic_cast<const ExtrusionPath*>(ee);
-            const ExtrusionMultiPath* multipath = dynamic_cast<const ExtrusionMultiPath*>(ee);
-            const ExtrusionLoop* loop = dynamic_cast<const ExtrusionLoop*>(ee);
+            // const double speed = (role == erSupportMaterial) ? support_speed : support_interface_speed;
+            const double                     speed      = -1.0;
+            const ExtrusionPath*             path       = dynamic_cast<const ExtrusionPath*>(ee);
+            const ExtrusionMultiPath*        multipath  = dynamic_cast<const ExtrusionMultiPath*>(ee);
+            const ExtrusionLoop*             loop       = dynamic_cast<const ExtrusionLoop*>(ee);
             const ExtrusionEntityCollection* collection = dynamic_cast<const ExtrusionEntityCollection*>(ee);
             if (path)
                 gcode += this->extrude_path(*path, label, speed);
             else if (multipath) {
                 gcode += this->extrude_multi_path(*multipath, label, speed);
-            }
-            else if (loop) {
+            } else if (loop) {
                 gcode += this->extrude_loop(*loop, label, speed);
-            }
-            else if (collection) {
-                gcode += extrude_support(*collection);
-            }
-            else {
+            } else if (collection) {
+                gcode += extrude_support(*collection, support_extrusion_role);
+            } else {
                 throw Slic3r::InvalidArgument("Unknown extrusion type");
             }
         }
-    };
-
-    std::string gcode;
-    if (! support_fills.entities.empty()) {
-        const double  support_speed            = m_config.support_speed.value;
-        const double  support_interface_speed  = m_config.get_abs_value("support_interface_speed");
-
-        bool ironing = false;
-        support_path(gcode, ironing);
-        ironing = true;
-        support_path(gcode, ironing);
     }
     return gcode;
 }
@@ -7495,12 +7624,10 @@ double GCode::get_overhang_degree_corr_speed(float normal_speed, double path_deg
     if (path_degree <= 0)
         return normal_speed;
 
-    if (path_degree >= 5 )
-        return m_config.get_abs_value(overhang_speed_key_map[5].c_str());
-
     int lower_degree_bound = int(path_degree);
-    if (path_degree==lower_degree_bound)
+    if (path_degree >= 5 || path_degree == lower_degree_bound)
         return m_config.get_abs_value(overhang_speed_key_map[lower_degree_bound].c_str());
+
     int upper_degree_bound = lower_degree_bound + 1;
 
     double lower_speed_bound = lower_degree_bound == 0 ? normal_speed : m_config.get_abs_value(overhang_speed_key_map[lower_degree_bound].c_str());
@@ -7978,55 +8105,44 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
                 ref_speed = std::min(ref_speed, m_config.scarf_joint_speed.get_abs_value(ref_speed));
             }
             
-            ConfigOptionPercents         overhang_overlap_levels({90, 60, 35, 13, 12.99, 0});
+            ConfigOptionPercents         overhang_overlap_levels({81, 67.5, 45, 22.5, 0.1, 0});
+            
+            ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
+                {(m_config.get_abs_value("overhang_1_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{100, true} :
+                     FloatOrPercent{std::min(m_config.get_abs_value("overhang_1_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
+                 (m_config.get_abs_value("overhang_2_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{100, true} :
+                     FloatOrPercent{std::min(m_config.get_abs_value("overhang_2_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
+                 (m_config.get_abs_value("overhang_3_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{100, true} :
+                     FloatOrPercent{std::min(m_config.get_abs_value("overhang_3_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
+                 (m_config.get_abs_value("overhang_4_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{100, true} :
+                     FloatOrPercent{std::min(m_config.get_abs_value("overhang_4_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
+                 (m_config.get_abs_value("overhang_totally_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{100, true} :
+                     FloatOrPercent{std::min(m_config.get_abs_value("overhang_totally_speed", ref_speed), ref_speed) * 100 / ref_speed,
+                                    true},
+                 (m_config.get_abs_value("overhang_totally_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{100, true} :
+                     FloatOrPercent{std::min(m_config.get_abs_value("overhang_totally_speed", ref_speed), ref_speed) * 100 / ref_speed,
+                                    true}});
 
-            if (m_config.slowdown_for_curled_perimeters){
-                ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
-                    {(m_config.get_abs_value("overhang_1_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_1_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
-                     (m_config.get_abs_value("overhang_2_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_2_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
-                     (m_config.get_abs_value("overhang_3_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_3_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
-                     (m_config.get_abs_value("overhang_4_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_4_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
-                     (m_config.get_abs_value("overhang_4_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_4_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
-                     (m_config.get_abs_value("overhang_4_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_4_4_speed", ref_speed), ref_speed) * 100 / ref_speed,
-                                        true}});
-
-                new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
-                                                                              ref_speed, speed, m_config.slowdown_for_curled_perimeters);
-        	}else{
-                ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
-                    {(m_config.get_abs_value("overhang_1_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_1_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
-                     (m_config.get_abs_value("overhang_2_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_2_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
-                     (m_config.get_abs_value("overhang_3_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_3_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
-                     (m_config.get_abs_value("overhang_4_4_speed", ref_speed) < 0.5) ?
-                         FloatOrPercent{100, true} :
-                         FloatOrPercent{std::min(m_config.get_abs_value("overhang_4_4_speed", ref_speed), ref_speed) * 100 / ref_speed, true},
-                     FloatOrPercent{std::min(m_config.get_abs_value("bridge_speed"), ref_speed) * 100 / ref_speed, true},
-                     FloatOrPercent{std::min(m_config.get_abs_value("bridge_speed"), ref_speed) * 100 / ref_speed, true}});
-
-                new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
-                                                                              ref_speed, speed, m_config.slowdown_for_curled_perimeters);
-            }
+            new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
+                                                                            ref_speed, speed, m_config.slowdown_for_curled_perimeters);
+        	
             variable_speed = std::any_of(new_points.begin(), new_points.end(),
                                          [speed](const ProcessedPoint &p) { return fabs(double(p.speed) - speed) > 1; });// Ignore small speed variations (under 1mm/sec)
 
+    }
+    // check if the line is straight line, which mean if the wall is bridge
+    if (path.role() == erOverhangPerimeter) { 
+        Line line(path.first_point(), path.last_point());
+        if (line.length() >= path.length()) {
+            speed          = m_config.get_abs_value("bridge_speed");
+            variable_speed = false;
+        }       
     }
 
     double F = speed * 60;  // convert mm/sec to mm/min

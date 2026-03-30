@@ -108,6 +108,7 @@ private:
     bool m_ready_for_slice;
     bool m_slice_result_valid;
     bool m_apply_invalid {false};
+    std::string m_validate_error_message;  // Store validation error message for analytics
     float m_slice_percent;
 
     Print *m_print; //Print reference, not own it, no need to serialize
@@ -395,7 +396,7 @@ public:
     void render(const Transform3d& view_matrix, const Transform3d& projection_matrix
         , bool bottom, bool only_body = false
         , HeightLimitMode mode = HEIGHT_LIMIT_NONE, int hover_id = -1,int verdertp = 0
-        , bool show_logo = true);
+        , bool show_logo = true, bool show_grid = true);
 
     void set_selected();
     void set_unselected();
@@ -436,6 +437,16 @@ public:
     void update_apply_result_invalid(bool invalid)
     {
         m_apply_invalid = invalid;
+    }
+    
+    // Get/Set validation error message
+    const std::string& get_validate_error_message() const
+    {
+        return m_validate_error_message;
+    }
+    void set_validate_error_message(const std::string& msg)
+    {
+        m_validate_error_message = msg;
     }
 
     //is slice result valid or not
@@ -510,6 +521,7 @@ public:
 
     std::vector<int> get_first_layer_print_sequence() const;
     std::vector<LayerPrintSequence> get_other_layers_print_sequence() const;
+
     void set_first_layer_print_sequence(const std::vector<int> &sorted_filaments);
     void set_other_layers_print_sequence(const std::vector<LayerPrintSequence>& layer_seq_list);
     void update_first_layer_print_sequence(size_t filament_nums);
@@ -790,7 +802,7 @@ public:
     /*rendering related functions*/
     void on_change_color_mode(bool is_dark);
     void render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_current = false, bool only_body = false, int hover_id = -1,
-        bool show_logo = true);
+        bool show_logo = true, bool show_grid = true);
     
 
     void set_verder_type(int tp);

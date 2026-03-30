@@ -374,13 +374,48 @@ bool ObjectList::ObjList_Texture::init_svg_texture()
 {
     bool        is_dark = wxGetApp().dark_mode();
     std::string svg     = is_dark ? "/images/obj_list_integrate_icon_dark.svg" : "/images/obj_list_integrate_icon_light.svg";
-    if (IMTexture::load_from_svg_file(Slic3r::resources_dir() + svg, texCount * 20, 40, m_texture_id)) {
-        m_valid = true;
-    } else {
-        m_valid = false;
-    }
+    m_custom_texture_ids.fill(nullptr);
+    m_custom_texture_ids_selected.fill(nullptr);
+
+    const bool atlas_ok = IMTexture::load_from_svg_file(Slic3r::resources_dir() + svg, texCount * 20, 40, m_texture_id);
+
+    auto load_custom = [&](IM_TEXTURE_NAME name, const std::string& filename, bool recolor_selected) {
+        // Render larger and let ImGui downscale.
+        constexpr unsigned kIconTexSizePx = 64;
+
+        ImTextureID normal_id = nullptr;
+        if (!IMTexture::load_from_svg_file(Slic3r::resources_dir() + filename, kIconTexSizePx, kIconTexSizePx, normal_id))
+            return;
+        m_custom_texture_ids[name] = normal_id;
+
+        if (recolor_selected) {
+            ImTextureID selected_id = nullptr;
+            if (IMTexture::load_from_svg_file_recolor_green(Slic3r::resources_dir() + filename, kIconTexSizePx, kIconTexSizePx, selected_id, /*to_white*/ is_dark))
+                m_custom_texture_ids_selected[name] = selected_id;
+        }
+
+        if (!m_custom_texture_ids_selected[name])
+            m_custom_texture_ids_selected[name] = m_custom_texture_ids[name];
+    };
+
+    load_custom(texNormalPart, "/images/menu_add_part.svg", true);
+    load_custom(texNegativePart, "/images/menu_add_negative.svg", true);
+    load_custom(texModifier, "/images/menu_add_modifier.svg", true);
+    load_custom(texSupportBlock, "/images/menu_support_blocker.svg", true);
+    load_custom(texSupportEnforcer, "/images/menu_support_enforcer.svg", true);
+    load_custom(texLayerRoot, "/images/height_range_modifier.svg", true);
+
+    m_valid = atlas_ok;
 
     return m_valid;
+}
+
+ImTextureID ObjectList::ObjList_Texture::get_custom_texture_id(IM_TEXTURE_NAME name, bool selected) const
+{
+    const auto& arr = selected ? m_custom_texture_ids_selected : m_custom_texture_ids;
+    if (size_t(name) >= arr.size())
+        return nullptr;
+    return arr[name];
 }
 
 void ObjectList::set_min_height()
@@ -2217,8 +2252,11 @@ void ObjectList::load_modifier(const wxArrayString&       input_files,
 
 static TriangleMesh create_mesh(const std::string& type_name, const BoundingBoxf3& bb)
 {
-    const double side = wxGetApp().plater()->canvas3D()->get_size_proportional_to_max_bed_size(0.1);
-
+    double side = wxGetApp().plater()->canvas3D()->get_size_proportional_to_max_bed_size(0.1);
+    if(side>100)
+    {
+        side = 20;
+    }
     TriangleMesh mesh;
     if (type_name == "Cube")
         // Sitting on the print bed, left front front corner at (0, 0).
@@ -2519,6 +2557,13 @@ void ObjectList::del_info_item(const int obj_idx, InfoItemType type)
             // there is no need to post EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS if nothing was changed
             return;
         }
+        break;
+
+    case InfoItemType::FuzzySkin:
+        cnv->get_gizmos_manager().reset_all_states();
+        Plater::TakeSnapshot(plater, _u8L("Remove paint-on fuzzy skin"));
+        for (ModelVolume* mv : (*m_objects)[obj_idx]->volumes)
+            mv->fuzzy_skin_facets.reset();
         break;
 
     // BBS: remove Sinking
@@ -3460,10 +3505,12 @@ void ObjectList::part_selection_changed()
                     case InfoItemType::CustomSupports:
                     // BBS: remove CustomSeam
                     // case InfoItemType::CustomSeam:
-                    case InfoItemType::MmuSegmentation: {
+                    case InfoItemType::MmuSegmentation:
+                    case InfoItemType::FuzzySkin: {
                         GLGizmosManager::EType gizmo_type = info_type == InfoItemType::CustomSupports ?
                                                                 GLGizmosManager::EType::FdmSupports :
                                                                 /*info_type == InfoItemType::CustomSeam ? GLGizmosManager::EType::Seam :*/
+                                                                info_type == InfoItemType::FuzzySkin        ? GLGizmosManager::EType::FuzzySkin :
                                                                 GLGizmosManager::EType::MmuSegmentation;
                         GLGizmosManager&       gizmos_mgr = wxGetApp().plater()->get_view3D_canvas3D()->get_gizmos_manager();
                         if (gizmos_mgr.get_current_type() != gizmo_type)
@@ -3666,7 +3713,12 @@ void ObjectList::update_info_items(size_t obj_idx, wxDataViewItemArray* selectio
 
     const ModelObject* model_object = (*m_objects)[obj_idx];
     wxDataViewItem     item_obj     = m_objects_model->GetItemById(obj_idx);
-    assert(item_obj.IsOk());
+   // assert(item_obj.IsOk());
+    if (!item_obj.IsOk()) {
+        // Boolean / rebuild 后 UI 尚未同步，跳过本次 info 更新
+        return;
+    }
+
 
     // Cut connectors
     {
@@ -4660,6 +4712,15 @@ void ObjectList::update_selections()
         }
     }
 
+    // If scene selection is empty, sync selected plate into object list selection.
+    if (sels.empty()) {
+        if (PartPlate* pp = wxGetApp().plater()->get_partplate_list().get_selected_plate(); pp != nullptr) {
+            wxDataViewItem sel_plate = m_objects_model->GetItemByPlateId(pp->get_index());
+            if (sel_plate.IsOk())
+                sels.Add(sel_plate);
+        }
+    }
+
     if (sels.size() == 0 || m_selection_mode & smSettings)
         m_selection_mode = smUndef;
 
@@ -4689,6 +4750,11 @@ void ObjectList::update_selections()
         // Scroll selected Item in the middle of an object list
         ensure_current_item_visible();
     }
+
+    if (!sels.empty()) {
+        request_scroll_to_node_imgui(static_cast<ObjectDataViewModelNode*>(sels.back().GetID()));
+    }
+
 }
 
 void ObjectList::update_selections_on_canvas()
@@ -6285,6 +6351,8 @@ void ObjectList::render_plate(ObjectDataViewModelNode* plate)
 
     bool open = ImGui::TreeNodeEx(plate_full_name.c_str(), tree_node_flags);
 
+    consume_scroll_request_imgui(plate);
+
     ImGui::PopStyleColor(1);
 
     bool left_clicked  = ImGui::IsItemClicked(ImGuiMouseButton_Left);
@@ -6603,12 +6671,20 @@ void ObjectList::render_generic_columns(ObjectDataViewModelNode* node)
             int                              off       = int(volume_type) - int(ModelVolumeType::MODEL_PART);
             int                              idx       = ObjList_Texture::texNormalPart + off;
             ObjList_Texture::IM_TEXTURE_NAME name      = ObjList_Texture::IM_TEXTURE_NAME(idx);
+            ImVec2                           type_icon_size(16.0f * view_scale, 16.0f * view_scale);
+
+            ImTextureID icon_id = m_texture.get_custom_texture_id(name, node_selected);
+            ImVec2      uv0(0.0f, 0.0f);
+            ImVec2      uv1(1.0f, 1.0f);
+            if (!icon_id) {
+                icon_id = normal_id;
+                uv0     = m_texture.get_texture_uv0(name, node_selected);
+                uv1     = m_texture.get_texture_uv1(name, node_selected);
+            }
 
             ImGui::PushID((node_label + "name_button").c_str());
 
-            left_clicked       = ImGui::ImageTextButton(icon_size, node_name, normal_id, icon_size,
-                                                        m_texture.get_texture_uv0(name, node_selected),
-                                                        m_texture.get_texture_uv1(name, node_selected), 0);
+            left_clicked       = ImGui::ImageTextButton(type_icon_size, node_name, icon_id, type_icon_size, uv0, uv1, 0);
             bool right_clicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
             bool left_draged   = false;
 
@@ -6619,8 +6695,15 @@ void ObjectList::render_generic_columns(ObjectDataViewModelNode* node)
 
                 // Display preview (could be anything, e.g. when dragging an image we could decide to display
                 // the filename and a small preview of the image, etc.)
-                ImGui::ImageTextButton(icon_size, node_name, normal_id, icon_size, m_texture.get_texture_uv0(name, false),
-                                       m_texture.get_texture_uv1(name, false), 0);
+                ImTextureID drag_id = m_texture.get_custom_texture_id(name, /*selected*/ false);
+                ImVec2      drag_uv0(0.0f, 0.0f);
+                ImVec2      drag_uv1(1.0f, 1.0f);
+                if (!drag_id) {
+                    drag_id  = normal_id;
+                    drag_uv0 = m_texture.get_texture_uv0(name, false);
+                    drag_uv1 = m_texture.get_texture_uv1(name, false);
+                }
+                ImGui::ImageTextButton(type_icon_size, node_name, drag_id, type_icon_size, drag_uv0, drag_uv1, 0);
 
                 ImGui::EndDragDropSource();
 
@@ -6650,6 +6733,9 @@ void ObjectList::render_generic_columns(ObjectDataViewModelNode* node)
 
             ImGui::PopID();
 
+            // --- auto scroll to selection (one-shot) ---
+            consume_scroll_request_imgui(node);
+
             handle_obj_list_select_event(left_clicked, right_clicked, left_draged, shift_press, node_selected, node, sels);
         }
 
@@ -6669,10 +6755,21 @@ void ObjectList::render_generic_columns(ObjectDataViewModelNode* node)
 
         ImTextureID normal_id = m_texture.get_texture_id();
 
+        ImTextureID icon_id = (name == ObjList_Texture::texLayerRoot) ? m_texture.get_custom_texture_id(name, node_selected) : nullptr;
+        ImVec2      uv0(0.0f, 0.0f);
+        ImVec2      uv1(1.0f, 1.0f);
+        if (!icon_id) {
+            icon_id = normal_id;
+            uv0     = m_texture.get_texture_uv0(name, node_selected);
+            uv1     = m_texture.get_texture_uv1(name, node_selected);
+        }
+
         ImGui::PushID((node_label + "name_button").c_str());
 
-        ImGui::ImageTextButton(icon_size, node_name, normal_id, icon_size, m_texture.get_texture_uv0(name, node_selected),
-                               m_texture.get_texture_uv1(name, node_selected), 0);
+        ImVec2 type_icon_size(16.0f * view_scale, 16.0f * view_scale);
+        // Keep the original (larger) icon size for layer range items under the height range modifier.
+        const ImVec2& label_icon_size = (type & ItemType::itLayer) ? icon_size : type_icon_size;
+        ImGui::ImageTextButton(label_icon_size, node_name, icon_id, label_icon_size, uv0, uv1, 0);
 
         left_clicked       = ImGui::IsItemClicked(ImGuiMouseButton_Left);
         bool right_clicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
@@ -6685,6 +6782,9 @@ void ObjectList::render_generic_columns(ObjectDataViewModelNode* node)
         }
 
         ImGui::PopID();
+
+        // --- auto scroll to selection (one-shot) ---
+        consume_scroll_request_imgui(node);
 
         if (left_clicked || right_clicked) {
             select_node(node, node_selected);
@@ -6715,6 +6815,10 @@ void ObjectList::render_generic_columns(ObjectDataViewModelNode* node)
             // The button size is based on the window size.
             left_clicked = ImGui::Button((node_name + node_label + "name_button").c_str(),
                                           ImVec2(ImGui::GetWindowSize().x, 0));
+
+            // --- auto scroll to selection (one-shot) ---
+            consume_scroll_request_imgui(node);
+
             ImGui::PopStyleVar(1);
         }
 
@@ -7138,9 +7242,9 @@ void ObjectList::render_generic_columns(ObjectDataViewModelNode* node)
         }
     }
 
-    if (node_selected) {
-        ensure_current_item_visible_imgui();
-    }
+    //if (node_selected) {
+    //    ensure_current_item_visible_imgui();
+    //}
 
     if (open) {
         auto type = node->GetType();
@@ -7498,8 +7602,10 @@ void ObjectList::render_printer_preset_by_ImGui(bool folded_view)
     // set preset bundle device by mac
     static std::string last_preset_name;
     auto               cur_frame_preset_name = wxGetApp().preset_bundle->printers.get_selected_preset_name();
+    bool               changed_preset = false;
     if (!cur_frame_preset_name.empty() && last_preset_name != cur_frame_preset_name)
     {
+        changed_preset = true;
         last_preset_name = cur_frame_preset_name;
         set_cur_device_by_cur_preset();
     }
@@ -7705,11 +7811,10 @@ void ObjectList::render_printer_preset_by_ImGui(bool folded_view)
      
     auto deviceListID = "##DeviceList";
     if (isCrealityVendor) {
-        update_printer_device_list_data("Creality");
-    } 
-    else 
-    {
-        update_other_printer_device_list_data();
+        update_printer_device_list_data("Creality",
+                                        changed_preset); // changed_preset, when web data drump and changed preset, need update now
+    } else {
+        update_other_printer_device_list_data(changed_preset);
     }
         ImGui::SameLine();
         auto originCursorY     = window->DC.CursorPos.y;
@@ -8535,7 +8640,7 @@ void ObjectList::draw_device_list_content()
             if (it.second.visible == false)
                 continue;
 
-            if (ImGui::InvisibleButton("##invisibleBtn" + count, { ImVec2{(336 + 15) * scale, rowHeight} }))
+            if (ImGui::InvisibleButton(("##invisibleBtn" + std::to_string(count)).c_str(), {ImVec2{(336 + 15) * scale, rowHeight}}))
             {
                 set_cur_device_by_mac(it.second.mac);
                 if (!isCrealityVendor) 
@@ -8549,7 +8654,7 @@ void ObjectList::draw_device_list_content()
             ImGui::SameLine(colDesigneWidth[col] / 2 - radioSize.x / 2);
             ImGui::SetCursorPosY(originCursorY + rowHeight / 2 - radioSize.y / 2);
 
-            std::string uid = "##selBtn" + count;
+            std::string uid = "##selBtn" + std::to_string(count);
             ImGui::PushID(uid.c_str());
             if (it.second.isCurrent) {
                 ImGui::ImageButton((ImTextureID) radio_sel_texture->get_id(), radioSize);
@@ -8791,6 +8896,24 @@ ObjectList::device_list_data::~device_list_data()
         if (it.second != GLTexture::INVAILD_ID)
             glsafe(::glDeleteTextures(1, &it.second));
     }
+}
+
+void ObjectList::request_scroll_to_node_imgui(ObjectDataViewModelNode* node)
+{
+    m_scroll_target_imgui = node;
+    m_scroll_req_imgui = (node != nullptr);
+}
+
+void ObjectList::consume_scroll_request_imgui(ObjectDataViewModelNode* node, float center)
+{
+    if (!m_scroll_req_imgui || m_scroll_target_imgui != node)
+        return;
+
+    // 必须在该 node 的“主 item”绘制完成之后调用
+    ImGui::SetScrollHereY(center);
+
+    m_scroll_req_imgui = false;
+    m_scroll_target_imgui = nullptr;
 }
 
 } //namespace GUI

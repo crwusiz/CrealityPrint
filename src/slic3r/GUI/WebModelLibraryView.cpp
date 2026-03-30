@@ -472,6 +472,8 @@ bool WebModelLibraryView::UpdateUserAgent()
 {
     if (m_browser) {
         wxString current_url = m_browser->GetCurrentURL();
+        BOOST_LOG_TRIVIAL(error) << "UpdateUserAgent: current_url=" << current_url.ToStdString() 
+                                << ", m_current_url=" << m_current_url.ToStdString();
 #ifdef __linux__
         // UA 仅在首次初始化设置；后续调用不再改变 UA
         if (!m_ua_initialized) {
@@ -499,8 +501,10 @@ bool WebModelLibraryView::UpdateUserAgent()
         }
 #endif
 
-        if (!m_current_url.IsEmpty())
-            SetCookiesForUrl(m_current_url);
+        // 使用浏览器当前 URL 设置 Cookie，确保 Cookie 设置到正确的域名
+        // 修复：登录后 Cookie 未更新问题，使用 current_url 而非 m_current_url
+        if (!current_url.IsEmpty() && current_url != wxWebViewDefaultURLStr)
+            SetCookiesForUrl(current_url);
 #if defined(__linux__) || defined(__WXMAC__)
         if (!current_url.IsEmpty() && current_url != wxWebViewDefaultURLStr) {
             wxURI    uri(current_url);
@@ -541,14 +545,21 @@ bool WebModelLibraryView::UpdateUserAgent()
 
 bool WebModelLibraryView::SetCookiesForUrl(const wxString& url)
 {
-    if (!m_browser || url.IsEmpty())
+    if (!m_browser || url.IsEmpty()) {
+        BOOST_LOG_TRIVIAL(error) << "SetCookiesForUrl: browser or url is empty";
         return false;
+    }
 
 #ifdef __WIN32__
+    BOOST_LOG_TRIVIAL(error) << "SetCookiesForUrl: Setting cookies for URL: " << url.ToStdString();
+
     // Extract domain for cookie binding
     std::string domain = DM::AppUtils::extractDomain(url.ToStdString());
-    if (domain.empty())
+    if (domain.empty()) {
+        BOOST_LOG_TRIVIAL(error) << "SetCookiesForUrl: failed to extract domain from URL";
         return false;
+    }
+    BOOST_LOG_TRIVIAL(error) << "SetCookiesForUrl: extracted domain: " << domain;
 
     // Promote to base domain for subdomain sharing on Creality sites
     wxString dwx = wxString::FromUTF8(domain);
@@ -585,8 +596,13 @@ bool WebModelLibraryView::SetCookiesForUrl(const wxString& url)
             // Not HttpOnly so page scripts can read if needed
             cookie->put_IsHttpOnly(FALSE);
             cookie->put_IsSecure(FALSE);
-            cookieManager->AddOrUpdateCookie(cookie);
+            HRESULT hrAdd = cookieManager->AddOrUpdateCookie(cookie);
+            if (hrAdd != S_OK) {
+                BOOST_LOG_TRIVIAL(error) << "SetCookiesForUrl: failed to add cookie " << name.ToStdString() << ", hr=" << hrAdd;
+            }
             cookie->Release();
+        } else {
+            BOOST_LOG_TRIVIAL(error) << "SetCookiesForUrl: failed to create cookie " << name.ToStdString() << ", hr=" << hr2;
         }
     };
 
@@ -595,12 +611,14 @@ bool WebModelLibraryView::SetCookiesForUrl(const wxString& url)
 
     // Also mirror header values (token, uid, lang) into cookies if present
     std::map<std::string, std::string> header_map = wxGetApp().get_modellibrary_header();
+    BOOST_LOG_TRIVIAL(error) << "SetCookiesForUrl: setting " << header_map.size() + 1 << " cookies";
     for (const auto& kv : header_map) {
         addCookie(wxString::FromUTF8(kv.first), wxString::FromUTF8(kv.second));
     }
 
     cookieManager->Release();
     webView2_2->Release();
+    BOOST_LOG_TRIVIAL(error) << "SetCookiesForUrl: cookies set successfully for domain: " << domain;
     return true;
 #else
     (void) url;

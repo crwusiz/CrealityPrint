@@ -12,6 +12,7 @@
 #include "PartPlate.hpp"
 
 #include <boost/log/trivial.hpp>
+#include <boost/log/core.hpp>
 #include <vector>
 #include <wx/dcgraph.h>
 #include "Notebook.hpp"
@@ -76,7 +77,7 @@ ButtonsCtrl::ButtonsCtrl(wxWindow* parent, wxBoxSizer* side_tools)
     this->SetSizer(m_sizer);
 
     if (side_tools != NULL) {
-       // m_sizer->AddStretchSpacer(1);
+        m_sizer->AddStretchSpacer(1);
         for (size_t idx = 0; idx < side_tools->GetItemCount(); idx++) {
             wxSizerItem* item     = side_tools->GetItem(idx);
             wxWindow*    item_win = item->GetWindow();
@@ -574,8 +575,8 @@ void BBLTopbar::Init(wxFrame* parent)
     addDipSpacer(5);
 
     bool is_dark = Slic3r::GUI::wxGetApp().dark_mode();
-    wxBitmap logo_bitmap = create_scaled_bitmap("logo", nullptr, (20));
-    wxBitmap logo_bitmap_checked = create_scaled_bitmap("logo_checked", nullptr, (20));
+    wxBitmap logo_bitmap = create_scaled_bitmap("logo", this, (20));
+    wxBitmap logo_bitmap_checked = create_scaled_bitmap("logo_checked", this, (20));
     logo_item   = this->AddTool(ID_LOGO, "", logo_bitmap);
     logo_item->SetHoverBitmap(logo_bitmap_checked);
 
@@ -645,7 +646,7 @@ void BBLTopbar::Init(wxFrame* parent)
     m_calib_item->SetDisabledBitmap(calib_bitmap_inactive);*/
 
     addDipSpacer(10);
-    this->AddStretchSpacer(4);
+    this->AddStretchSpacer(1);
     //CX
     ButtonsCtrl* pCtr = new ButtonsCtrl(this);
     pCtr->InsertPage(MainFrame::tpOnlineModel, _L("Online Models"), 0);
@@ -685,6 +686,7 @@ void BBLTopbar::Init(wxFrame* parent)
     wxColour bgColor  = Slic3r::GUI::wxGetApp().dark_mode() ? wxColour("#010101") : wxColour(214, 214, 220);
     m_title_LabelItem->SetBackgroundColour(bgColor);
     m_title_item = this->AddControl(m_title_LabelItem);
+    UpdateFileNameDisplay();
 
     addDipSpacer(10);
     wxAuiToolBarItem * tool_sep = this->AddSeparator();
@@ -1138,6 +1140,11 @@ void BBLTopbar::OnConfigRelate(wxAuiToolBarEvent& evt)
 void BBLTopbar::OnLogo(wxAuiToolBarEvent& evt) 
 { 
 #if CUSTOM_CXCLOUD
+    if (evt.GetId() == ID_LOGO) {
+        AnalyticsEventPayload payload;
+        payload.type = AnalyticsDataEventType::ANALYTICS_TAB_HOME;
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+    }
     wxAuiToolBarItem* item = this->FindTool(ID_LOGO);
     item->SetUserData(HOME_BTN_CODE_CHECKED);
     item->SetState(wxAUI_BUTTON_STATE_CHECKED);
@@ -1156,13 +1163,10 @@ void BBLTopbar::OnLogin(wxAuiToolBarEvent& evt) {}
 
 void BBLTopbar::OnFeedback(wxAuiToolBarEvent& evt)
 {
-    //try {
-    //    // Test the recommended goods interface via feedback button
-    //    wxGetApp().OpenEshopRecommendedGoods("#000000", "PLA", "Hyper PLA");
-    //    return;
-    //} catch (...) {
-    //    // fall through to default feedback page
-    //}
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_GOTO_SUPPORT;
+    payload.data["entry"] = "toolbar";
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
     AnalyticsDataUploadManager::uploadSlice822ClickEvent("user_feedback",2);
     try {
         wxLaunchDefaultBrowser(user_feedback_website(), wxBROWSER_NEW_WINDOW);
@@ -1202,33 +1206,24 @@ wxMenu* BBLTopbar::GetCalibMenu()
 
 void BBLTopbar::SetTitle(wxString title)
 {
-    return UpdateFileNameDisplay(title);
-    /*
-
-    wxGCDC dc(this);
-    wxString newTitle = wxControl::Ellipsize(title, dc, wxELLIPSIZE_END, TOPBAR_TITLE_WIDTH - FromDIP(30));
-
-    if (m_title_LabelItem) {
-        m_title_LabelItem->SetLabel(newTitle);
-        m_title_LabelItem->SetToolTip(title);
-    }
-
-    if (m_title_item!=nullptr)
-    {
-        m_title_item->SetLabel(title);
-        m_title_item->SetAlignment(wxALIGN_CENTRE);
-        this->Refresh();
-    }
-
-
-    */
+    m_displayName = title;
+    UpdateFileNameDisplay();
 }
 
 void BBLTopbar::SetMaximizedSize()
 {
 #ifndef __APPLE__
-if (maximize_bitmap.IsOk())
-    maximize_btn->SetBitmap(maximize_bitmap);
+    int count = ++m_set_maximized_size_count;
+    
+    if (count > 1) {
+        BOOST_LOG_TRIVIAL(error) << "SetMaximizedSize() REENTRANCY DETECTED! count=" << count;
+        boost::log::core::get()->flush();
+    }
+    
+    if (maximize_bitmap.IsOk())
+        maximize_btn->SetBitmap(maximize_bitmap);
+    
+    --m_set_maximized_size_count;
 #endif
 }
 
@@ -1253,6 +1248,7 @@ void BBLTopbar::Rescale(bool isResize) {
 #ifndef __APPLE__
     item = this->FindTool(ID_LOGO);
     item->SetBitmap(create_scaled_bitmap("logo", this, (20)));
+    item->SetHoverBitmap(create_scaled_bitmap("logo_checked", this, (20)));
     item = this->FindTool(ID_TOP_FILE_MENU);
     item->SetBitmap(create_scaled_bitmap(is_dark ? "file_down" : "file_down_light", this, (TOPBAR_ICON_SIZE)));
     item = this->FindTool(ID_TOP_DROPDOWN_MENU);
@@ -1352,6 +1348,7 @@ void BBLTopbar::Rescale(bool isResize) {
     Refresh();
     wxColour bgColor = Slic3r::GUI::wxGetApp().dark_mode() ? wxColour("#010101") : wxColour(214, 214, 220);
     m_title_LabelItem->SetBackgroundColour(bgColor);
+    UpdateFileNameDisplay();
 }
 
 void BBLTopbar::OnIconize(wxAuiToolBarEvent& event)
@@ -1590,50 +1587,47 @@ wxString BBLTopbar::TruncateTextToWidth(const wxString& text, int maxWidth, Labe
     if (text.IsEmpty() || maxWidth <= 0 || !label)
         return text;
 
-    // 获取当前Label的字体和DC（设备上下文，用于计算文字宽度）
     wxClientDC dc(label);
     dc.SetFont(label->GetFont());
 
-    // 如果文字本身宽度小于最大宽度，直接返回
     wxSize textSize = dc.GetTextExtent(text);
     if (textSize.x <= maxWidth)
         return text;
 
-    // 否则，使用Ellipsize函数进行截断
-    wxString truncated = wxControl::Ellipsize(text, dc, wxELLIPSIZE_END, maxWidth - FromDIP(30));
+    int ellipsize_width = maxWidth - FromDIP(8);
+    if (ellipsize_width < 1)
+        ellipsize_width = 1;
+    wxString truncated = wxControl::Ellipsize(text, dc, wxELLIPSIZE_END, ellipsize_width);
 
     return truncated;
 }
 
 void BBLTopbar::UpdateFileNameDisplay(const wxString& fileName)
 {
-    int availableWidth = (this->GetClientSize().x/2) - 500;
-    if (availableWidth <= 0)
-        availableWidth = 160;
+    if (!m_title_LabelItem)
+        return;
 
-     m_title_LabelItem->SetMinSize(wxSize(availableWidth, FromDIP(-1)));
-    m_title_LabelItem->SetSize(wxSize(availableWidth, FromDIP(-1)));
+    const int availableWidth = TOPBAR_TITLE_WIDTH;
 
-    wxString displayText = TruncateTextToWidth(fileName, availableWidth, m_title_LabelItem);
+    m_title_LabelItem->SetMinSize(wxSize(availableWidth, -1));
+    m_title_LabelItem->SetSize(wxSize(availableWidth, -1));
+    if (m_title_item)
+        m_title_item->SetMinSize(wxSize(availableWidth, -1));
 
-    if (m_title_LabelItem) {
+    wxString title = fileName.IsEmpty() ? m_displayName : fileName;
+    wxString displayText = TruncateTextToWidth(title, availableWidth, m_title_LabelItem);
+
+    if (m_title_LabelItem->GetLabel() != displayText)
         m_title_LabelItem->SetLabel(displayText);
-        m_title_LabelItem->SetToolTip(fileName);
-    }
-    if (m_title_item != nullptr) {
-        m_title_item->SetLabel(displayText);
-        m_title_item->SetAlignment(wxALIGN_CENTRE);
-        this->Refresh();
-    }
-    m_displayName = fileName;
+    if (m_title_LabelItem->GetToolTipText() != title)
+        m_title_LabelItem->SetToolTip(title);
 
-
+    m_displayName = title;
+    m_title_LabelItem->Refresh(false);
 }
 
 void BBLTopbar::OnWindowResize(wxSizeEvent& event)
 {
     event.Skip();
     UpdateFileNameDisplay();
-    Layout();
-    Refresh();
 }

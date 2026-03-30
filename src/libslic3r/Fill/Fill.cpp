@@ -1317,7 +1317,6 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
 
 			if(surface_fill.params.bridge && surface_fill.surface.is_external() && surface_fill.params.density > 99.0){
 				params.density = layerm->region().config().bridge_density.get_abs_value(1.0);
-				params.dont_adjust = true;
 			}
 			// BBS: make fill
 			f->fill_surface_extrusion(&surface_fill.surface,

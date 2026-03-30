@@ -679,7 +679,10 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
     const PrintObjectConfig& config = m_object->config();
     SupportType stype = support_type;
     const coordf_t radius_sample_resolution = g_config_tree_support_collision_resolution;
-    const coordf_t extrusion_width = config.line_width.value;
+    //const coordf_t extrusion_width = config.line_width.value;
+    const double nozzle_diameter = m_object->print()->config().nozzle_diameter.get_at(0);
+    const coordf_t extrusion_width = config.line_width.get_abs_value(nozzle_diameter);
+
     const coordf_t extrusion_width_scaled = scale_(extrusion_width);
     const coordf_t max_bridge_length = scale_(config.max_bridge_length.value);
     const bool bridge_no_support = max_bridge_length > 0;
@@ -1538,6 +1541,10 @@ void TreeSupport::generate_toolpaths()
     coordf_t layer_height = object_config.layer_height.value;
     const int wall_count = object_config.tree_support_wall_count.value;
 
+      // Check if set to zero, use default if so.
+    if (support_extrusion_width <= 0.0)
+        support_extrusion_width = Flow::auto_extrusion_width(FlowRole::frSupportMaterial, (float) nozzle_diameter);
+
     // coconut: use same intensity settings as SupportMaterial.cpp
     auto m_support_material_interface_flow = support_material_interface_flow(m_object, float(m_slicing_params.layer_height));
     coordf_t interface_spacing = object_config.support_interface_spacing.value + m_support_material_interface_flow.spacing();
@@ -1661,6 +1668,16 @@ void TreeSupport::generate_toolpaths()
     if (m_object->support_layer_count() <= m_raft_layers)
         return;
 
+    BoundingBox bbox_object(Point(-scale_(1.), -scale_(1.0)), Point(scale_(1.), scale_(1.)));
+
+    std::shared_ptr<Fill> filler_interface    = std::shared_ptr<Fill>(Fill::new_from_type(m_support_params.contact_fill_pattern));
+    std::shared_ptr<Fill> filler_Roof1stLayer = std::shared_ptr<Fill>(Fill::new_from_type(ipRectilinear));
+    filler_interface->set_bounding_box(bbox_object);
+    filler_Roof1stLayer->set_bounding_box(bbox_object);
+    filler_interface->angle    = Geometry::deg2rad(object_config.support_angle.value + 90.);
+    filler_Roof1stLayer->angle = Geometry::deg2rad(object_config.support_angle.value + 90.);
+
+
     // generate tree support tool paths
     tbb::parallel_for(
         tbb::blocked_range<size_t>(m_raft_layers, m_object->support_layer_count()),
@@ -1672,9 +1689,9 @@ void TreeSupport::generate_toolpaths()
                 if (m_object->print()->canceled())
                     break;
 
-                BoundingBox           bbox_object(Point(-scale_(1.), -scale_(1.0)), Point(scale_(1.), scale_(1.)));
+                /*BoundingBox           bbox_object(Point(-scale_(1.), -scale_(1.0)), Point(scale_(1.), scale_(1.)));
                 std::shared_ptr<Fill> filler_interface = std::shared_ptr<Fill>(Fill::new_from_type(m_support_params.contact_fill_pattern));
-                std::shared_ptr<Fill> filler_Roof1stLayer = std::shared_ptr<Fill>(Fill::new_from_type(ipRectilinear));
+                std::shared_ptr<Fill> filler_Roof1stLayer = std::shared_ptr<Fill>(Fill::new_from_type(ipRectilinear));*/
 
                 //m_object->print()->set_status(70, (boost::format(_u8L("Support: generate toolpath at layer %d")) % layer_id).str());
 
@@ -1689,10 +1706,10 @@ void TreeSupport::generate_toolpaths()
                 for (auto& area_group : ts_layer->area_groups)
                 {
 
-                    filler_interface->set_bounding_box(bbox_object);
-                    filler_Roof1stLayer->set_bounding_box(bbox_object);
-                    filler_interface->angle = Geometry::deg2rad(object_config.support_angle.value + 90.);
-                    filler_Roof1stLayer->angle = Geometry::deg2rad(object_config.support_angle.value + 90.);
+                    //filler_interface->set_bounding_box(bbox_object);
+                    //filler_Roof1stLayer->set_bounding_box(bbox_object);
+                    //filler_interface->angle = Geometry::deg2rad(object_config.support_angle.value + 90.);
+                    //filler_Roof1stLayer->angle = Geometry::deg2rad(object_config.support_angle.value + 90.);
 
                     ExPolygon& poly = *area_group.area;
                     ExPolygons polys;

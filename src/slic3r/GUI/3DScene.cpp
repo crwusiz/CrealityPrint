@@ -408,7 +408,7 @@ bool GLVolume::simplify_mesh(const indexed_triangle_set& _its, std::shared_ptr<G
 
     // std::mutex  m_state_mutex;
     std::thread m_worker = std::thread(
-        [this, model](std::unique_ptr<indexed_triangle_set> its, std::unique_ptr<State> state) {
+        [model](std::unique_ptr<indexed_triangle_set> its, std::unique_ptr<State> state) {
             // Checks that the UI thread did not request cancellation, throws if so.
             std::function<void(void)> throw_on_cancel = []() {};
             std::function<void(int)>  statusfn        = [&state](int percent) { state->progress = percent; };
@@ -430,6 +430,7 @@ bool GLVolume::simplify_mesh(const indexed_triangle_set& _its, std::shared_ptr<G
                 its_quadric_edge_collapse(*its, triangle_count, &max_error, throw_on_cancel, statusfn);
             } catch (std::exception&) {
                 state->status = State::idle;
+                return;
             }
             if (state->status == State::Status::running) {
                 // We were not cancelled, the result is valid.
@@ -448,8 +449,15 @@ bool GLVolume::simplify_mesh(const indexed_triangle_set& _its, std::shared_ptr<G
                 if (origin_min.x() < mesh.stats().min.x() && origin_min.y() < mesh.stats().min.y() &&
                     origin_min.z() < mesh.stats().min.z() && origin_max.x() > mesh.stats().max.x() &&
                     origin_max.y() > mesh.stats().max.y() && origin_max.z() > mesh.stats().max.z()) {
-                    if (model && model.use_count() >= 2) {
+                    /*if (model && model.use_count() >= 2) {
                         model->init_from(mesh);
+                    }*/
+                    if (wxTheApp) {
+                        wxTheApp->CallAfter([model, mesh]() {
+                            if (model && model.use_count() >= 2) {
+                                model->init_from(mesh);
+                            }
+                        });
                     }
                 } else {
                     state->status = State::cancelling;
@@ -659,11 +667,7 @@ void GLVolume::simple_render(GLShaderProgram* shader, ModelObjectPtrs& model_obj
     } while (0);
 
     if (color_volume && !picking) {
-        // when force_transparent, we need to keep the alpha
-        if (force_native_color && render_color.is_transparent()) {
-            for (auto &extruder_color : extruder_colors)
-                extruder_color.a(render_color.a());
-        }
+        const bool use_render_color_override = force_native_color || force_neutral_color;
 
         for (int idx = 0; idx < mmuseg_models.size(); idx++) {
             GUI::GLModel &m = mmuseg_models[idx];
@@ -671,7 +675,10 @@ void GLVolume::simple_render(GLShaderProgram* shader, ModelObjectPtrs& model_obj
                 continue;
 
             if (shader) {
-                if (idx == 0) {
+                if (use_render_color_override) {
+                    m.set_color(render_color);
+                }
+                else if (idx == 0) {
                     int extruder_id = model_volume->extruder_id();
                     //to make black not too hard too see
                     ColorRGBA new_color = adjust_color_for_rendering(extruder_colors[extruder_id - 1]);
@@ -1700,7 +1707,8 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig *con
         }
     }
 
-    for (GLVolume* volume : volumes) {
+    for (size_t vol_idx = 0; vol_idx < volumes.size(); ++vol_idx) {
+        GLVolume* volume = volumes[vol_idx];
         if (volume == nullptr || volume->is_modifier || volume->is_wipe_tower || volume->volume_idx() < 0)
             continue;
 
@@ -1712,9 +1720,27 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig *con
         if (!color.first.empty()) {
             if (!is_update_alpha) {
                 float old_a   = volume->color.a();
-                volume->color = color.second;
-                volume->color.a(old_a);
+                ColorRGBA new_color = color.second;
+                new_color.a(old_a);
+
+                if (m_use_volume_color_override) {
+                    auto it = m_volume_color_overrides.find((unsigned int)vol_idx);
+                    if (it != m_volume_color_overrides.end()) {
+                        it->second.original_color = new_color;
+                        continue;
+                    }
+                }
+
+                volume->color = new_color;
             } else {
+                if (m_use_volume_color_override) {
+                    auto it = m_volume_color_overrides.find((unsigned int)vol_idx);
+                    if (it != m_volume_color_overrides.end()) {
+                        it->second.original_color = color.second;
+                        continue;
+                    }
+                }
+
                 volume->color = color.second;
             }
         }

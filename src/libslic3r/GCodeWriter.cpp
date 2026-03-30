@@ -1040,7 +1040,12 @@ void GCodeWriter::add_object_change_labels(std::string& gcode)
 void GCodeFormatter::emit_axis(const char axis, const double v, size_t digits) {
     assert(digits <= 9);
     static constexpr const std::array<int, 10> pow_10{1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000};
+    // Keep one byte reserved for '\n' emitted in string().
+    if (this->ptr_err.ptr >= this->buf_end - 1)
+        return;
     *ptr_err.ptr++ = ' '; *ptr_err.ptr++ = axis;
+    if (this->ptr_err.ptr >= this->buf_end - 1)
+        return;
 
     char *base_ptr = this->ptr_err.ptr;
     auto  v_int    = int64_t(std::round(v * pow_10[digits]));
@@ -1051,6 +1056,10 @@ void GCodeFormatter::emit_axis(const char axis, const double v, size_t digits) {
 #else
     // this->buf_end minus 1 because we need space for adding the extra decimal point.
     this->ptr_err = std::to_chars(this->ptr_err.ptr, this->buf_end - 1, v_int);
+    if (this->ptr_err.ec != std::errc()) {
+        this->ptr_err.ptr = this->buf_end - 1;
+        return;
+    }
 #endif
     size_t writen_digits = (this->ptr_err.ptr - base_ptr) - (v_int < 0 ? 1 : 0);
     if (writen_digits < digits) {

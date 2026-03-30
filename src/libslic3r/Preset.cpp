@@ -350,6 +350,18 @@ void Preset::normalize(DynamicPrintConfig &config)
     }
 
     handle_legacy_sla(config);
+
+    // Mutual exclusion (config-level): don't allow both algorithms to be enabled at the same time.
+    // - max_volumetric_extrusion_rate_slope != 0 => disable msao_recovery_enable
+    // - msao_recovery_enable == true => force max_volumetric_extrusion_rate_slope to 0
+    if (auto* slope_opt = config.option<ConfigOptionFloat>("max_volumetric_extrusion_rate_slope", false); slope_opt != nullptr) {
+        if (auto* ms_opt = config.option<ConfigOptionBool>("msao_recovery_enable", false); ms_opt != nullptr) {
+            if (slope_opt->value != 0.0)
+                ms_opt->value = false;
+            else if (ms_opt->value)
+                slope_opt->value = 0.0;
+        }
+    }
 }
 
 std::string Preset::remove_invalid_keys(DynamicPrintConfig &config, const DynamicPrintConfig &default_config)
@@ -866,9 +878,10 @@ static std::vector<std::string> s_Preset_print_options {
     "infill_direction", "solid_infill_direction", "rotate_solid_infill_direction",  "counterbore_hole_bridging",
     "minimum_sparse_infill_area", "reduce_infill_retraction","internal_solid_infill_pattern","gap_fill_target",
     "ironing_type", "ironing_pattern", "ironing_flow", "ironing_speed", "ironing_spacing", "ironing_angle",
+    "support_ironing","support_ironing_pattern","support_ironing_flow","support_ironing_spacing",
     "max_travel_detour_distance","overhang_optimization",
-    "fuzzy_skin", "fuzzy_skin_thickness", "fuzzy_skin_point_distance", "fuzzy_skin_first_layer",
-    "max_volumetric_extrusion_rate_slope", "max_volumetric_extrusion_rate_slope_segment_length",
+    "fuzzy_skin", "fuzzy_skin_thickness", "fuzzy_skin_point_distance", "fuzzy_skin_first_layer", "fuzzy_skin_noise_type", "fuzzy_skin_mode", "fuzzy_skin_scale", "fuzzy_skin_octaves", "fuzzy_skin_persistence",
+    "max_volumetric_extrusion_rate_slope", "max_volumetric_extrusion_rate_slope_segment_length", "msao_recovery_enable", "msao_safe_accel", "msao_safe_velocity",
     "acceleration_limit_mess_enable", "acceleration_limit_mess", "speed_limit_to_height_enable", "speed_limit_to_height",
     "inner_wall_speed", "outer_wall_speed", "sparse_infill_speed", "internal_solid_infill_speed",
     "top_surface_speed", "support_speed", "support_object_xy_distance", "support_object_first_layer_gap", "support_interface_speed",
@@ -914,7 +927,7 @@ static std::vector<std::string> s_Preset_print_options {
      "hole_to_polyhole", "hole_to_polyhole_threshold", "hole_to_polyhole_twisted", "mmu_segmented_region_max_width", "mmu_segmented_region_interlocking_depth",
      "small_area_infill_flow_compensation", "small_area_infill_flow_compensation_model",
      "seam_slope_type", "seam_slope_conditional", "scarf_angle_threshold", "scarf_joint_speed", "scarf_joint_flow_ratio", "seam_slope_start_height", "seam_slope_entire_loop", "seam_slope_min_length", "seam_slope_steps", "seam_slope_inner_walls", "scarf_overhang_threshold",
-     "interlocking_beam", "interlocking_orientation", "interlocking_beam_layer_count", "interlocking_depth", "interlocking_boundary_avoidance", "interlocking_beam_width",
+     "interlocking_beam", "interlocking_orientation", "interlocking_beam_layer_count", "interlocking_depth", "interlocking_boundary_avoidance", "interlocking_beam_width", "embedding_wall_into_infill",
 };
 
 static std::vector<std::string> s_Preset_filament_options {

@@ -90,6 +90,8 @@ public:
     void set_scaling(float font_size, float scale_style, float scale_both);
     bool update_mouse_data(wxMouseEvent &evt);
     bool update_key_data(wxKeyEvent &evt);
+    void reset_imgui_input_state();
+    void reset_imgui_keyboard_state();
 
     float get_font_size() const { return m_font_size; }
     float get_style_scaling() const { return m_style_scaling; }
@@ -107,7 +109,7 @@ public:
     static ImVec2 calc_text_size(const std::string& text, bool  hide_text_after_double_hash = false, float wrap_width = -1.0f);
     static ImVec2 calc_text_size(const wxString &text, bool  hide_text_after_double_hash = false, float wrap_width = -1.0f);
     ImVec2 calc_button_size(const wxString &text, const ImVec2 &button_size = ImVec2(0, 0)) const;
-
+    float find_widest_text(std::vector<wxString> &text_list);
     ImVec2 get_item_spacing() const;
     float  get_slider_float_height() const;
     const LastSliderStatus& get_last_slider_status() const { return m_last_slider_status; }
@@ -148,15 +150,19 @@ public:
     bool input_double(const wxString &label, const double &value, const std::string &format = "%.3f");
     bool input_vec3(const std::string &label, const Vec3d &value, float width, const std::string &format = "%.3f");
     bool checkbox(const wxString &label, bool &value);
-    bool bbl_checkbox(const wxString &label, bool &value);
+    bool        bbl_checkbox(const wxString& label, bool& value, bool enabled = true, bool b_dark_mode = false);
     bool bbl_radio_button(const char *label, bool active);
     bool bbl_sliderin(const char *label, int *v, int v_min, int v_max, const char *format = "%d", ImGuiSliderFlags flags = 0);
     static void text(const char *label);
     static void text(const std::string &label);
     static void text(const wxString &label);
+    void warning_text(const char *all_text);
+    void warning_text(const wxString &all_text);
     static void text_colored(const ImVec4& color, const char* label);
     static void text_colored(const ImVec4& color, const std::string& label);
     static void text_colored(const ImVec4& color, const wxString& label);
+    void        error_text_wrapped(const char* text, float wrap_width);
+    void        error_text_wrapped(const wxString& text, float wrap_width);
     void text_wrapped(const char *label, float wrap_width);
     void text_wrapped(const std::string &label, float wrap_width);
     void text_wrapped(const wxString &label, float wrap_width);
@@ -198,6 +204,8 @@ public:
     const std::vector<std::string> get_fonts_names() const { return m_fonts_names; }
     bool push_bold_font();
     bool pop_bold_font();
+    bool push_bold_font_24();
+    bool pop_bold_font_24();
     bool push_font_by_name(std::string font_name);
     bool pop_font_by_name(std::string font_name);
     void load_fonts_texture();
@@ -319,6 +327,7 @@ public:
 
     static ImU32 to_ImU32(const ColorRGBA& color);
     static ImVec4 to_ImVec4(const ColorRGBA& color);
+    static ImVec4 to_ImVec4(const ColorRGB &color);
     static ColorRGBA from_ImU32(const ImU32& color);
     static ColorRGBA from_ImVec4(const ImVec4& color);
 
@@ -385,6 +394,7 @@ private:
     LastSliderStatus m_last_slider_status;
     ImFont* default_font = nullptr;
     ImFont* bold_font = nullptr;
+    ImFont* bold_font_24 = nullptr;
     std::map<std::string, ImFont*> im_fonts_map;
     std::vector<std::string> m_fonts_names;
 
@@ -403,6 +413,10 @@ class IMTexture
 public:
     // load svg file to thumbnail data, specific width, height is thumbnailData width, height
     static bool load_from_svg_file(const std::string& filename, unsigned width, unsigned height, ImTextureID &texture_id);
+
+    // Variant for object-list selected-state icons:
+    // recolor green-ish pixels to monochrome (white for dark mode, black for light mode).
+    static bool load_from_svg_file_recolor_green(const std::string& filename, unsigned width, unsigned height, ImTextureID& texture_id, bool to_white);
 
 };
 

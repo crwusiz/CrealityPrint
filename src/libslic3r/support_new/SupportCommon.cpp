@@ -406,6 +406,40 @@ SupportGeneratorLayersPtr generate_raft_base(
         }
     }
 
+    if (object.print()) {
+        Polygons bed_shape_polygons;
+        const auto& pa = object.print()->config().printable_area.values;
+        if (!pa.empty()) {
+            BoundingBoxf bboxf(pa);
+            Polygon bed_poly;
+            bed_poly.points.emplace_back(scale_(bboxf.min.x()), scale_(bboxf.min.y()));
+            bed_poly.points.emplace_back(scale_(bboxf.max.x()), scale_(bboxf.min.y()));
+            bed_poly.points.emplace_back(scale_(bboxf.max.x()), scale_(bboxf.max.y()));
+            bed_poly.points.emplace_back(scale_(bboxf.min.x()), scale_(bboxf.max.y()));
+
+            if (!object.instances().empty()) {
+                Point shift = object.instances().front().shift;
+                bed_poly.translate(-shift.x(), -shift.y());
+            }
+            bed_shape_polygons.push_back(std::move(bed_poly));
+
+            if (slicing_params.raft_layers() > 1) {
+                if (!raft_layers.empty()) {
+                    SupportGeneratorLayer* first_raft_layer = raft_layers.front();
+                    if (first_raft_layer && !first_raft_layer->polygons.empty()) {
+                        first_raft_layer->polygons = intersection(first_raft_layer->polygons, bed_shape_polygons);
+                    }
+                }
+            }
+            else {
+                if (columns_base != nullptr && !columns_base->polygons.empty()) {
+                    columns_base->polygons = intersection(columns_base->polygons, bed_shape_polygons);
+                }
+            }
+        }
+    }
+
+
     return raft_layers;
 }
 
@@ -1483,7 +1517,8 @@ void generate_support_toolpaths(
     loop_interface_processor.n_contact_loops = config.support_interface_loop_pattern.value ? 1 : 0;
 
     std::vector<float>      angles { support_params.base_angle };
-    if ((is_tree(config.support_type) ? config.support_base_pattern_tree : config.support_base_pattern) == smpRectilinearGrid)
+    //if ((is_tree(config.support_type) ? config.support_base_pattern_tree : config.support_base_pattern) == smpRectilinearGrid)
+    if (config.support_base_pattern == smpRectilinearGrid)
         angles.push_back(support_params.interface_angle);
 
     bool have_infill = config.support_base_pattern != smpNone;
@@ -1594,6 +1629,9 @@ void generate_support_toolpaths(
         SupportGeneratorLayerExtruded                                     base_interface_layer;
         boost::container::static_vector<LayerCacheItem, 5>  nonempty;
 
+        float    ironing_angle;
+        Polygons polys_to_iron;
+
         void add_nonempty_and_sort() {
             for (SupportGeneratorLayerExtruded *item : { &bottom_contact_layer, &top_contact_layer, &interface_layer, &base_interface_layer, &base_layer })
                 if (! item->empty())
@@ -1644,7 +1682,7 @@ void generate_support_toolpaths(
 //             const float   support_interface_angle = ((support_params.support_style == smsGrid && config.support_interface_pattern != smipRectilinearInterlaced) || config.support_interface_pattern == smipRectilinear) ?
 //                 support_params.interface_angle : support_params.raft_interface_angle(support_layer.interface_id());
 
-            float   support_interface_angle = 0.0;
+         /*   float   support_interface_angle = 0.0;
             if ((support_params.support_style == smsGrid && config.support_interface_pattern != smipRectilinearInterlaced && config.support_interface_pattern != smipAuto))
             {
                 support_interface_angle = support_params.interface_angle;
@@ -1656,7 +1694,11 @@ void generate_support_toolpaths(
             else
             {
                 support_interface_angle = support_params.raft_interface_angle(support_layer.interface_id());
-            }
+            }*/
+            const float support_interface_angle = (support_params.support_style == smsGrid ||
+                                                   config.support_interface_pattern == smipRectilinear) ?
+                                                      support_params.interface_angle :
+                                                      support_params.raft_interface_angle(support_layer.interface_id());
 
             // Find polygons with the same print_z.
             SupportGeneratorLayerExtruded &bottom_contact_layer = layer_cache.bottom_contact_layer;
@@ -1697,6 +1739,11 @@ void generate_support_toolpaths(
                         base_layer = std::move(top_contact_layer);
                 }
             } else {
+                if (support_params.ironing && !top_contact_layer.empty()) {
+                    // Orca: save the top surface to be ironed later
+                    layer_cache.ironing_angle = support_interface_angle; // TODO: should we rotate 90 degrees?
+                    layer_cache.polys_to_iron = top_contact_layer.polygons_to_extrude();
+                }
                 loop_interface_processor.generate(top_contact_layer, support_params.support_material_interface_flow);
                 // If no loops are allowed, we treat the contact layer exactly as a generic interface layer.
                 // Merge interface_layer into top_contact_layer, as the top_contact_layer is not synchronized and therefore it will be used
@@ -1760,36 +1807,36 @@ void generate_support_toolpaths(
                         // Filler and its parameters
                         filler, float(density),
                         // Extrusion parameters
-                        ExtrusionRole::erSupportMaterialInterface, interface_flow/*, config.support_interface_pattern*/);
+                        interface_as_base ? ExtrusionRole::erSupportMaterial : ExtrusionRole::erSupportMaterialInterface, interface_flow);
 
-                    if (!is_tree(config.support_type) && interface_layer_type == InterfaceLayerType::TopContact) {
-                        if (config.ironing_support_layer && slicing_params.gap_support_object > support_params.support_material_ironing_flow.height())
-                        {
-                            interface_flow                    = support_params.support_material_ironing_flow;
-                            filler_interface->angle           = Geometry::deg2rad(support_params.base_angle + 45);
-                            filler_interface->spacing         = support_params.support_material_ironing_flow.spacing();
-                            filler_interface->link_max_length = coord_t(scale_(3. * filler_interface->spacing));
-                            FillParams fill_params;
-                            fill_params.density     = 0.98;
-                            fill_params.dont_adjust = true;
-                            fill_params.monotonic   = true;
-                            fill_params.dont_sort   = false;
+                    //if (!is_tree(config.support_type) && interface_layer_type == InterfaceLayerType::TopContact) {
+                    //    if (config.ironing_support_layer && slicing_params.gap_support_object > support_params.support_material_ironing_flow.height())
+                    //    {
+                    //        interface_flow                    = support_params.support_material_ironing_flow;
+                    //        filler_interface->angle           = Geometry::deg2rad(support_params.base_angle + 45);
+                    //        filler_interface->spacing         = support_params.support_material_ironing_flow.spacing();
+                    //        filler_interface->link_max_length = coord_t(scale_(3. * filler_interface->spacing));
+                    //        FillParams fill_params;
+                    //        fill_params.density     = 0.98;
+                    //        fill_params.dont_adjust = true;
+                    //        fill_params.monotonic   = true;
+                    //        fill_params.dont_sort   = false;
 
-                            Polygons ironing        = offset(layer_ex.polygons_to_extrude(),-(float) scale_(support_params.support_material_ironing_flow.width()), SUPPORT_SURFACES_OFFSET_PARAMETERS);
-                            BoundingBox bbox           = get_extents(ironing);
-                            if (bbox.size().x() >= area_ironing_interface_supported && bbox.size().y() >= area_ironing_interface_supported) {
-                                fill_expolygon_generate_paths_ironing(
-                                    // Destination
-                                    layer_ex.extrusions,
-                                    // Regions to fill
-                                    union_safety_offset_ex(ironing),
-                                    // Filler and its parameters
-                                    filler_interface.get(), fill_params,
-                                    // Extrusion parameters
-                                    erIroning, interface_flow);
-                            }
-                        }
-                    }
+                    //        Polygons ironing        = offset(layer_ex.polygons_to_extrude(),-(float) scale_(support_params.support_material_ironing_flow.width()), SUPPORT_SURFACES_OFFSET_PARAMETERS);
+                    //        BoundingBox bbox           = get_extents(ironing);
+                    //        if (bbox.size().x() >= area_ironing_interface_supported && bbox.size().y() >= area_ironing_interface_supported) {
+                    //            fill_expolygon_generate_paths_ironing(
+                    //                // Destination
+                    //                layer_ex.extrusions,
+                    //                // Regions to fill
+                    //                union_safety_offset_ex(ironing),
+                    //                // Filler and its parameters
+                    //                filler_interface.get(), fill_params,
+                    //                // Extrusion parameters
+                    //                erIroning, interface_flow);
+                    //        }
+                    //    }
+                    //}
                 }
             };
             const bool top_interfaces = config.support_interface_top_layers.value != 0;
@@ -1922,8 +1969,8 @@ void generate_support_toolpaths(
     });
 
     // Now modulate the support layer height in parallel.
-    tbb::parallel_for(tbb::blocked_range<size_t>(n_raft_layers, support_layers.size()),
-        [&support_layers, &layer_caches]
+    tbb::parallel_for(tbb::blocked_range<size_t>(n_raft_layers, support_layers.size()), 
+        [&support_layers, &layer_caches, &support_params, &bbox_object]
             (const tbb::blocked_range<size_t>& range) {
         for (size_t support_layer_id = range.begin(); support_layer_id < range.end(); ++ support_layer_id) {
             SupportLayer &support_layer = *support_layers[support_layer_id];
@@ -1933,6 +1980,39 @@ void generate_support_toolpaths(
                 // Trim the extrusion height from the bottom by the overlapping layers.
                 modulate_extrusion_by_overlapping_layers(layer_cache_item.layer_extruded->extrusions, *layer_cache_item.layer_extruded->layer, layer_cache_item.overlapping);
                 support_layer.support_fills.append(std::move(layer_cache_item.layer_extruded->extrusions));
+            }
+
+            // Orca: Generate iron toolpath for contact layer
+            if (!layer_cache.polys_to_iron.empty()) {
+                auto f = std::unique_ptr<Fill>(Fill::new_from_type(support_params.ironing_pattern));
+                f->set_bounding_box(bbox_object);
+                f->layer_id        = support_layer.id();
+                f->z               = support_layer.print_z;
+                f->overlap         = 0;
+                f->angle           = layer_cache.ironing_angle;
+                f->spacing         = support_params.ironing_spacing;
+                f->link_max_length = (coord_t) scale_(3. * f->spacing);
+
+                ExPolygons polys_to_iron = union_safety_offset_ex(layer_cache.polys_to_iron);
+                layer_cache.polys_to_iron.clear();
+
+                // Find the layer above that directly overlaps current layer, clip the overlapped part
+                if (support_layer_id < support_layers.size() - 1) {
+                    const auto& upper_layer = support_layers[support_layer_id + 1];
+                    if (!upper_layer->support_islands.empty() && upper_layer->bottom_z() <= support_layer.print_z + EPSILON) {
+                        polys_to_iron = diff_ex(polys_to_iron, upper_layer->support_islands);
+                    }
+                }
+
+                fill_expolygons_generate_paths(
+                    // Destination
+                    support_layer.support_fills.entities,
+                    // Regions to fill
+                    std::move(polys_to_iron),
+                    // Filler and its parameters
+                    f.get(), 1.f,
+                    // Extrusion parameters
+                    ExtrusionRole::erIroning, support_params.ironing_flow);
             }
         }
     });

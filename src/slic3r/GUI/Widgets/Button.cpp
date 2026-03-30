@@ -2,6 +2,7 @@
 #include "Label.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 
+#include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
 
 BEGIN_EVENT_TABLE(Button, StaticBox)
@@ -455,6 +456,7 @@ RoundedPanel::RoundedPanel(wxWindow* parent, wxWindowID id,
     m_bottomLeftRadius(0),
     m_borderWidth(2),
     m_borderColor(wxColour("#6e6e72")) {
+    SetBackgroundStyle(wxBG_STYLE_PAINT);
     Bind(wxEVT_PAINT, &RoundedPanel::OnPaint, this);
 }
 
@@ -487,33 +489,47 @@ void RoundedPanel::AddRoundedRectangleWithDifferentRadii(wxGraphicsPath& path, w
 }
 
 void RoundedPanel::OnPaint(wxPaintEvent& event) {
-    wxBufferedPaintDC dc(this);
+    wxAutoBufferedPaintDC dc(this);
+    dc.SetBackground(wxBrush(GetBackgroundColour()));
+    dc.Clear();
+
     wxSize size = GetClientSize();
-    if (size.x <= 0 || size.y <= 0) {
-        // Button size is too small; skip drawing
-        wxLogDebug("Button size is too small: %dx%d", size.x, size.y);
+    if (size.x <= 0 || size.y <= 0)
         return;
-    }
-    wxColour currentColor("#4B4B4D");
 
     wxGraphicsContext* gc = wxGraphicsContext::Create(dc);
-    if (gc) {
-        wxGraphicsPath path = gc->CreatePath();
-        AddRoundedRectangleWithDifferentRadii(path, 0, 0, size.x-1, size.y,
-            m_topLeftRadius, m_topRightRadius,
-            m_bottomRightRadius, m_bottomLeftRadius);
-        gc->SetBrush(wxBrush(currentColor));
-        gc->FillPath(path);
-        
-        gc->SetPen(wxPen(m_borderColor, 1));
-        gc->StrokePath(path);
+    if (!gc)
+        return;
 
-        // Release graphics context
+    const int bw = std::max(0, m_borderWidth);
+    const wxDouble inset = bw > 0 ? (static_cast<wxDouble>(bw) / 2.0) : 0.0;
+    const wxDouble w = static_cast<wxDouble>(size.x) - 2.0 * inset;
+    const wxDouble h = static_cast<wxDouble>(size.y) - 2.0 * inset;
+    if (w <= 0.0 || h <= 0.0) {
         delete gc;
+        return;
     }
 
-    dc.SetTextForeground(*wxWHITE);
-    event.Skip();
+    auto clamp_r = [w, h](int r) -> wxDouble {
+        const wxDouble rr = std::max(0, r);
+        return std::min(rr, std::min(w, h) / 2.0);
+    };
+
+    wxGraphicsPath path = gc->CreatePath();
+    AddRoundedRectangleWithDifferentRadii(path, inset, inset, w, h,
+        clamp_r(m_topLeftRadius), clamp_r(m_topRightRadius),
+        clamp_r(m_bottomRightRadius), clamp_r(m_bottomLeftRadius));
+
+    gc->SetBrush(wxBrush(GetBackgroundColour()));
+    gc->FillPath(path);
+
+    if (bw > 0) {
+        gc->SetPen(wxPen(m_borderColor, bw));
+        gc->StrokePath(path);
+    }
+
+    delete gc;
+    event.Skip(false);
 }
 
 CustomRoundCornerButton::CustomRoundCornerButton(wxWindow* parent, wxWindowID id, const wxString& label,

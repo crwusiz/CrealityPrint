@@ -3,10 +3,59 @@
 
 #include "libslic3r.h"
 #include <vector>
+#include "Layer.hpp"
 #include "Flow.hpp"
 #include "Polygon.hpp"
 #include "PrintConfig.hpp"
 #include "SurfaceCollection.hpp"
+
+namespace Slic3r {
+struct FuzzySkinConfig
+{
+    FuzzySkinType type;
+    coord_t       thickness;
+    coord_t       point_distance;
+    bool          fuzzy_first_layer;
+    NoiseType     noise_type;
+    double        noise_scale;
+    int           noise_octaves;
+    double        noise_persistence;
+    FuzzySkinMode mode;
+
+    bool operator==(const FuzzySkinConfig& r) const
+    {
+        return type == r.type
+            && thickness == r.thickness
+            && point_distance == r.point_distance
+            && fuzzy_first_layer == r.fuzzy_first_layer
+            && noise_type == r.noise_type
+            && noise_scale == r.noise_scale
+            && noise_octaves == r.noise_octaves
+            && noise_persistence == r.noise_persistence
+            && mode == r.mode;
+    }
+
+    bool operator!=(const FuzzySkinConfig& r) const { return !(*this == r); }
+};
+}
+
+namespace std {
+template<> struct hash<Slic3r::FuzzySkinConfig>
+{
+    size_t operator()(const Slic3r::FuzzySkinConfig& c) const noexcept
+    {
+        std::size_t seed = std::hash<Slic3r::FuzzySkinType>{}(c.type);
+        boost::hash_combine(seed, std::hash<coord_t>{}(c.thickness));
+        boost::hash_combine(seed, std::hash<coord_t>{}(c.point_distance));
+        boost::hash_combine(seed, std::hash<bool>{}(c.fuzzy_first_layer));
+        boost::hash_combine(seed, std::hash<Slic3r::NoiseType>{}(c.noise_type));
+        boost::hash_combine(seed, std::hash<double>{}(c.noise_scale));
+        boost::hash_combine(seed, std::hash<int>{}(c.noise_octaves));
+        boost::hash_combine(seed, std::hash<double>{}(c.noise_persistence));
+        return seed;
+    }
+};
+} // namespace std
 
 namespace Slic3r {
 
@@ -14,10 +63,13 @@ class PerimeterGenerator {
 public:
     // Inputs:
     const SurfaceCollection     *slices;
+    const LayerRegionPtrs*       compatible_regions;
     const ExPolygons            *upper_slices;
+    const SurfaceCollection     *upper_slices_same_region;
     const ExPolygons            *lower_slices;
     double                       layer_height;
     int                          layer_id;
+    coordf_t                     slice_z;
     Flow                         perimeter_flow;
     Flow                         ext_perimeter_flow;
     Flow                         overhang_flow;
@@ -42,11 +94,16 @@ public:
     std::pair<double, double>   m_smaller_external_overhang_dist_boundary;
     std::vector<LoopNode>*      loop_nodes;
 
+    bool                                            has_fuzzy_skin = false;
+    bool                                            has_fuzzy_hole = false;
+    std::unordered_map<FuzzySkinConfig, ExPolygons> regions_by_fuzzify;
     
     PerimeterGenerator(
         // Input:
         const SurfaceCollection*    slices, 
+        const LayerRegionPtrs       *compatible_regions,
         double                      layer_height,
+        coordf_t                    slice_z,
         Flow                        flow,
         const PrintRegionConfig*    config,
         const PrintObjectConfig*    object_config,
@@ -62,8 +119,8 @@ public:
         //BBS
         ExPolygons*                 fill_no_overlap,
         std::vector<LoopNode>*      loop_nodes)
-        : slices(slices), upper_slices(nullptr), lower_slices(nullptr), layer_height(layer_height),
-            layer_id(-1), perimeter_flow(flow), ext_perimeter_flow(flow),
+        : slices(slices), compatible_regions(compatible_regions), upper_slices(nullptr), lower_slices(nullptr), layer_height(layer_height),
+            slice_z(slice_z), layer_id(-1), perimeter_flow(flow), ext_perimeter_flow(flow),
             overhang_flow(flow), solid_infill_flow(flow),
             config(config), object_config(object_config), print_config(print_config),
             m_spiral_vase(spiral_mode),

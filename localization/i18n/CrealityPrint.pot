@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-01-06 15:20+0800\n"
+"POT-Creation-Date: 2026-03-20 08:58+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1098,11 +1098,7 @@ msgstr ""
 msgid "mm/s or %"
 msgstr ""
 
-msgid "Over 100% wall (not brige) (Beta)"
-msgstr ""
-
-#, possible-c-format, possible-boost-format
-msgid "Speed of 100% overhang wall which has 0 overlap with the lower layer."
+msgid "100%"
 msgstr ""
 
 msgid "External"
@@ -1151,6 +1147,9 @@ msgid ""
 msgstr ""
 
 msgid "Mouse ear"
+msgstr ""
+
+msgid "Painted"
 msgstr ""
 
 msgid "Outer brim only"
@@ -1578,6 +1577,30 @@ msgstr ""
 msgid ""
 "Distance of the nozzle tip to the lower rod. Used for collision avoidance in "
 "by-object printing."
+msgstr ""
+
+msgid "Flush length (first segment)"
+msgstr ""
+
+msgid ""
+"First segment length used to split flush_length into flush_length_1..N for "
+"change filament G-code."
+msgstr ""
+
+msgid "Flush length (standard segment)"
+msgstr ""
+
+msgid ""
+"Standard segment length used to split flush_length into flush_length_1..N "
+"for change filament G-code."
+msgstr ""
+
+msgid "Flush length (max segment)"
+msgstr ""
+
+msgid ""
+"Maximum segment length used to split flush_length into flush_length_1..N for "
+"change filament G-code."
 msgstr ""
 
 msgid "multicolor method"
@@ -2506,6 +2529,95 @@ msgstr ""
 msgid "Whether to apply fuzzy skin on the first layer"
 msgstr ""
 
+msgid "Fuzzy skin generator mode"
+msgstr ""
+
+#, possible-c-format, possible-boost-format
+msgid ""
+"Fuzzy skin generation mode. Works only with Arachne!\n"
+"Displacement: Сlassic mode when the pattern is formed by shifting the nozzle "
+"sideways from the original path.\n"
+"Extrusion: The mode when the pattern formed by the amount of extruded "
+"plastic. This is the fast and straight algorithm without unnecessary nozzle "
+"shake that gives a smooth pattern. But it is more useful for forming loose "
+"walls in the entire they array.\n"
+"Combined: Joint mode [Displacement] + [Extrusion]. The appearance of the "
+"walls is similar to [Displacement] Mode, but it leaves no pores between the "
+"perimeters.\n"
+"\n"
+"Attention! The [Extrusion] and [Combined] modes works only the "
+"fuzzy_skin_thickness parameter not more than the thickness of printed loop. "
+"At the same time, the width of the extrusion for a particular layer should "
+"also not be below a certain level. It is usually equal 15-25%% of a layer "
+"height. Therefore, the maximum fuzzy skin thickness with a perimeter width "
+"of 0.4 mm and a layer height of 0.2 mm will be 0.4-(0.2*0.25)=±0.35mm! If "
+"you enter a higher parameter than this, the error Flow::spacing() will "
+"displayed, and the model will not be sliced. You can choose this number "
+"until this error is repeated."
+msgstr ""
+
+msgid "Displacement"
+msgstr ""
+
+msgid "Extrusion"
+msgstr ""
+
+msgid "Combined"
+msgstr ""
+
+msgid "Fuzzy skin noise type"
+msgstr ""
+
+msgid ""
+"Noise type to use for fuzzy skin generation:\n"
+"Classic: Classic uniform random noise.\n"
+"Perlin: Perlin noise, which gives a more consistent texture.\n"
+"Billow: Similar to perlin noise, but clumpier.\n"
+"Ridged Multifractal: Ridged noise with sharp, jagged features. Creates "
+"marble-like textures.\n"
+"Voronoi: Divides the surface into voronoi cells, and displaces each one by a "
+"random amount. Creates a patchwork texture."
+msgstr ""
+
+msgid "Classic"
+msgstr ""
+
+msgid "Perlin"
+msgstr ""
+
+msgid "Billow"
+msgstr ""
+
+msgid "Ridged Multifractal"
+msgstr ""
+
+msgid "Voronoi"
+msgstr ""
+
+msgid "Fuzzy skin feature size"
+msgstr ""
+
+msgid ""
+"The base size of the coherent noise features, in mm. Higher values will "
+"result in larger features."
+msgstr ""
+
+msgid "Fuzzy Skin Noise Octaves"
+msgstr ""
+
+msgid ""
+"The number of octaves of coherent noise to use. Higher values increase the "
+"detail of the noise, but also increase computation time."
+msgstr ""
+
+msgid "Fuzzy skin noise persistence"
+msgstr ""
+
+msgid ""
+"The decay rate for higher octaves of the coherent noise. Lower values will "
+"result in smoother noise."
+msgstr ""
+
 msgid "Filter out tiny gaps"
 msgstr ""
 
@@ -3212,6 +3324,52 @@ msgid ""
 "Allowed values: 1-5"
 msgstr ""
 
+msgid "Material shortage recovery after overhang(Beta)"
+msgstr ""
+
+msgid ""
+"This parameter conflicts with the max_volumetric_extrusion_rate_slope and "
+"cannot be enabled at the same time.\n"
+"\n"
+"When the slicer detects that a segment of continuous low-speed extrusion has "
+"finished and the path immediately returns to normal high-speed printing, "
+"sudden changes in speed and acceleration can cause the extrusion pressure to "
+"lag behind.This may lead to temporary under-extrusion on external walls, "
+"resulting in thin lines, whitening, or hollow-looking artifacts.After "
+"enabling this option, the slicer inserts additional speed control during the "
+"recovery phase so that the printer does not jump directly from “slow” to "
+"“fast,” but instead transitions more smoothly back to normal motion.\n"
+"\n"
+"Typical usage scenarios include outer walls with overhangs, chamfers, small "
+"cross-sections, or the recovery segment after bridging.Compared to the "
+"parameter of Extrusion rate smoothing, this parameter has a smaller impact "
+"on the result of slice."
+msgstr ""
+
+msgid "Safe acceleration after overhang(Beta)"
+msgstr ""
+
+msgid ""
+"When the slicer detects the end of a continuous low-speed extrusion region "
+"such as an overhang, it will not immediately restore the normal printing "
+"acceleration.Instead, it first uses a lower and more conservative "
+"acceleration value for a short “safe recovery segment,”allowing extrusion "
+"pressure, molten material flow, and nozzle output to gradually return to a "
+"stable state."
+msgstr ""
+
+msgid "Safe speed after overhang(Beta)"
+msgstr ""
+
+msgid ""
+"When the slicer detects the end of a continuous low-speed extrusion region "
+"such as an overhang, it will not immediately restore the normal printing "
+"speed.Instead, it first uses a lower and more conservative cruise speed for "
+"a short “safe recovery segment,”allowing the printer to pass through the "
+"transition more gently before gradually returning to the normal printing "
+"speed."
+msgstr ""
+
 msgid "Weight limit speed and acceleration"
 msgstr ""
 
@@ -3421,6 +3579,14 @@ msgid "Wall loops"
 msgstr ""
 
 msgid "Number of walls of every layer"
+msgstr ""
+
+msgid "Embedding the wall into the infill"
+msgstr ""
+
+msgid ""
+"Embedding the wall into parts where the wall loops are absent ensures that "
+"the wall connects seamlessly to the infill."
 msgstr ""
 
 msgid "Alternate extra wall"
@@ -3888,9 +4054,6 @@ msgstr ""
 msgid ""
 "Combined - single skirt for all objects, Per object - individual object "
 "skirt."
-msgstr ""
-
-msgid "Combined"
 msgstr ""
 
 msgid "Per object"
@@ -4510,6 +4673,37 @@ msgid ""
 "support"
 msgstr ""
 
+msgid "Ironing Support Interface"
+msgstr ""
+
+msgid ""
+"Ironing is using small flow to print on same height of support interface "
+"again to make it more smooth. This setting controls whether support "
+"interface being ironed. When enabled, support interface will be extruded as "
+"solid too."
+msgstr ""
+
+msgid "Support Ironing Pattern"
+msgstr ""
+
+msgid "The pattern that will be used when ironing."
+msgstr ""
+
+msgid "Support Ironing flow"
+msgstr ""
+
+msgid ""
+"The amount of material to extrude during ironing. Relative to flow of normal "
+"support interface layer height. Too high value results in overextrusion on "
+"the surface."
+msgstr ""
+
+msgid "Support Ironing line spacing"
+msgstr ""
+
+msgid "The distance between the lines of ironing."
+msgstr ""
+
 msgid "Activate temperature control"
 msgstr ""
 
@@ -4644,24 +4838,6 @@ msgstr ""
 msgid ""
 "The actual flushing volumes is equal to the flush multiplier multiplied by "
 "the flushing volumes in the table."
-msgstr ""
-
-msgid "Flush length (first segment)"
-msgstr ""
-
-msgid "First segment length used to split flush_length into flush_length_1..N for change filament G-code."
-msgstr ""
-
-msgid "Flush length (standard segment)"
-msgstr ""
-
-msgid "Standard segment length used to split flush_length into flush_length_1..N for change filament G-code."
-msgstr ""
-
-msgid "Flush length (max segment)"
-msgstr ""
-
-msgid "Maximum segment length used to split flush_length into flush_length_1..N for change filament G-code."
 msgstr ""
 
 msgid "Flush Volumes Changed"
@@ -4898,9 +5074,6 @@ msgid ""
 "Classic wall generator produces walls with constant extrusion width and for "
 "very thin areas is used gap-fill. Arachne engine produces walls with "
 "variable extrusion width"
-msgstr ""
-
-msgid "Classic"
 msgstr ""
 
 msgid "Arachne"
@@ -5390,6 +5563,15 @@ msgid ""
 "An object's XY size compensation will not be used because it is also color-"
 "painted.\n"
 "XY Size compensation can not be combined with color-painting."
+msgstr ""
+
+msgid ""
+"An object has enabled XY Size compensation which will not be used because it "
+"is also fuzzy skin painted.\n"
+"XY Size compensation cannot be combined with fuzzy skin painting."
+msgstr ""
+
+msgid "Object name"
 msgstr ""
 
 msgid ""
@@ -7395,6 +7577,18 @@ msgid ""
 msgstr ""
 
 msgid ""
+"Both [Extrusion] and [Combined] modes of Fuzzy Skin require the Arachne Wall "
+"Generator to be enabled."
+msgstr ""
+
+msgid ""
+"Change these settings automatically?\n"
+"Yes - Enable Arachne Wall Generator\n"
+"No  - Disable Arachne Wall Generator and set [Displacement] mode of the "
+"Fuzzy Skin"
+msgstr ""
+
+msgid ""
 "Spiral mode only works when wall loops is 1, support is disabled, top shell "
 "layers is 0, sparse infill density is 0, timelapse type is traditional and "
 "smoothing wall speed along Z is false."
@@ -8770,13 +8964,13 @@ msgstr ""
 msgid "Total"
 msgstr ""
 
-msgid "Total Estimation"
-msgstr ""
-
-msgid "Total time"
-msgstr ""
-
 msgid "Total cost"
+msgstr ""
+
+msgid "Time Estimation"
+msgstr ""
+
+msgid "Plate"
 msgstr ""
 
 msgid "G-code Preview"
@@ -8815,6 +9009,9 @@ msgstr ""
 msgid "Percent"
 msgstr ""
 
+msgid "Weight"
+msgstr ""
+
 msgid "Layer Height (mm)"
 msgstr ""
 
@@ -8831,6 +9028,27 @@ msgid "Temperature (°C)"
 msgstr ""
 
 msgid "Volumetric flow rate (mm³/s)"
+msgstr ""
+
+msgid "Filament color"
+msgstr ""
+
+msgid "Filament color (original toolpath color)"
+msgstr ""
+
+msgid "ROI Trigger"
+msgstr ""
+
+msgid "ROI Trigger (slow-speed extrusion, e.g. overhang slow-down)"
+msgstr ""
+
+msgid "ROI Defect"
+msgstr ""
+
+msgid "ROI Defect (after returning to normal speed, under-extrusion prone)"
+msgstr ""
+
+msgid "Description"
 msgstr ""
 
 msgid "Used filament"
@@ -9028,6 +9246,12 @@ msgstr ""
 msgid "Split to parts"
 msgstr ""
 
+msgid "Brim Ears"
+msgstr ""
+
+msgid "Please select single object."
+msgstr ""
+
 msgid "Assembly View"
 msgstr ""
 
@@ -9040,16 +9264,16 @@ msgstr ""
 msgid "Send print"
 msgstr ""
 
-msgid "Send to Multi-device"
-msgstr ""
-
 msgid "Export G-code"
 msgstr ""
 
-msgid "Export all sliced file"
+msgid "Upload to CrealityCloud"
 msgstr ""
 
-msgid "Upload to CrealityCloud"
+msgid "Send to Multi-device"
+msgstr ""
+
+msgid "Export all sliced file"
 msgstr ""
 
 msgid "Select Plate"
@@ -9101,6 +9325,12 @@ msgid "A G-code path goes beyond the max print height."
 msgstr ""
 
 msgid "A G-code path goes beyond the boundary of plate."
+msgstr ""
+
+msgid "Tree support is generated outside the printing bed."
+msgstr ""
+
+msgid "SLA supports outside the print area were detected."
 msgstr ""
 
 msgid "Only the object being edit is visible."
@@ -9906,6 +10136,9 @@ msgid ""
 "objects."
 msgstr ""
 
+msgid "Remove paint-on fuzzy skin"
+msgstr ""
+
 msgid "Delete connector from object which is a part of cut"
 msgstr ""
 
@@ -10013,9 +10246,6 @@ msgstr[1] ""
 msgid "Repairing was canceled"
 msgstr ""
 
-msgid "Plate"
-msgstr ""
-
 msgid "Current device:"
 msgstr ""
 
@@ -10038,6 +10268,13 @@ msgid " add printer"
 msgstr ""
 
 msgid "Device List Not Connect Warning"
+msgstr ""
+
+msgid ""
+"*After binding an \"Other\" device, you can send G-code files to the printer"
+msgstr ""
+
+msgid "Note: \"Other\" devices do not support filament sync or mapping"
 msgstr ""
 
 msgid "Additional process preset"
@@ -10248,9 +10485,6 @@ msgstr ""
 msgid "⌘+Shift+G"
 msgstr ""
 
-msgid "Print plate"
-msgstr ""
-
 msgid "Ctrl+Shift+G"
 msgstr ""
 
@@ -10410,6 +10644,9 @@ msgstr ""
 msgid "Gizmo cut"
 msgstr ""
 
+msgid "Gizmo FDM paint-on fuzzy skin"
+msgstr ""
+
 msgid "Gizmo Place face on bed"
 msgstr ""
 
@@ -10566,6 +10803,9 @@ msgid "Logging"
 msgstr ""
 
 msgid "will be closed before creating a new model. Do you want to continue?"
+msgstr ""
+
+msgid "Print plate"
 msgstr ""
 
 msgid "Export G-code file"
@@ -11500,6 +11740,12 @@ msgid_plural "%1$d objects were loaded as parts of cut object"
 msgstr[0] ""
 msgstr[1] ""
 
+#, possible-c-format, possible-boost-format
+msgid "%1$d object was loaded with fuzzy skin painting."
+msgid_plural "%1$d objects were loaded with fuzzy skin painting."
+msgstr[0] ""
+msgstr[1] ""
+
 msgid "ERROR"
 msgstr ""
 
@@ -11599,6 +11845,9 @@ msgid "Color painting"
 msgstr ""
 
 msgid "Cut connectors"
+msgstr ""
+
+msgid "Paint-on fuzzy skin"
 msgstr ""
 
 msgid "Layers"
@@ -12465,6 +12714,12 @@ msgid ""
 "Enabled LOD requires application restart."
 msgstr ""
 
+msgid ""
+"Please note that the Gcode show will undergo certain changes at small pixels "
+"case.\n"
+"Memory-Optimized Preview requires application restart."
+msgstr ""
+
 msgid "Downloads"
 msgstr ""
 
@@ -12540,6 +12795,16 @@ msgid ""
 msgstr ""
 
 msgid "Improve preview rendering performance by lod"
+msgstr ""
+
+msgid "Memory-Optimized Preview"
+msgstr ""
+
+msgid ""
+"Enabling this will significantly reduce memory and VRAM usage on the preview "
+"page, improving operation smoothness with large models or complex scenes. "
+"Please note: This mode may introduce very minor visual artifacts and is best "
+"suited for performance-focused scenarios."
 msgstr ""
 
 msgid "Clear my choice on the unsaved presets."
@@ -12665,13 +12930,7 @@ msgstr ""
 msgid "The selected preset is null!"
 msgstr ""
 
-msgid "Send G-Code to printer host"
-msgstr ""
-
 msgid "Upload to Printer Host with the following filename:"
-msgstr ""
-
-msgid "Use forward slashes ( / ) as a directory separator if needed."
 msgstr ""
 
 msgid "Upload to storage"
@@ -12684,7 +12943,7 @@ msgstr ""
 msgid "Upload filename doesn't end with \"%s\". Do you wish to continue?"
 msgstr ""
 
-msgid "Upload"
+msgid "only send"
 msgstr ""
 
 msgid "Print host upload queue"
@@ -13282,9 +13541,6 @@ msgstr ""
 msgid "Control"
 msgstr ""
 
-msgid "100%"
-msgstr ""
-
 msgid "Lamp"
 msgstr ""
 
@@ -13685,6 +13941,9 @@ msgid "Raft"
 msgstr ""
 
 msgid "Support filament"
+msgstr ""
+
+msgid "Support ironing"
 msgstr ""
 
 msgid "Tree supports"
@@ -14543,6 +14802,50 @@ msgstr ""
 msgid "Tolerance"
 msgstr ""
 
+msgid "Alt+"
+msgstr ""
+
+msgid "Head diameter"
+msgstr ""
+
+msgid "Max angle"
+msgstr ""
+
+msgid "Detection radius"
+msgstr ""
+
+msgid "Remove selected points"
+msgstr ""
+
+msgid "Remove all"
+msgstr ""
+
+msgid "Auto-generate points"
+msgstr ""
+
+msgid "Section view"
+msgstr ""
+
+msgid "Add a brim ear"
+msgstr ""
+
+msgid "Delete a brim ear"
+msgstr ""
+
+msgid "Adjust head diameter"
+msgstr ""
+
+msgid "Adjust section view"
+msgstr ""
+
+msgid ""
+"Warning: The brim type is not set to \"painted\", the brim ears will not "
+"take effect!"
+msgstr ""
+
+msgid " invalid brim ears"
+msgstr ""
+
 msgid "Planar"
 msgstr ""
 
@@ -15075,9 +15378,6 @@ msgstr ""
 msgid "Alt + Mouse wheel"
 msgstr ""
 
-msgid "Section view"
-msgstr ""
-
 msgid "Ctrl + Mouse wheel"
 msgstr ""
 
@@ -15140,6 +15440,27 @@ msgid "Support Generated"
 msgstr ""
 
 msgid "Lay on face"
+msgstr ""
+
+msgid "Brush size"
+msgstr ""
+
+msgid "Brush shape"
+msgstr ""
+
+msgid "Add fuzzy skin"
+msgstr ""
+
+msgid "Remove fuzzy skin"
+msgstr ""
+
+msgid "Brush"
+msgstr ""
+
+msgid "Smart fill"
+msgstr ""
+
+msgid "Reset selection"
 msgstr ""
 
 msgid "Preview hollowed and drilled model"
@@ -15236,40 +15557,47 @@ msgstr ""
 msgid "Distance XYZ"
 msgstr ""
 
+msgid "Unable to perform boolean operation on selected parts."
+msgstr ""
+
+msgid "Operation Canceled."
+msgstr ""
+
+msgid "Operation Failed."
+msgstr ""
+
+msgid "Union operation requires at least two volumes."
+msgstr ""
+
+msgid "Intersection operation requires at least two volumes."
+msgstr ""
+
+msgid ""
+"Difference operation requires at least one volume in both A and B lists."
+msgstr ""
+
+msgid "Union operation requires at least two objects."
+msgstr ""
+
+msgid "Intersection operation requires at least two objects."
+msgstr ""
+
+msgid ""
+"Difference operation requires at least one object in both A and B lists."
+msgstr ""
+
+msgid ""
+"Failed to group parts by object. Please check for self-intersections, non-"
+"manifold geometry, or open meshes."
+msgstr ""
+
+msgid "No overlapping region found. Boolean intersection failed."
+msgstr ""
+
+msgid "Mesh preparation failed."
+msgstr ""
+
 msgid "Mesh Boolean"
-msgstr ""
-
-msgid "Union"
-msgstr ""
-
-msgid "Difference"
-msgstr ""
-
-msgid "Intersection"
-msgstr ""
-
-msgid "Source Volume"
-msgstr ""
-
-msgid "Tool Volume"
-msgstr ""
-
-msgid "Subtract from"
-msgstr ""
-
-msgid "Subtract with"
-msgstr ""
-
-msgid "selected"
-msgstr ""
-
-msgid "Part 1"
-msgstr ""
-
-msgid "Part 2"
-msgstr ""
-
-msgid "Delete input"
 msgstr ""
 
 #, possible-boost-format
@@ -15294,12 +15622,6 @@ msgid "Choose filament"
 msgstr ""
 
 msgid "Edge detection"
-msgstr ""
-
-msgid "Brush"
-msgstr ""
-
-msgid "Smart fill"
 msgstr ""
 
 msgid "Bucket fill"
@@ -15346,12 +15668,6 @@ msgid "Optimize orientation"
 msgstr ""
 
 msgid "Gizmo-Scale"
-msgstr ""
-
-msgid "Brush size"
-msgstr ""
-
-msgid "Brush shape"
 msgstr ""
 
 msgid "Enforce seam"
@@ -15410,13 +15726,7 @@ msgstr ""
 msgid "Operation already cancelling. Please wait few seconds."
 msgstr ""
 
-msgid "Head diameter"
-msgstr ""
-
 msgid "Lock supports under new islands"
-msgstr ""
-
-msgid "Remove selected points"
 msgstr ""
 
 msgid "Remove all points"
@@ -15432,9 +15742,6 @@ msgid "Minimal points distance"
 msgstr ""
 
 msgid "Support points density"
-msgstr ""
-
-msgid "Auto-generate points"
 msgstr ""
 
 msgid "Manual editing"
@@ -15716,6 +16023,15 @@ msgid "Leaving Drill gizmo"
 msgstr ""
 
 msgid "Drill gizmo editing"
+msgstr ""
+
+msgid "Entering Paint-on fuzzy skin"
+msgstr ""
+
+msgid "Leaving Paint-on fuzzy skin"
+msgstr ""
+
+msgid "Paint-on fuzzy skin editing"
 msgstr ""
 
 msgid "Entering Measure gizmo"
@@ -16084,6 +16400,9 @@ msgstr ""
 msgid "Printer is busy, can send gcode only"
 msgstr ""
 
+msgid "Upload"
+msgstr ""
+
 msgid "Uploading to Creality Cloud..."
 msgstr ""
 
@@ -16125,6 +16444,45 @@ msgid "Send to Lan Printer"
 msgstr ""
 
 msgid "Unknown model"
+msgstr ""
+
+msgid "Union"
+msgstr ""
+
+msgid "Difference"
+msgstr ""
+
+msgid "Intersection"
+msgstr ""
+
+msgid "Selected Objects"
+msgstr ""
+
+msgid "Selected Parts"
+msgstr ""
+
+msgid "Keep original models"
+msgstr ""
+
+msgid "Execute"
+msgstr ""
+
+msgid "Entity Only"
+msgstr ""
+
+msgid "Perform Boolean operations on entities only."
+msgstr ""
+
+msgid "This object contains non-part components."
+msgstr ""
+
+msgid "Preparing data..."
+msgstr ""
+
+msgid "Computing..."
+msgstr ""
+
+msgid "Applying result.."
 msgstr ""
 
 msgid "?"
@@ -16443,6 +16801,12 @@ msgstr ""
 msgid "Could not connect to Prusa Connect"
 msgstr ""
 
+msgid "Connection to CrealityPrint works correctly."
+msgstr ""
+
+msgid "Could not connect to CrealityPrint"
+msgstr ""
+
 #, possible-boost-format
 msgid "Copying of file %1% to %2% failed: %3%"
 msgstr ""
@@ -16647,4 +17011,39 @@ msgid ""
 "Compared with the default profile of a 0.8 mm nozzle, it has a smaller layer "
 "height, and results in less but still apparent layer lines and slightly "
 "higher printing quality, but longer printing time in some printing cases."
+msgstr ""
+msgid "Update Servers Connected Timeout"
+msgstr ""
+
+msgid "Failed to check for updates."
+msgstr ""
+
+msgid "Invalid response format."
+msgstr ""
+
+msgid "No valid update packages found."
+msgstr ""
+
+msgid "Failed to parse update information."
+msgstr ""
+
+msgid "Preparing to download..."
+msgstr ""
+
+msgid "Downloading Update"
+msgstr ""
+
+msgid "%s (%d%% Completed)"
+msgstr ""
+
+msgid "Update Ready"
+msgstr ""
+
+msgid "Update downloaded successfully. Install now?"
+msgstr ""
+
+msgid "Install Later"
+msgstr ""
+
+msgid "Install Now"
 msgstr ""

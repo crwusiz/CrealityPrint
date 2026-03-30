@@ -4,6 +4,7 @@
 #include "slic3r/GUI/print_manage/App/SendToPrinter.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r_version.h"
+#include "libslic3r/CrealityVersion.hpp"
 #include "libslic3r/FlushVolCalc.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Monitor.hpp"
@@ -141,6 +142,7 @@
 #include "Gizmos/GLGizmoSimplify.hpp" // create suggestion notification
 #include "Gizmos/GLGizmoSVG.hpp"      // Drop SVG file
 #include "Gizmos/GizmoObjectManipulation.hpp"
+#include "Gizmos/GLGizmosManager.hpp"
 #include "AnalyticsDataUploadManager.hpp"
 #include "StepMeshDialog.hpp"
 
@@ -758,7 +760,7 @@ struct DynamicFilamentList1Based : DynamicFilamentList
 static DynamicFilamentList       dynamic_filament_list;
 static DynamicFilamentList1Based dynamic_filament_list_1_based;
 
-Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(42 * wxGetApp().em_unit(), -1)), p(new priv(parent))
+Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(42 * wxGetApp().em_unit(), -1)), p(new priv(parent)), m_last_em_unit(wxGetApp().em_unit())
 {
     Choice::register_dynamic_list("support_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("support_interface_filament", &dynamic_filament_list);
@@ -1598,12 +1600,31 @@ void Sidebar::change_top_border_for_mode_sizer(bool increase_border)
 
 void Sidebar::msw_rescale()
 {
-    SetMinSize(wxSize(42 * wxGetApp().em_unit(), -1));
+    const int new_em = wxGetApp().em_unit();
+    const int old_em = m_last_em_unit > 0 ? m_last_em_unit : new_em;
+    const int min_width = std::max(1, FromDIP(120));
+
+    SetMinSize(wxSize(min_width, -1));
+
+    if (wxAuiManager* manager = wxAuiManager::GetManager(this)) {
+        manager->GetArtProvider()->SetMetric(wxAUI_DOCKART_SASH_SIZE, std::max(1, new_em / 10));
+
+        wxAuiPaneInfo& pane = manager->GetPane(this);
+        if (pane.IsOk()) {
+            const int reference_width = GetSize().x > 0 ? GetSize().x : min_width;
+            const int scaled_width = std::max(min_width, int(std::lround(double(reference_width) * new_em / old_em)));
+            pane.BestSize(wxSize(scaled_width, pane.best_size.y));
+            manager->Update();
+        }
+    }
+
+    m_last_em_unit = new_em;
+
     if (p->m_panel_printer_title)
-        p->m_panel_printer_title->GetSizer()->SetMinSize(-1, 3 * wxGetApp().em_unit());
+        p->m_panel_printer_title->GetSizer()->SetMinSize(-1, 3 * new_em);
 
     if (p->m_panel_filament_title)
-        p->m_panel_filament_title->GetSizer()->SetMinSize(-1, 3 * wxGetApp().em_unit());
+        p->m_panel_filament_title->GetSizer()->SetMinSize(-1, 3 * new_em);
 
     if (p->m_printer_icon)
         p->m_printer_icon->msw_rescale();
@@ -1625,7 +1646,7 @@ void Sidebar::msw_rescale()
     // BBS
     if (m_bed_type_list) {
         m_bed_type_list->Rescale();
-        m_bed_type_list->SetMinSize({-1, 3 * wxGetApp().em_unit()});
+        m_bed_type_list->SetMinSize({-1, 3 * new_em});
     }
 
 #if 0
@@ -2810,6 +2831,7 @@ struct Plater::priv
     // BBS: add no_slice option
     void select_view_3D(const std::string& name, bool no_slice = true);
     void select_next_view_3D();
+    void select_brim_ears();
     void select_ai_cloud_service();
 
     bool is_preview_shown() const { return current_panel == preview; }
@@ -3341,6 +3363,7 @@ Plater::priv::priv(Plater* q, MainFrame* main_frame)
     m_is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
 
     m_aui_mgr.SetManagedWindow(q);
+    m_aui_mgr.SetFlags((m_aui_mgr.GetFlags() & ~(wxAUI_MGR_TRANSPARENT_HINT | wxAUI_MGR_VENETIAN_BLINDS_HINT | wxAUI_MGR_RECTANGLE_HINT | wxAUI_MGR_HINT_FADE | wxAUI_MGR_NO_VENETIAN_BLINDS_FADE)) | wxAUI_MGR_LIVE_RESIZE);
     m_aui_mgr.SetDockSizeConstraint(1, 1);
     // m_aui_mgr.GetArtProvider()->SetMetric(wxAUI_DOCKART_PANE_BORDER_SIZE, 0);
     // m_aui_mgr.GetArtProvider()->SetMetric(wxAUI_DOCKART_SASH_SIZE, 2);
@@ -3485,14 +3508,20 @@ Plater::priv::priv(Plater* q, MainFrame* main_frame)
             }
         }
 
-        // Keep tracking the current sidebar size, by storing it using `best_size`, which will be stored
-        // in the config and re-applied when the app is opened again.
-        this->sidebar->Bind(wxEVT_IDLE, [&sidebar, this](wxIdleEvent& e) {
-            if (sidebar.IsShown() && sidebar.IsDocked() && sidebar.rect.GetWidth() > 0) {
-                sidebar.BestSize(sidebar.rect.GetWidth(), sidebar.best_size.GetHeight());
+        double sidebar_width_em = 0.0;
+        const std::string sidebar_width_em_str = cfg->get("sidebar_width_em");
+        if (!sidebar_width_em_str.empty()) {
+            try {
+                sidebar_width_em = std::max(0.0, std::stod(sidebar_width_em_str));
+            } catch (...) {
             }
-            e.Skip();
-        });
+        }
+        if (sidebar_width_em > 0.0) {
+            sidebar.BestSize(wxSize(int(std::lround(sidebar_width_em * wxGetApp().em_unit())), sidebar.best_size.GetHeight()));
+        }
+
+        // Keep the current sidebar width only when persisting layout. Updating best_size on every idle
+        // causes mixed-DPI drags to feed stale pixel widths back into AUI and widens the pane.
 
         // Hide sidebar initially, will re-show it after initialization when we got proper window size
         sidebar.Hide();
@@ -3627,6 +3656,7 @@ Plater::priv::priv(Plater* q, MainFrame* main_frame)
         // view3D_canvas->Bind(EVT_GLTOOLBAR_PRINT_PLATE, &priv::on_action_print_plate, this);
         // view3D_canvas->Bind(EVT_GLTOOLBAR_PRINT_ALL, &priv::on_action_print_all, this);
         // view3D_canvas->Bind(EVT_GLTOOLBAR_EXPORT_GCODE, &priv::on_action_export_gcode, this);
+        view3D_canvas->Bind(EVT_GLVIEWTOOLBAR_BRIM_EARS, [q](SimpleEvent&) { q->select_brim_ears(); });
         view3D_canvas->Bind(EVT_GLVIEWTOOLBAR_ASSEMBLE, [q](SimpleEvent&) { q->select_view_3D("Assemble"); });
         view3D_canvas->Bind(EVT_GLVIEWTOOLBAR_AI_CLOUD_SERVICE, [q](SimpleEvent&) { q->select_ai_cloud_service(); });
         // preview also send these events
@@ -4099,8 +4129,21 @@ void Plater::priv::select_next_view_3D()
     //        set_current_panel(view3D);
 }
 
+void Plater::priv::select_brim_ears() {
+    const GLCanvas3D* canvas = q->canvas3D();
+    if (canvas == nullptr)
+        return;
+
+    Slic3r::GUI::GLGizmosManager& mng = const_cast<GLGizmosManager&>(canvas->get_gizmos_manager());
+    mng.open_gizmo(Slic3r::GUI::GLGizmosManager::EType::BrimEars);
+}
+
 void Plater::priv::select_ai_cloud_service()
 {
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_AI_SERVICE_CALL;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+
     if (!Slic3r::GUI::wxGetApp().is_login()) {
         wxGetApp().swith_community_sub_page("login");
     } else {
@@ -4121,7 +4164,6 @@ void Plater::priv::check_gcode_path_contain_in_bed(int plate_index)
     PartPlate* plate = partplate_list.get_plate(plate_index);
     if (!plate)
         return;
-
     plate->check_gcode_path_contain_in_bed();
 }
 
@@ -4510,7 +4552,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         load_type = static_cast<LoadType>(std::stoi(import_project_action));
 
                     // BBS: version check
-                    Semver app_version = *(Semver::parse(CREALITYPRINT_VERSION));
+                    ParsedCrealityVersion parsed_app_version = parse_creality_version(std::string(CREALITYPRINT_VERSION), parse_build_id_string(std::string(SLIC3R_BUILD_ID)));
+                    Semver app_version = parsed_app_version.valid() ? parsed_app_version.semver : Semver();
                     if (en_3mf_file_type == En3mfType::From_Prusa) {
                         // do not reset the model config
                         load_config = false;
@@ -4549,7 +4592,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         if (config_substitutions.unrecogized_keys.size() > 0) {
                             wxString text = wxString::Format(
                                 _L("The 3mf's version %s is newer than %s's version %s, Found following keys unrecognized:"),
-                                file_version.to_string(), std::string(SLIC3R_APP_FULL_NAME), app_version.to_string());
+                                file_version.to_string_sf(), std::string(SLIC3R_APP_FULL_NAME), app_version.to_string_sf());
                             text += "\n";
                             bool first = true;
                             // std::string context = into_u8(text);
@@ -4572,7 +4615,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             if (file_version.min() != app_version.min()) {
                                 wxString text = wxString::Format(
                                     _L("The 3mf's version %s is newer than %s's version %s, Suggest to upgrade your software."),
-                                    file_version.to_string(), std::string(SLIC3R_APP_FULL_NAME), app_version.to_string());
+                                    file_version.to_string_sf(), std::string(SLIC3R_APP_FULL_NAME), app_version.to_string_sf());
                                 text += "\n";
                                 show_info(q, text, _L("Newer 3mf version"));
                             }
@@ -4619,8 +4662,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             q->skip_thumbnail_invalid = false;
                             return empty_result;
                         }
-#if !AUTOMATION_TOOL || !AUTO_CONVERT_3MF
-                        Check3mfVendor::getInstance()->updatePlateObject(plate_data, model);
+#if !AUTOMATION_TOOL
+                        // fix[#14823]: when in load-model-only, arrange would affect other objects
+                        if(load_config) {
+                            Check3mfVendor::getInstance()->updatePlateObject(plate_data, model);
+                        }
 #endif
                         Semver old_version(1, 5, 9);
                         if ((en_3mf_file_type == En3mfType::From_BBS) && (file_version < old_version) && load_model && load_config &&
@@ -5156,6 +5202,17 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     *wipe_tower_y = *file_wipe_tower_y;
                                 if (wipe_tower_rotation_angle)
                                     *wipe_tower_rotation_angle = *file_wipe_tower_rotation_angle;
+                            }
+                            {
+                                DynamicPrintConfig& printer_config = wxGetApp().preset_bundle->printers.get_selected_preset().config;
+                                auto config_flush_multiplier_opt  = printer_config.optptr("default_flush_multiplier");
+                                //auto                config_loaded_flush_multiplier_opt = config_loaded.optptr("flush_multiplier");
+                                if (config_flush_multiplier_opt /*&& config_loaded_flush_multiplier_opt*/) {
+                                    //config_loaded.optptr("flush_multiplier", true)->set(config_flush_multiplier_opt);
+                                    auto& project_config = wxGetApp().preset_bundle->project_config;
+                                    project_config.optptr("flush_multiplier", true)->set(config_flush_multiplier_opt);
+                                    wxGetApp().app_config->set("flush_multiplier", std::to_string(config_flush_multiplier_opt->getFloat()));
+                                }
                             }
                         }
 
@@ -6367,6 +6424,10 @@ void Plater::priv::reset(bool apply_presets_change)
         if (!sidebar_layout.is_collapsed && !sidebar.IsShown()) {
             sidebar.Show();
         }
+        if (sidebar.IsShown() && sidebar.IsDocked() && sidebar.rect.GetWidth() > 0) {
+            sidebar.BestSize(sidebar.rect.GetWidth(), sidebar.best_size.GetHeight());
+            wxGetApp().app_config->set("sidebar_width_em", std::to_string(double(sidebar.rect.GetWidth()) / std::max(1, wxGetApp().em_unit())));
+        }
         auto layout = m_aui_mgr.SavePerspective();
         wxGetApp().app_config->set("window_layout", layout.utf8_string());
     }
@@ -6819,6 +6880,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
 
         if (err.string.empty()) {
             this->partplate_list.get_curr_plate()->update_apply_result_invalid(false);
+            this->partplate_list.get_curr_plate()->set_validate_error_message("");  // Clear error message
             notification_manager->set_all_slicing_errors_gray(true);
             notification_manager->close_notification_of_type(NotificationType::ValidateError);
             if (invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
@@ -6834,6 +6896,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             }
         } else {
             this->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
+            this->partplate_list.get_curr_plate()->set_validate_error_message(err.string);  // Save error message
             // The print is not valid.
             // Show error as notification.
             notification_manager->push_validate_error_notification(err);
@@ -7192,6 +7255,7 @@ bool Plater::priv::replace_volume_with_stl(int object_idx, int volume_idx, const
     new_volume->supported_facets.assign(old_volume->supported_facets);
     new_volume->seam_facets.assign(old_volume->seam_facets);
     new_volume->mmu_segmentation_facets.assign(old_volume->mmu_segmentation_facets);
+    new_volume->fuzzy_skin_facets.assign(old_volume->fuzzy_skin_facets);
     std::swap(old_model_object->volumes[volume_idx], old_model_object->volumes.back());
     old_model_object->delete_volume(old_model_object->volumes.size() - 1);
     if (!sinking)
@@ -8735,10 +8799,37 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent& evt)
     //    }
     //}
 
+    // Helper function to send slice completion analytics event
+    auto send_slice_analytics = [this](const SlicingProcessCompletedEvent& evt) {
+        AnalyticsEventPayload payload;
+        payload.type = m_slice_all ? AnalyticsDataEventType::ANALYTICS_SLICE_ALL_COMPLETE
+                                   : AnalyticsDataEventType::ANALYTICS_SLICE_SINGLE_COMPLETE;
+        nlohmann::json data;
+        data["printer"] = wxGetApp().preset_bundle->full_config().opt_serialize("printer_model");
+        data["process"] = wxGetApp().preset_bundle->prints.get_selected_preset_name();
+        if (evt.success()) {
+            data["error_code"] = "OK";
+        } else if (evt.cancelled()) {
+            data["error_code"] = "Cancel";
+        } else if (evt.error()) {
+            data["error_code"] = evt.format_error_message().first;
+        }
+        payload.data = data;
+        
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Analytics payload - " << payload.data.dump();
+        boost::log::core::get()->flush();
+        
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+    };
+
     if (is_finished) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":finished, reload print soon");
         m_is_slicing = false;
         this->preview->reload_print(false);
+
+        // Send slice completion analytics event
+        send_slice_analytics(evt);
+
         /* BBS if in publishing progress */
         if (m_is_publishing) {
             if (m_publish_dlg && !m_publish_dlg->was_cancelled()) {
@@ -8772,6 +8863,24 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent& evt)
                                     << boost::format(":slicing all, plate %1% can not be sliced, will stop") % m_cur_slice_plate;
             m_is_slicing = false;
             q->SetDropTarget(new PlaterDropTarget(*main_frame, *q));
+            
+            // Send slice completion analytics event for failed slice_all
+            // Construct an error event with the actual validation error message
+            std::string error_msg = partplate_list.get_curr_plate()->get_validate_error_message();
+            if (error_msg.empty()) {
+                error_msg = "Slicing configuration invalid at plate " + 
+                           std::to_string(m_cur_slice_plate + 1);
+            }
+            
+            try {
+                throw SlicingError(error_msg);
+            } catch (...) {
+                auto exception_ptr = std::current_exception();
+                SlicingProcessCompletedEvent error_evt(EVT_PROCESS_COMPLETED, 0, 
+                                                       SlicingProcessCompletedEvent::Error, 
+                                                       exception_ptr);
+                send_slice_analytics(error_evt);
+            }
         }
         // not the last plate
         update_fff_scene_only_shells();
@@ -8843,9 +8952,9 @@ void Plater::priv::on_action_add(SimpleEvent&)
         // 输出耗时
         std::cout << "Function took " << spend_time << " seconds to execute." << std::endl;
         if (q->model().objects.size() > objects_before) {
-            AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
-                AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-                { AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ADD });
+            AnalyticsEventPayload payload;
+            payload.type = AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ADD;
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
         }
     }
 }
@@ -8865,9 +8974,9 @@ void Plater::priv::on_action_add_plate(SimpleEvent&)
         // q->get_camera().select_view("topfront");
         q->get_camera().requires_zoom_to_plate = REQUIRES_ZOOM_TO_ALL_PLATE;
         if (this->partplate_list.get_plate_count() > plates_before) {
-            AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
-                AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-                { AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ADD_PLATE });
+            AnalyticsEventPayload payload;
+            payload.type = AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ADD_PLATE;
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
         }
     }
 }
@@ -11259,6 +11368,11 @@ SLAPrint&       Plater::sla_print() { return p->sla_print; }
 
 int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_name)
 {
+    // Fire file_project_new analytics event when user creates a new project
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_FILE_PROJECT_NEW;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+
     wxGetApp().preset_bundle->project_config.erase("machine_is_belt");
     wxGetApp().clear_cloud_model_download();
     bool transfer_preset_changes = false;
@@ -11540,6 +11654,13 @@ int Plater::save_project(bool saveAs, FileType ft, En3mfType type_3mf,bool with_
 
     wxGetApp().update_saved_preset_from_current_preset();
     reset_project_dirty_after_save();
+    
+    // Fire file_project_save or file_project_save_as analytics event after successful save
+    AnalyticsEventPayload payload;
+    payload.type = saveAs ? AnalyticsDataEventType::ANALYTICS_FILE_PROJECT_SAVE_AS 
+                          : AnalyticsDataEventType::ANALYTICS_FILE_PROJECT_SAVE;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+    
     // MessageDialog(this, _L("Succeeded to save the project."), _L("Save project"), wxOK).ShowModal();
 
     //MessageDialog msg(this, _L("Saved successfully. Open Local Folder"), _L("Information"), wxYES_NO | wxYES_DEFAULT);
@@ -11647,6 +11768,13 @@ int Plater::save_project_nogcode(bool saveAs, FileType ft, En3mfType type_3mf)
 
     wxGetApp().update_saved_preset_from_current_preset();
     reset_project_dirty_after_save();
+    
+    // Fire file_project_save or file_project_save_as analytics event after successful save
+    AnalyticsEventPayload payload;
+    payload.type = saveAs ? AnalyticsDataEventType::ANALYTICS_FILE_PROJECT_SAVE_AS 
+                          : AnalyticsDataEventType::ANALYTICS_FILE_PROJECT_SAVE;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+    
     // MessageDialog(this, _L("Succeeded to save the project."), _L("Save project"), wxOK).ShowModal();
 
     //MessageDialog msg(this, _L("Saved successfully. Open Local Folder"), _L("Information"), wxYES_NO | wxYES_DEFAULT);
@@ -12056,6 +12184,9 @@ void Plater::add_model(bool imperial_units, std::string fname)
     } else {
         paths.emplace_back(fname);
     }
+    
+    // Fire analytics event for model import (except single 3MF file)
+    import_model_event(paths);
 
     std::string snapshot_label;
     assert(!paths.empty());
@@ -13559,13 +13690,7 @@ void Plater::load_gcode(const wxString& filename)
             total_weight += weight;
         }
     };
-
-    bool is_multicolor_method = current_result->multicolor_method;
     calc_statistics(ps.total_volumes_per_extruder);
-    // BBS/Creality: flush volume is tracked separately, add it to totals for weight/length/cost
-    // 多色新方案已经在 total_volumes_per_extruder 中包含冲刷体积，避免重复。
-    if (!is_multicolor_method)
-        calc_statistics(ps.flush_per_filament);
 
     current_print.print_statistics().total_used_filament = total_used_filament;
     current_print.print_statistics().total_weight        = total_weight;
@@ -14508,6 +14633,14 @@ bool Plater::open_3mf_file(const fs::path& file_path, bool isModelAndConfig)
 
                 // BBS: jump to plater panel
                 wxGetApp().mainframe->select_tab(MainFrame::tp3DEditor);
+                
+                // Fire event after user confirms
+                AnalyticsEventPayload payload;
+                payload.type = AnalyticsDataEventType::ANALYTICS_FILE_IMPORT_MODEL;
+                nlohmann::json evtData;
+                evtData["format"] = "3mf";
+                payload.data = evtData;
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
             }
         } else
             load_type = static_cast<LoadType>(std::clamp(std::stoi(wxGetApp().app_config->get("import_project_action")),
@@ -14555,6 +14688,58 @@ int Plater::get_3mf_file_count(std::vector<fs::path> paths)
     return count;
 }
 
+void Plater::import_model_event(const std::vector<fs::path>& paths) {
+    bool is_single_3mf = (paths.size() == 1 && boost::algorithm::iends_with(paths[0].string(), ".3mf"));
+    
+    if (!is_single_3mf) {
+        AnalyticsEventPayload payload;
+        payload.type = AnalyticsDataEventType::ANALYTICS_FILE_IMPORT_MODEL;
+        nlohmann::json evtData;
+        
+        // Get format from first file extension
+        std::string ext = paths[0].extension().string();
+        boost::algorithm::to_lower(ext);
+        if (ext == ".3mf") evtData["format"] = "3mf";  // Multiple 3MF files import
+        else if (ext == ".stl") evtData["format"] = "stl";
+        else if (ext == ".obj") evtData["format"] = "obj";
+        else if (ext == ".step" || ext == ".stp") evtData["format"] = "step";
+        else if (ext == ".amf") evtData["format"] = "amf";
+        else if (ext == ".svg") evtData["format"] = "svg";
+        else if (ext == ".tmf") evtData["format"] = "tmf";
+        else evtData["format"] = "other";
+        
+        payload.data = evtData;
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+    }
+}
+
+void Plater::export_model_event(const std::string& format) {
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_FILE_EXPORT_MODEL;
+    nlohmann::json evtData;
+    evtData["format"] = format;
+    payload.data = evtData;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+}
+
+void Plater::import_preset_event(const std::string& /*format*/) {
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_FILE_IMPORT_PRESET;
+    nlohmann::json evtData;
+    // No additional attributes needed
+    payload.data = evtData;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+}
+
+void Plater::export_preset_event(const std::string& /*format*/) {
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_FILE_EXPORT_PRESET;
+    nlohmann::json evtData;
+    // No additional attributes needed
+    payload.data = evtData;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+}
+
 void Plater::add_file()
 {
     auto start = std::chrono::high_resolution_clock::now();
@@ -14576,6 +14761,9 @@ void Plater::add_file()
     std::vector<fs::path> paths;
     for (const auto& file : input_files)
         paths.emplace_back(into_path(file));
+    
+    // Fire analytics event for model import (except single 3MF file)
+    import_model_event(paths);
 
     std::string snapshot_label;
     assert(!paths.empty());
@@ -14736,6 +14924,7 @@ void Plater::select_view(const std::string& direction) { p->select_view(directio
 
 // BBS: add no_slice logic
 void Plater::select_view_3D(const std::string& name, bool no_slice) { p->select_view_3D(name, no_slice); }
+void Plater::select_brim_ears() { p->select_brim_ears(); }
 void Plater::select_ai_cloud_service() { p->select_ai_cloud_service(); }
 
 void Plater::reload_paint_after_background_process_apply() { p->preview->set_reload_paint_after_background_process_apply(true); }
@@ -14794,6 +14983,9 @@ int GUI::Plater::close_with_confirm(std::function<bool(bool)> second_check)
     // software close, upload analytics data here
     wxGetApp().mark_app_close_time();
     AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_CLOSE,{ AnalyticsDataEventType::ANALYTICS_SOFTWARE_CLOSE });
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_SOFTWARE_CLOSE;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
 
     MessageDialog dlg(static_cast<wxWindow*>(this), _L("The current project has unsaved changes, save it before continue?"),
                       wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Save"), wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxCENTRE);
@@ -15471,6 +15663,7 @@ void Plater::export_gcode_3mf(bool export_all)
                 bool                   on_removable = removable_drive_manager.is_path_on_removable_drive(p->last_output_dir_path);
                 appconfig.update_last_output_dir(output_path.parent_path().string(), false);
                 p->notification_manager->push_exporting_finished_notification(output_path.string(), p->last_output_dir_path, on_removable);
+                
             }
         }
 
@@ -15507,6 +15700,17 @@ void Plater::export_gcode_3mf(bool export_all)
         {
 
         }
+
+        // Fire export_gcode analytics event after successful export
+        AnalyticsEventPayload payload;
+        if (export_all) {
+            payload.type = AnalyticsDataEventType::ANALYTICS_FILE_EXPORT_GCODE_ALL;
+        } else {
+            payload.type = AnalyticsDataEventType::ANALYTICS_FILE_EXPORT_GCODE_SINGLE;
+        }
+        nlohmann::json evtData;
+        payload.data = evtData;
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
     }
     if (wxGetApp().preset_bundle->machine_is_belt())
         p->restore_belt_transformation();
@@ -15652,6 +15856,9 @@ void Plater::export_core_3mf()
             bool                   on_removable            = removable_drive_manager.is_path_on_removable_drive(p->last_output_dir_path);
             wxGetApp().app_config->update_last_output_dir(output_path.parent_path().string(), false);
             p->notification_manager->push_exporting_finished_notification(output_path.string(), p->last_output_dir_path, on_removable);
+            
+            // Fire file_export_model analytics event after successful export
+            export_model_event("3mf");
         }
         try
         {
@@ -16012,6 +16219,10 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls)
 
                 Slic3r::store_stl(get_save_file(path_u8, object->name).c_str(), &mesh, true);
             }
+            
+            // Fire file_export_model analytics event after successful export
+            export_model_event("stl");
+            
             return;
         }
     } else if (!multi_stls) {
@@ -16035,6 +16246,9 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls)
             bool                   on_removable            = removable_drive_manager.is_path_on_removable_drive(p->last_output_dir_path);
             wxGetApp().app_config->update_last_output_dir(output_path.parent_path().string(), false);
             p->notification_manager->push_exporting_finished_notification(output_path.string(), p->last_output_dir_path, on_removable);
+            
+            // Fire file_export_model analytics event after successful export
+            export_model_event("stl");
         }
         return;
     }
@@ -16049,6 +16263,9 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls)
         bool                   on_removable            = removable_drive_manager.is_path_on_removable_drive(p->last_output_dir_path);
         wxGetApp().app_config->update_last_output_dir(output_path.parent_path().string(), false);
         p->notification_manager->push_exporting_finished_notification(output_path.string(), p->last_output_dir_path, on_removable);
+        
+        // Fire file_export_model analytics event after successful export
+        export_model_event("stl");
     }
 }
 
@@ -16958,6 +17175,9 @@ void Plater::reslice()
         // upload analytics data here
         AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_SLICE_PLATE_CMD,
                                                                     {AnalyticsDataEventType::ANALYTICS_SLICE_PLATE});
+        AnalyticsEventPayload payload;
+        payload.type = AnalyticsDataEventType::ANALYTICS_SLICE_PLATE;
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
     }else{
         p->restore_belt_transformation();
     }
@@ -17532,6 +17752,7 @@ void Plater::take_snapshot(const std::string& snapshot_name, UndoRedo::SnapshotT
     p->take_snapshot(snapshot_name, snapshot_type);
 }
 void Plater::reset_last_loaded_3mf() { m_last_loaded_3mf.clear(); }
+size_t Plater::get_active_snapshot_time() { return p->undo_redo_stack().active_snapshot_time(); }
 // void Plater::take_snapshot(const wxString &snapshot_name, UndoRedo::SnapshotType snapshot_type) { p->take_snapshot(snapshot_name,
 // snapshot_type); }
 void Plater::suppress_snapshots() { p->suppress_snapshots(); }
@@ -17541,6 +17762,7 @@ void Plater::single_snapshots_enter(SingleSnapshot* single) { p->single_snapshot
 void Plater::single_snapshots_leave(SingleSnapshot* single) { p->single_snapshots_leave(single); }
 void Plater::undo() { p->undo(); }
 void Plater::redo() { p->redo(); }
+void Plater::undo_redo_to(size_t time_to_load) { p->undo_redo_to(time_to_load); }
 void Plater::undo_to(int selection)
 {
     if (selection == 0) {
@@ -18039,14 +18261,15 @@ void Plater::clear_before_change_mesh(int obj_idx, bool simplify)
 {
     ModelObject* mo = model().objects[obj_idx];
 
-    // If there are custom supports/seams/mmu segmentation, remove them. Fixed mesh
+    // If there are custom supports/seams/mmu/fuzzy skin segmentation, remove them. Fixed mesh
     // may be different and they would make no sense.
     bool paint_removed = false;
     for (ModelVolume* mv : mo->volumes) {
-        paint_removed |= !mv->supported_facets.empty() || !mv->seam_facets.empty() || !mv->mmu_segmentation_facets.empty();
+        paint_removed |= !mv->supported_facets.empty() || !mv->seam_facets.empty() || !mv->mmu_segmentation_facets.empty() || !mv->fuzzy_skin_facets.empty();
         mv->supported_facets.reset();
         mv->seam_facets.reset();
         mv->mmu_segmentation_facets.reset();
+        mv->fuzzy_skin_facets.reset();
     }
     if (paint_removed) {
         // snapshot_time is captured by copy so the lambda knows where to undo/redo to.
@@ -18538,6 +18761,7 @@ void Plater::validate_current_plate(bool& model_fits, bool& validate_error)
 
         if (err.string.empty()) {
             p->partplate_list.get_curr_plate()->update_apply_result_invalid(false);
+            p->partplate_list.get_curr_plate()->set_validate_error_message("");  // Clear error message
             p->notification_manager->set_all_slicing_errors_gray(true);
             p->notification_manager->close_notification_of_type(NotificationType::ValidateError);
 
@@ -18550,6 +18774,7 @@ void Plater::validate_current_plate(bool& model_fits, bool& validate_error)
         } else {
             // The print is not valid.
             p->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
+            p->partplate_list.get_curr_plate()->set_validate_error_message(err.string);  // Save error message
             // Show error as notification.
             p->notification_manager->push_validate_error_notification(err);
             p->process_validation_warning(warning);

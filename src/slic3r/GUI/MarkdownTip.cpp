@@ -391,8 +391,11 @@ ProcessTip::ProcessTip()
     m_Title_text = new wxStaticText(this, wxID_ANY, m_Content.CS_Title, wxDefaultPosition, wxDefaultSize);
     m_Title_text->SetFont(Label::Head_14);
     m_Title_text->SetForegroundColour(fontColor);
+    m_Title_text->SetMinSize({ FromDIP(contentWidth), -1 });
+    m_Title_text->SetMaxSize({ FromDIP(contentWidth), -1 });
+    m_Title_text->Wrap(FromDIP(contentWidth));
     mainSizer->AddSpacer(FromDIP(8));
-    mainSizer->Add(m_Title_text, 0, wxLEFT, FromDIP(8));
+    mainSizer->Add(m_Title_text, 0, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(8));
     mainSizer->AddSpacer(FromDIP(8));
 
     m_Content_text = new wxStaticText(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize);
@@ -477,6 +480,7 @@ ProcessTip::~ProcessTip()
 void ProcessTip::updateUI()
 {
     m_Title_text->SetLabelText(m_Content.CS_Title);
+    m_Title_text->Wrap(FromDIP(contentWidth));
     m_Content_text->SetLabelText(m_Content.CS_Content);
     m_Url_text->SetLabelText(m_Content.CS_URL);
     wxString keyTest = wxString::Format(_L("Parameter name: %s"), m_Content.CS_Key+"\n");

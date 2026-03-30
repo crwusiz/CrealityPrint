@@ -94,6 +94,9 @@ std::pair<bool, std::string> GLShadersManager::init()
     valid &= append_shader("fxaa", { prefix + "fxaa.vs", prefix + "fxaa.fs" });
     valid &= append_shader("gaussian_blur33", { prefix + "gaussian_blur33.vs", prefix + "gaussian_blur33.fs" });
 
+	valid &= append_shader("gcode_gouraud_light", {prefix + "gcode_gouraud_light.vs", prefix + "gcode_gouraud_light.fs"});
+    valid &= append_shader("gcode_flat", {prefix + "gcode_flat.vs", prefix + "gcode_flat.fs"});
+    
     return { valid, error };
 }
 

@@ -1,8 +1,44 @@
 import lldb
+import struct
+
+def ReadWideString(process, addr, is_32bit=True):
+    error = lldb.SBError()
+    # Read reasonable amount
+    data = process.ReadMemory(addr, 2048, error)
+    if not error.Success():
+        return ""
+    
+    res = ""
+    offset = 0
+    step = 4 if is_32bit else 2
+    
+    while offset < len(data):
+        chunk = data[offset:offset+step]
+        if len(chunk) < step: break
+        
+        if is_32bit:
+            val = struct.unpack('<I', chunk)[0] # Little endian
+        else:
+            val = struct.unpack('<H', chunk)[0]
+            
+        if val == 0: break
+        try:
+            res += chr(val)
+        except:
+            res += "?"
+        offset += step
+        
+    return res
 
 def StringSummaryProvider(valobj, internal_dict):
     # Try to access _M_dataplus._M_p
     # If fails, try to look at memory manually
+    
+    # Check if type contains wchar_t
+    type_name = valobj.GetType().GetName()
+    # Linux wchar_t is usually 32-bit (4 bytes), Windows is 16-bit (2 bytes)
+    # We assume Linux 4-byte wchar_t here given the environment.
+    is_wide = 'wchar_t' in type_name
     
     # This is a heuristic for GCC's std::string
     # It has _M_dataplus, _M_string_length, etc.
@@ -20,10 +56,20 @@ def StringSummaryProvider(valobj, internal_dict):
                 if addr == 0: return '""'
                 
                 # Read string from memory
-                error = lldb.SBError()
-                s = valobj.GetProcess().ReadCStringFromMemory(addr, 1024, error)
-                if error.Success():
-                    return f'"{s}"'
+                if is_wide:
+                    # Try 32-bit first (Linux standard)
+                    s = ReadWideString(valobj.GetProcess(), addr, is_32bit=True)
+                    return f'L"{s}"'
+                else:
+                    error = lldb.SBError()
+                    s = valobj.GetProcess().ReadCStringFromMemory(addr, 1024, error)
+                    if error.Success():
+                        # Heuristic: if C-string is length 1, and we are wxString, it MIGHT be wide string 
+                        if len(s) == 1 and 'wxString' in type_name:
+                             s_wide = ReadWideString(valobj.GetProcess(), addr, is_32bit=True)
+                             if len(s_wide) > 1:
+                                  return f'L"{s_wide}"'
+                        return f'"{s}"'
     except:
         pass
         
@@ -43,9 +89,21 @@ def StringSummaryProvider(valobj, internal_dict):
         error = lldb.SBError()
         pointer_val = valobj.GetProcess().ReadPointerFromMemory(addr, error)
         if error.Success() and pointer_val != 0:
-            s = valobj.GetProcess().ReadCStringFromMemory(pointer_val, 1024, error)
-            if error.Success():
-                return f'"{s}"'
+            if is_wide:
+                 s = ReadWideString(valobj.GetProcess(), pointer_val, is_32bit=True)
+                 return f'L"{s}"'
+            else:
+                 # Check length? Maybe just read C-string
+                 s = valobj.GetProcess().ReadCStringFromMemory(pointer_val, 1024, error)
+                 
+                 # Heuristic: if C-string is length 1, and we are wxString, it MIGHT be wide string 
+                 if error.Success():
+                     if len(s) == 1 and 'wxString' in type_name:
+                          # Try reading as wide
+                          s_wide = ReadWideString(valobj.GetProcess(), pointer_val, is_32bit=True)
+                          if len(s_wide) > 1:
+                               return f'L"{s_wide}"'
+                     return f'"{s}"'
     except:
         pass
         

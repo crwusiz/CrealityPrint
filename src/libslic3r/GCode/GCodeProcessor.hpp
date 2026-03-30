@@ -56,6 +56,7 @@ class Print;
         {
             float time;
             float prepare_time;
+            float flush_time;
             std::vector<std::pair<CustomGCode::Type, std::pair<float, float>>> custom_gcode_times;
             std::vector<std::pair<EMoveType, float>> moves_times;
             std::vector<std::pair<ExtrusionRole, float>> roles_times;
@@ -64,6 +65,7 @@ class Print;
             void reset() {
                 time = 0.0f;
                 prepare_time = 0.0f;
+                flush_time = 0.0f;
                 custom_gcode_times.clear();
                 custom_gcode_times.shrink_to_fit();
                 moves_times.clear();
@@ -94,7 +96,7 @@ class Print;
         PrintEstimatedStatistics() { reset(); }
 
         void reset() {
-            for (auto m : modes) {
+            for (auto& m : modes) {
                 m.reset();
             }
             volumes_per_color_change.clear();
@@ -123,6 +125,14 @@ class Print;
         ConflictResult() = default;
     };
 
+    struct ToolpathOutsideResult
+    {
+        std::string _objName; 
+        const void* _obj;
+        ToolpathOutsideResult(const std::string& objName, const void* obj) : _objName(objName), _obj(obj) {}
+        ToolpathOutsideResult() = default;
+    };
+
     struct BedMatchResult
     {
         bool match;
@@ -135,10 +145,12 @@ class Print;
     };
 
     using ConflictResultOpt = std::optional<ConflictResult>;
+    using ToolpathOutsideResultOpt = std::optional<ToolpathOutsideResult>;
 
     struct GCodeProcessorResult
     {
         ConflictResultOpt conflict_result;
+        ToolpathOutsideResultOpt toolpath_outside_result;
         BedMatchResult  bed_match_result;
 
         struct SettingsIds
@@ -202,6 +214,12 @@ class Print;
         std::string filename;
         unsigned int id;
         std::vector<MoveVertex> moves;
+        // Cached "interest region" classification per MoveVertex (indexed by move_id).
+        // Filled during slicing (3mf workflow) and consumed by GUI preview; empty when loading a standalone .gcode.
+        std::vector<unsigned char> custom_interest_by_move_id;
+        // Label object id parsed from "; OBJECT_ID: <id>" markers (indexed by move_id).
+        // Filled during slicing and can be used to apply per-object logic in post-processing / ROI detection.
+        std::vector<int> object_id_by_move_id;
         // Positions of ends of lines of the final G-code this->filename after TimeProcessor::post_process() finalizes the G-code.
         std::vector<size_t> lines_ends;
         Pointfs printable_area;
@@ -238,7 +256,7 @@ class Print;
         float                           creality_flush_time{0};
         std::vector<std::vector<int>>   tool_change_path;        // record tool change
         std::vector<std::vector<float>> tool_change_volumes_map; // t1 -> t2 used volumne: tool_change_volumes_map[1][2]
-        float                           flush_multiplier;
+        float                           flush_multiplier{1.0f};
         float                           defaultAcc;
         std::string                     printer_model;
         std::string                     printer_settings_id;
@@ -269,6 +287,8 @@ class Print;
             filename = other.filename;
             id = other.id;
             moves = other.moves;
+            custom_interest_by_move_id = other.custom_interest_by_move_id;
+            object_id_by_move_id = other.object_id_by_move_id;
             lines_ends = other.lines_ends;
             printable_area = other.printable_area;
             bed_exclude_area = other.bed_exclude_area;
@@ -324,6 +344,8 @@ class Print;
             id                       = other.id;
             
             moves                    = std::move( other.moves );
+            custom_interest_by_move_id = other.custom_interest_by_move_id;
+            object_id_by_move_id = other.object_id_by_move_id;
             lines_ends               = std::move( other.lines_ends );
 
             printable_area           = other.printable_area;
@@ -506,6 +528,7 @@ class Print;
                 bool recalculate{ false };
                 bool nominal_length{ false };
                 bool prepare_stage{ false };
+                bool flush_stage{ false };
             };
 
             EMoveType move_type{ EMoveType::Noop };
@@ -625,13 +648,15 @@ class Print;
             std::vector<float> layers_time;
             //BBS: prepare stage time before print model, including start gcode time and mostly same with start gcode time
             float prepare_time;
+            float flushing_time;
 
             void reset();
             float m_additional_time = 0.0;
+            float m_additional_flush_time = 0.0;
             // Simulates firmware st_synchronize() call
-            void simulate_st_synchronize(float additional_time = 0.0f);
-            void calculate_time(size_t keep_last_n_blocks = 0, float additional_time = 0.0f);
-            void calculate_time_klipper(size_t keep_last_n_blocks = 0, float additional_time = 0.0f);
+            void simulate_st_synchronize(float additional_time = 0.0f, float additional_flush_time = 0.0f);
+            void calculate_time(size_t keep_last_n_blocks = 0, float additional_time = 0.0f, float additional_flush_time = 0.0f);
+            void calculate_time_klipper(size_t keep_last_n_blocks = 0, float additional_time = 0.0f, float additional_flush_time = 0.0f);
             void flush_time(std::vector<TimeBlock>& queue, bool lazy);
            
         
@@ -863,6 +888,7 @@ class Print;
         bool m_wiping;
         bool               m_flushing = false;
         bool m_wipe_tower;
+        bool m_has_extruded = false;
         float m_remaining_volume;
         bool m_manual_filament_change;
 
@@ -890,6 +916,7 @@ class Print;
         float m_fan_speed; // percentage
         float m_z_offset; // mm
         ExtrusionRole m_extrusion_role;
+        int m_object_id{ -1 }; // Current label object id from "; OBJECT_ID:" comment markers.
         unsigned char m_extruder_id;
         unsigned char m_last_extruder_id;
         ExtruderColors m_extruder_colors;
@@ -978,6 +1005,7 @@ class Print;
 
         float get_time(PrintEstimatedStatistics::ETimeMode mode) const;
         float get_prepare_time(PrintEstimatedStatistics::ETimeMode mode) const;
+        float get_flush_time(PrintEstimatedStatistics::ETimeMode mode) const;
         std::string get_time_dhm(PrintEstimatedStatistics::ETimeMode mode) const;
         std::vector<std::pair<CustomGCode::Type, std::pair<float, float>>> get_custom_gcode_times(PrintEstimatedStatistics::ETimeMode mode, bool include_remaining) const;
 

@@ -3,7 +3,6 @@ window.$cxy = {
     token: '',
     userId: '',
     lang: 0,
-    duId: '',
     // 默认 dev + china
     apiAddress: '/cxy-api-dev-cn',
     websiteAddress: 'https://www.crealitycloud.cn',

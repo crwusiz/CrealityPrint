@@ -123,6 +123,7 @@ const wxString DEFAULT_PROJECT_NAME = "Untitled";
 class Sidebar : public wxPanel
 {
     ConfigOptionMode    m_mode;
+    int                 m_last_em_unit{ 0 };
 public:
     enum DockingState
     {
@@ -336,6 +337,19 @@ public:
     int  get_3mf_file_count(std::vector<fs::path> paths);
     void add_file();
     void add_model(bool imperial_units = false, std::string fname = "");
+    
+    // Fire analytics event for model import
+    void import_model_event(const std::vector<fs::path>& paths);
+    
+    // Fire analytics event for model export
+    void export_model_event(const std::string& format);
+    
+    // Fire analytics event for preset import
+    void import_preset_event(const std::string& format);
+    
+    // Fire analytics event for preset export
+    void export_preset_event(const std::string& format);
+    
     void import_zip_archive();
     void import_sl1_archive();
     void extract_config_from_project();
@@ -442,6 +456,7 @@ public:
     void select_view(const std::string& direction);
     //BBS: add no_slice logic
     void select_view_3D(const std::string& name, bool no_slice = true);
+    void select_brim_ears();
     void select_ai_cloud_service();
 
     void reload_paint_after_background_process_apply();
@@ -569,11 +584,12 @@ public:
     //void take_snapshot(const wxString &snapshot_name);
     void take_snapshot(const std::string &snapshot_name, UndoRedo::SnapshotType snapshot_type);
     //void take_snapshot(const wxString &snapshot_name, UndoRedo::SnapshotType snapshot_type);
-
+    size_t get_active_snapshot_time();
     void undo();
     void redo();
     void undo_to(int selection);
     void redo_to(int selection);
+    void   undo_redo_to(size_t time_to_load);
     bool undo_redo_string_getter(const bool is_undo, int idx, const char** out_text);
     void undo_redo_topmost_string_getter(const bool is_undo, std::string& out_text);
     int update_print_required_data(Slic3r::DynamicPrintConfig config, Slic3r::Model model, Slic3r::PlateDataPtrs plate_data_list, std::string file_name, std::string file_path);

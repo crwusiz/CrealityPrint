@@ -19,8 +19,22 @@
 #include "libslic3r/Time.hpp"
 #include "slic3r/GUI/PhysicalPrinter.hpp"
 #include "slic3r/GUI/SystemId/SystemId.hpp"
+#include "libslic3r/Utils.hpp"
+#include <boost/log/trivial.hpp>
 
 using namespace Slic3r;
+
+namespace {
+    std::unordered_map<std::string, int> g_last_device_states;
+    
+    /**
+     * @brief Check if the state is a failure state (for future extension)
+     */
+    inline bool IsFailureState(int state) {
+        return (state == 3);  // TODO: change to (state == 3 || state == 4) when needed
+    }
+}
+
 namespace DM {
     DeviceMgrRoutes::DeviceMgrRoutes()
     {
@@ -57,6 +71,10 @@ namespace DM {
         // form device, real time update of the data
         this->Handler({ "update_devices" }, [this](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
             DM::DataCenter::Ins().update_data(json_data);
+            
+            // 7.1.0版本先屏蔽此事件上报
+            //check_and_send_print_failure_events(json_data);
+            
             if (DM::DataCenter::Ins().is_current_device_changed()) {
                 wxPostEvent(wxGetApp().plater(), wxCommandEvent(EVT_CURRENT_DEVICE_CHANGED));
             }
@@ -67,6 +85,9 @@ namespace DM {
                 // upload analytics data here
                 AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
                                                                         {AnalyticsDataEventType::ANALYTICS_DEVICE_INFO});
+                AnalyticsEventPayload payload;
+                payload.type = AnalyticsDataEventType::ANALYTICS_DEVICE_INFO;
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
             }
 
             return true;
@@ -130,7 +151,18 @@ namespace DM {
 
             std::string url = json_data["url"].get<std::string>();
             std::string  sdp = json_data["sdp"].get<std::string>();
+            bool videoEncryption = false;
+            auto videoEncryptionIt = json_data.find("videoEncryption");
+            if (videoEncryptionIt != json_data.end() && videoEncryptionIt->is_boolean()) {
+                videoEncryption = videoEncryptionIt->get<bool>();
+            }
             
+            std::string videoToken;
+            auto tokenIt = json_data.find("token");
+            if (tokenIt != json_data.end() && tokenIt->is_string()) {
+                videoToken = tokenIt->get<std::string>();
+            }
+
                 std::string localip = "";
                 try {
                     // 提取域名部分
@@ -182,19 +214,68 @@ namespace DM {
                 j["type"] = "offer";
                 j["sdp"] = sdp;
 
+                if (!videoToken.empty()) {
+                    j["token"] = videoToken;
+                }
+
                 std::string d = j.dump();
                 std::string e = cereal::base64::encode((unsigned char const*)d.c_str(), d.length());
 
+                if (!videoEncryption && url.rfind("https://", 0) == 0) {
+                    videoEncryption = true;
+                }
+
+                std::string responseBody;
+                std::string responseError;
+                unsigned responseStatus = 0;
+
+                if (videoEncryption) {
+                    try {
+                        Http::post(url)
+                            .timeout_connect(10)
+                            .timeout_max(15)
+                            .header("Content-Type", "plain/text")
+                            .set_post_body(e)
+                            .ca_file(Slic3r::resources_dir() + "/cert/ca.crt")
+                            .ssl_verify_peer(true)   //校验证书链
+                            .ssl_verify_host(false)  //不校验域名
+                            .on_complete([&](std::string body, unsigned http_status) {
+                                responseBody = body;
+                                responseStatus = http_status;
+                            })
+                            .on_error([&](std::string body, std::string error, unsigned http_status) {
+                                responseBody = body;
+                                responseError = error;
+                                responseStatus = http_status;
+                            })
+                            .perform_sync();
+                    } catch (const std::exception& ex) {
+                        responseError = ex.what();
+                    }
+                }
+
                 nlohmann::json out_data;
-                out_data["sdp"] = e;
+                if (videoEncryption) {
+                    if (!responseBody.empty()) {
+                        out_data["sdp"] = responseBody;
+                    } else {
+                        out_data["status"] = responseStatus;
+                        out_data["error"] = responseError;
+                    }
+                } else {
+                    out_data["sdp"] = e;
+                }
                 out_data["url"] = url;
+                out_data["videoEncryption"] = videoEncryption;
+                out_data["status"] = responseStatus;
 
                 nlohmann::json commandJson;
                 commandJson["command"] = "get_webrtc_local_param";
                 commandJson["data"] = out_data;
                 auto strJS = commandJson.dump(-1, ' ', true);
-                wxGetApp().CallAfter([browse,strJS]{
-                        AppUtils::PostMsg(browse, wxString::Format("window.handleStudioCmd('%s');",strJS).ToStdString());
+                auto encodedJS = RemotePrint::Utils::url_encode(strJS);
+                wxGetApp().CallAfter([browse, encodedJS]{
+                        AppUtils::PostMsg(browse, wxString::Format("window.handleStudioCmd('%s');", encodedJS).ToStdString());
                             });
                 
                 return true;
@@ -250,6 +331,65 @@ namespace DM {
             DM::DeviceMgr::Ins().EditDeiveName(address, name);
             return true;
             });
+
+        // Handle print command from device detail page
+        this->Handler({ "device_detail_print" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
+            try {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Received device_detail_print command";
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": RAW json_data - " << json_data.dump();
+                boost::log::core::get()->flush();
+                
+                // Create analytics event payload
+                AnalyticsEventPayload payload;
+                payload.type = AnalyticsDataEventType::ANALYTICS_PRINT_BEGIN;
+                
+                // Extract parameters from json_data["data"]
+                nlohmann::json analytics_data;
+                
+                // Get the "data" field first (where actual parameters are located)
+                nlohmann::json data_field;
+                if (json_data.contains("data") && !json_data["data"].is_null()) {
+                    if (json_data["data"].is_string()) {
+                        // If data is a string, parse it
+                        try {
+                            data_field = nlohmann::json::parse(json_data["data"].get<std::string>());
+                        } catch (...) {
+                            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Failed to parse data string";
+                        }
+                    } else {
+                        // If data is already an object
+                        data_field = json_data["data"];
+                    }
+                }
+                
+                // Build event data from frontend JSON (empty string if field not provided)
+                analytics_data["printer"] = data_field.value("printer", "");           // Printer model from frontend
+                analytics_data["calibration"] = data_field.value("calibration", "");   // "0" or "1" from frontend
+                analytics_data["time_lapse"] = data_field.value("time_lapse", "");     // "0" or "1" from frontend
+                analytics_data["format"] = data_field.value("format", "");             // "GCode" or "3MF" from frontend
+                analytics_data["network"] = data_field.value("network", "");           // "Local" or "Global" from frontend
+                analytics_data["filament_device"] = data_field.value("filament_device", ""); // From frontend
+                analytics_data["entry"] = data_field.value("entry", "");               // Entry point from frontend
+                analytics_data["error_code"] = data_field.value("error_code", "");     // Error code from frontend
+                
+                payload.data = analytics_data;
+                
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Analytics payload - " << payload.data.dump();
+                boost::log::core::get()->flush();
+                
+                // Trigger analytics event upload
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+                
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": ANALYTICS_PRINT_BEGIN event sent successfully";
+                
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Failed to process device_detail_print command: " << e.what();
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Failed to process device_detail_print command with unknown error";
+            }
+            
+            return true;
+        });
 
         this->Handler({ "remove_device" }, [](wxWebView* browse, const std::string& data, nlohmann::json& json_data, const std::string cmd) {
             std::string address = json_data["address"];
@@ -478,5 +618,73 @@ namespace DM {
                 AppUtils::PostMsg(browse, commandJson);
             return true;
             });
+    }
+
+    void DeviceMgrRoutes::check_and_send_print_failure_events(const nlohmann::json& json_data)
+    {
+        try {
+            if (!json_data.contains("data") || !json_data["data"].contains("printerList")) {
+                return;
+            }
+            
+            for (const auto& group : json_data["data"]["printerList"]) {
+                if (!group.contains("list")) {
+                    continue;
+                }
+                
+                for (const auto& printer : group["list"]) {
+                    // ✅ Safe field access using .value()
+                    std::string mac = printer.value("mac", "");
+                    if (mac.empty()) {
+                        continue;
+                    }
+                    
+                    // ✅ Use 'state' field instead of 'deviceState' (actual field name in JSON)
+                    int current_state = printer.value("state", 0);
+                    
+                    // ✅ Get last state
+                    auto it = g_last_device_states.find(mac);
+                    int last_state = (it != g_last_device_states.end()) ? it->second : -1;
+                    
+                    // ✅ Core logic: report only when transitioning from non-failure to failure state
+                    // Note: First detection (-1 → 3) will also report, which is reasonable (detect failure at startup)
+                    if (!IsFailureState(last_state) && IsFailureState(current_state)) {
+                        BOOST_LOG_TRIVIAL(info) << "Print error detected for " 
+                            << mac << " (state: " << last_state << " -> " 
+                            << current_state << ")";
+                        
+                        // ✅ Build event data - only keep error_code field
+                        nlohmann::json event_data;
+                        
+                        // ✅ Add error code if available
+                        if (printer.contains("err") && printer["err"].is_object()) {
+                            int errcode = printer["err"].value("errcode", 0);
+                            if (errcode != 0) {
+                                event_data["error_code"] = std::to_string(errcode);
+                            }
+                        }
+                        
+                        // ✅ Report using Analytics framework (instead of sending to frontend)
+                        AnalyticsEventPayload payload;
+                        payload.type = AnalyticsDataEventType::ANALYTICS_PRINT_ERROR;  // Need to define new event type
+                        payload.data = event_data;
+                        
+                        BOOST_LOG_TRIVIAL(error) << "Analytics payload - " << payload.data.dump();
+                        boost::log::core::get()->flush();
+                        
+                        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+                    } else if (IsFailureState(current_state)) {
+                        // ✅ Continuing failure, output trace level log (usually not shown)
+                        BOOST_LOG_TRIVIAL(trace) << "Continuing failure for " << mac 
+                            << " (state: " << current_state << ")";
+                    }
+                    
+                    // ✅ Update last state
+                    g_last_device_states[mac] = current_state;
+                }
+            }
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "check_and_send_print_failure_events failed: " << e.what();
+        }
     }
 }

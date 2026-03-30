@@ -4472,8 +4472,11 @@ void organic_draw_branches(
     MeshSlicingParams mesh_slicing_params;
     mesh_slicing_params.mode = MeshSlicingParams::SlicingMode::Positive;
 
+    std::atomic<bool> has_support_out_of_bed = false;
+
     tbb::parallel_for(tbb::blocked_range<size_t>(0, trees.size(), 1),
-        [&trees, &volumes, &config, &slicing_params, &move_bounds, &mesh_slicing_params, &throw_on_cancel](const tbb::blocked_range<size_t>& range) {
+        [&trees, &volumes, &config, &slicing_params, &move_bounds, &mesh_slicing_params,
+         &has_support_out_of_bed, & throw_on_cancel](const tbb::blocked_range<size_t>& range) {
             indexed_triangle_set    partial_mesh;
             std::vector<float>      slice_z;
             std::vector<Polygons>   bottom_contacts;
@@ -4500,6 +4503,15 @@ void organic_draw_branches(
                     //FIXME parallelize?
                     for (LayerIndex i = 0; i < LayerIndex(slices.size()); ++i) {
                         slices[i] = diff_clipped(slices[i], volumes.getCollision(0, layer_begin + i, true)); // FIXME parent_uses_min || draw_area.element->state.use_min_xy_dist);
+                        
+                        if (!has_support_out_of_bed) { // no need to perform time-consuming diff every time
+                            Slic3r::Polygons bed_temp;
+                            bed_temp.push_back(volumes.m_bed_area);
+                            if (!diff(slices[i], bed_temp).empty()) {
+                                has_support_out_of_bed = true;//exist out of bed
+                            }
+                        }
+                        
                         slices[i] = intersection(slices[i], volumes.m_bed_area);
                     }
                     size_t num_empty = 0;
@@ -4630,6 +4642,11 @@ void organic_draw_branches(
                 }
             }
         }, tbb::simple_partitioner());
+
+    if (has_support_out_of_bed) {
+        print_object.set_has_support_outside(true);
+    }
+
 
     tbb::parallel_for(tbb::blocked_range<size_t>(0, trees.size(), 1),
         [&trees, &throw_on_cancel](const tbb::blocked_range<size_t>& range) {

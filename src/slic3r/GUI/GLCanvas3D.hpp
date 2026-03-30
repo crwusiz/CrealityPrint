@@ -264,6 +264,7 @@ class GLCanvas3D
             GLModel             profile;
             GLModel             background;
             float               old_canvas_width{0.0f};
+            float               old_canvas_height{0.0f};
             std::vector<double> old_layer_height_profile;
         };
         Profile m_profile;
@@ -379,6 +380,7 @@ class GLCanvas3D
         ObjectOutside,
         ToolpathOutside,
         SlaSupportsOutside,
+        SupportOutsideBed,
         SomethingNotShown,
         ObjectClashed,
         GCodeConflict,
@@ -553,6 +555,7 @@ private:
     wxTimer         m_timer_set_color;
     LayersEditing   m_layers_editing;
     Mouse           m_mouse;
+    GLVolumeCollection m_volumes;
     GLGizmosManager m_gizmos;
     // BBS: GUI refactor: GLToolbar
     mutable wxRect           m_SlicerBtnRec;
@@ -578,7 +581,6 @@ private:
     int  m_extra_frames_to_render{0};
     bool m_event_handlers_bound{false};
 
-    GLVolumeCollection m_volumes;
     GCodeViewer        m_gcode_viewer;
     RenderTimer        m_render_timer;
 
@@ -859,6 +861,15 @@ public:
     void set_use_color_clip_plane(bool use);
     void set_color_clip_plane(const Vec3d& cp_normal, double offset);
     void set_color_clip_plane_colors(const std::array<ColorRGBA, 2>& colors);
+
+    // Volume color override methods (for mesh boolean gizmo A/B lists).
+    // Implemented by temporarily forcing GLVolume native colors.
+    // Stored on GLVolumeCollection so calls are safe during GLCanvas3D teardown.
+    void set_use_volume_color_override(bool use) { m_volumes.set_use_volume_color_override(use); }
+    void set_volume_color_override(unsigned int volume_idx, const std::array<float, 4>& color) { m_volumes.set_volume_color_override(volume_idx, color); }
+    void set_volumes_color_override(const std::vector<unsigned int>& volume_indices, const std::array<float, 4>& color) { m_volumes.set_volumes_color_override(volume_indices, color); }
+    void clear_volume_color_override(unsigned int volume_idx) { m_volumes.clear_volume_color_override(volume_idx); }
+    void clear_all_volume_color_overrides() { m_volumes.clear_all_volume_color_overrides(); }
 
     void refresh_camera_scene_box();
     void set_color_by(const std::string& value);
@@ -1282,7 +1293,8 @@ private:
                            bool               only_current,
                            bool               only_body = false,
                            int                hover_id  = -1,
-                           bool               show_logo = true);
+                           bool               show_logo = true,
+                           bool               show_grid = true);
     // BBS: add outline drawing logic
     void _render_objects(GLVolumeCollection::ERenderType type, bool with_outline = true);
     // BBS: GUI refactor: add canvas size as parameters

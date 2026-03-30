@@ -32,6 +32,9 @@
 #include <wx/dcgraph.h>
 #include <miniz.h>
 #include <algorithm>
+#include <boost/algorithm/hex.hpp>
+#include <boost/algorithm/string/predicate.hpp>
+#include <boost/uuid/detail/md5.hpp>
 #include <wx/string.h>
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/print_manage/Utils.hpp"
@@ -41,6 +44,29 @@
 #include "data/DataCenter.hpp"
 #include "slic3r/GUI/LoginTip.hpp"
 #include "libslic3r/common_header/common_header.h"
+
+namespace {
+std::string build_gcode_upload_path(const std::string& local_file_path, const std::string& display_name)
+{
+    std::string normalized_name = display_name.empty() ? "unnamed" : display_name;
+    if (boost::iends_with(normalized_name, ".gcode"))
+        normalized_name.resize(normalized_name.size() - 6);
+
+    const std::string content_md5 = get_file_md5(local_file_path);
+    const std::string hash_input  = normalized_name + ":" + content_md5;
+
+    using boost::uuids::detail::md5;
+    md5              md5_hash;
+    md5::digest_type md5_digest{};
+    std::string      md5_digest_str;
+
+    md5_hash.process_bytes(hash_input.data(), hash_input.size());
+    md5_hash.get_digest(md5_digest);
+    boost::algorithm::hex(md5_digest, md5_digest + std::size(md5_digest), std::back_inserter(md5_digest_str));
+
+    return "model/slice/" + md5_digest_str + ".gcode.gz";
+}
+}
 namespace Slic3r { namespace GUI {
 
 #define INITIAL_NUMBER_OF_MACHINES 0
@@ -1041,7 +1067,7 @@ void UploadGcodeToCloudDialog::on_upload_3mf(wxCommandEvent& event)
             }
 
             std::string target_name = std::string(m_rename_text->GetLabelText().utf8_str().data());
-            std::string target_path = "model/slice/" + get_file_md5(m_ssGCodeFilePath) + ".gcode.gz";
+            std::string target_path = build_gcode_upload_path(m_ssGCodeFilePath, target_name);
 
             // show centered progress dialog during upload to Creality Cloud
             ProgressDialog progress_dlg(_L("Upload"), _L("Uploading to Creality Cloud..."), 100,

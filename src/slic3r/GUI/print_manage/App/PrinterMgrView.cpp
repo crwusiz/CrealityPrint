@@ -724,6 +724,15 @@ void PrinterMgrView::UpdateState() {
 
 void PrinterMgrView::OnClose(wxCloseEvent& evt)
 {
+    {
+        std::lock_guard<std::mutex> lk(m_uploadProgressMutex);
+        // Create empty JSON for cancel event (fields will be empty strings)
+        nlohmann::json empty_json;
+        for (const auto& [ip, progressInfo] : m_uploadProgressMap) {
+            fire_print_send_event(empty_json, "Cancel");
+        }
+    }
+
     this->Hide();
 }
 
@@ -782,7 +791,7 @@ void PrinterMgrView::OnError(wxWebViewEvent &evt)
         e = "wxWEBVIEW_NAV_ERR_CONNECTION";
 #if wxUSE_WEBVIEW_EDGE
         #ifdef __WIN32__
-        if (!wxGetApp().app_config->get_bool("webview_single_process")) {
+        if (!wxGetApp().app_config->get_bool("webview_single_process") && !m_webview_loaded_successfully) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": WebView connection error, switch to single-process and restart.";
             wxGetApp().app_config->set_bool("webview_single_process", true);
             wxGetApp().app_config->save();
@@ -800,10 +809,15 @@ void PrinterMgrView::OnError(wxWebViewEvent &evt)
             return;
         }
         #endif
-        if(!m_bHasError)
+        if (!m_webview_loaded_successfully && !m_bHasError)
         {
             m_bHasError = true;
-            Slic3r::GUI::wxGetApp().reinstall_webview_runtime();
+            if (Slic3r::GUI::wxGetApp().mark_webview_runtime_repair_prompted())
+                Slic3r::GUI::wxGetApp().reinstall_webview_runtime();
+        }
+        else if (m_webview_loaded_successfully)
+        {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": WebView had loaded successfully before, skip repair prompt.";
         }
             
 #endif
@@ -956,11 +970,26 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
         }
         if (strCmd == "send_gcode")
         {
+            // Fire click_send_multi analytics event when user clicks "Send" button in multi-device page
+            AnalyticsEventPayload payload;
+            payload.type = AnalyticsDataEventType::ANALYTICS_CLICK_SEND_MULTI;
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+
             int plateIndex = j["plateIndex"];
             std::string ipAddress = j["ipAddress"].get<std::string>();
             std::string uploadName = j["uploadName"].get<std::string>();
             bool oldPrinter = j["oldPrinter"];
             int  moonrakerPort = j["moonrakerPort"];
+
+            // 清除对应 IP 的旧触发标志，允许重新触发
+            m_print_send_fired_ips.erase(ipAddress);
+
+            // 根据文件扩展名判断格式
+            if (uploadName.find(".3mf") != std::string::npos || uploadName.find(".3MF") != std::string::npos) {
+                m_last_send_format = "3MF";
+            } else {
+                m_last_send_format = "GCode";
+            }
 
             if (oldPrinter)
             {
@@ -983,6 +1012,12 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
                 AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_CLICK_START_PRINT_CMD,
                                                                              {AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS,
                                                                               AnalyticsDataEventType::ANALYTICS_OBJECT_PRINT_PARAMS}, plateIndex);
+                AnalyticsEventPayload payload1;
+                payload1.type = AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS;
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload1, plateIndex);
+                AnalyticsEventPayload payload2;
+                payload2.type = AnalyticsDataEventType::ANALYTICS_OBJECT_PRINT_PARAMS;
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload2, plateIndex);
 
                 std::string gcodeFilePath;
                 if (wxGetApp().plater()->only_gcode_mode())
@@ -1001,7 +1036,7 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
                 }
 
                     RemotePrint::RemotePrinterManager::getInstance().pushUploadMultTasks(ipAddress, uploadName, gcodeFilePath,
-                    [this](std::string ip, float progress, double speed) {
+                    [this, j](std::string ip, float progress, double speed) {
                         // 缓存所有设备的上传进度与速度，并批量上报给前端（限频）
                         {
                             std::lock_guard<std::mutex> lk(m_uploadProgressMutex);
@@ -1009,7 +1044,11 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
                         }
                         sendAllProgressWithRateLimit();
                     },
-                    [this](std::string ip, int statusCode) {
+                    [this, j](std::string ip, int statusCode) {
+                        if (statusCode != 0) {
+                            fire_print_send_event(j, get_error_code(statusCode, ""));
+                        }
+
                         nlohmann::json top_level_json;
                         top_level_json["ip"] = ip;
                         top_level_json["statusCode"]  = statusCode;
@@ -1032,13 +1071,19 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
                             }
                         });
                     },
-                    [this](std::string ip, std::string body){
+                    [this, j](std::string ip, std::string body){
                         int deviceType = 0;//local device
                         int statusCode = 1;
+                        std::string status_msg = "";
                         json jBody = json::parse(body);
                         if (jBody.contains("code") && jBody["code"].is_number_integer()) {
                             statusCode = jBody["code"];
                         }
+                        if (jBody.contains("message") && jBody["message"].is_string()) {
+                            status_msg = jBody["message"];
+                        }
+
+                        fire_print_send_event(j, get_error_code(statusCode, status_msg));
 
                         nlohmann::json top_level_json;
                         top_level_json["ip"] = ip;
@@ -1080,9 +1125,59 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
                             std::lock_guard<std::mutex> lk(m_uploadProgressMutex);
                             m_uploadProgressMap.erase(ip);
                         }
+                        // 清除对应 IP 的触发标志，允许下次重新触发
+                        m_print_send_fired_ips.erase(ip);
 
               });
             }
+        }else if(strCmd == "send_start_print_cmd")
+        {
+            std::string ipAddress = j["ipAddress"].get<std::string>();
+            
+            // Try to get fileName from top-level or nested in data
+            std::string fileName;
+            if (j.contains("fileName") && j["fileName"].is_string()) {
+                fileName = j["fileName"].get<std::string>();
+            } else if (j.contains("data")) {
+                nlohmann::json webviewData;
+                if (j["data"].is_string()) {
+                    try { webviewData = nlohmann::json::parse(j["data"].get<std::string>()); } catch (...) {}
+                } else {
+                    webviewData = j["data"];
+                }
+                if (webviewData.contains("fileName") && webviewData["fileName"].is_string()) {
+                    fileName = webviewData["fileName"].get<std::string>();
+                }
+            }
+            
+            // Set format based on file extension if fileName is available
+            if (!fileName.empty()) {
+                if (fileName.find(".3mf") != std::string::npos || fileName.find(".3MF") != std::string::npos) {
+                    m_last_send_format = "3MF";
+                } else {
+                    m_last_send_format = "GCode";
+                }
+            }
+            
+            nlohmann::json webviewData;
+            if (j.contains("data")) {
+                if (j["data"].is_string()) {
+                    try {
+                        webviewData = nlohmann::json::parse(j["data"].get<std::string>());
+                    } catch (...) {
+                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to parse webview data for print_begin event";
+                    }
+                } else {
+                    webviewData = j["data"];
+                }
+            }
+            
+            fire_print_begin_event(ipAddress, webviewData);
+            
+            nlohmann::json commandJson;
+            commandJson["command"] = "send_print_cmd";
+            commandJson["data"] = j["data"].dump(-1, ' ', true);
+            ExecuteScriptCommand(RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
         }else if(strCmd == "down_files")
         {
             
@@ -1192,6 +1287,7 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
         }
         else if (strCmd == "get_machine_list")
         {
+            m_webview_loaded_successfully = true;
             load_machine_preset_data();
         }else if(strCmd == "switch_webrtc_source")
         {
@@ -1251,7 +1347,9 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
         else if (strCmd == "cancel_upload")
         {
             wxString ipAddress  = j["ipAddress"];
-            RemotePrint::RemotePrinterManager::getInstance().cancelUpload(ipAddress.ToStdString());
+            std::string ip = ipAddress.ToStdString();
+            fire_print_send_event(j, "Cancel");
+            RemotePrint::RemotePrinterManager::getInstance().cancelUpload(ip);
         }
         else if (strCmd == "diagnosis_lan_connect")
         {
@@ -1446,6 +1544,9 @@ std::string PrinterMgrView::get_plate_data_on_show()
     catch (const std::bad_alloc& e) {
         AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_CRASH,
                                                                      {AnalyticsDataEventType::ANALYTICS_BAD_ALLOC});
+        AnalyticsEventPayload payload;
+        payload.type = AnalyticsDataEventType::ANALYTICS_BAD_ALLOC;
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
 
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": OOM while building plate data. " << e.what();
         boost::log::core::get()->flush();
@@ -1809,6 +1910,94 @@ void PrinterMgrView::RegisterHandler(const std::string& command, std::function<v
 void PrinterMgrView::UnregisterHandler(const std::string& command)
 {
     m_commandHandlers.erase(command);
+}
+
+std::string PrinterMgrView::get_error_code(int statusCode, const std::string& status_msg)
+{
+    if (statusCode == 0) return "0";
+    return status_msg.empty() ? std::to_string(statusCode) : status_msg;
+}
+
+void PrinterMgrView::add_device_info_to_payload(nlohmann::json& payload, const std::string& ip)
+{
+    auto device = DM::DataCenter::Ins().get_printer_data(ip);
+    payload["network"] = (device.deviceType == 0) ? "Local" : "Global";
+    payload["filament_device"] = device.cfsName.empty() ? "Spool" : device.cfsName;
+}
+
+std::string PrinterMgrView::bool_to_string(bool value)
+{
+    return value ? "1" : "0";
+}
+
+void PrinterMgrView::fire_print_send_event(const nlohmann::json& frontend_data, const std::string& error_code)
+{
+    // Extract IP from frontend_data for duplicate check
+    std::string ip = frontend_data.value("ipAddress", "");
+    
+    if (m_print_send_fired_ips.find(ip) != m_print_send_fired_ips.end()) {
+        return;
+    }
+
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_PRINT_SEND;
+    nlohmann::json evtData;
+    
+    // Get all analytics parameters from frontend JSON (empty string if field not provided)
+    evtData["printer"] = frontend_data.value("printer", "");   // Printer model from frontend
+    evtData["format"] = frontend_data.value("format", "");     // "GCode" or "3MF" from frontend
+    evtData["network"] = frontend_data.value("network", "");   // "Local" or "Global" from frontend
+    evtData["entry"] = frontend_data.value("entry", "");       // "SendSingle" or "SendMulti" from frontend
+    evtData["error_code"] = frontend_data.value("error_code", "");  // Error code from frontend
+    
+        // Priority: C++ error_code (real upload result) > frontend error_code (fallback)
+    if (!error_code.empty()) {
+        evtData["error_code"] = error_code; // Use C++ error_code
+    } else {
+        evtData["error_code"] = frontend_data.value("error_code", ""); // Fallback to frontend
+    }
+
+    // Convert "0" to "OK" for better readability (unified conversion)
+    if (evtData["error_code"] == "0") {
+        evtData["error_code"] = "OK";
+    }
+
+    payload.data = evtData;
+
+    BOOST_LOG_TRIVIAL(error) << "PrinterMgrView::fire_print_send_event: Analytics payload - " << payload.data.dump();
+    boost::log::core::get()->flush();
+
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+    m_print_send_fired_ips.insert(ip);
+}
+
+void PrinterMgrView::fire_print_begin_event(const std::string& ip, const nlohmann::json& webview_data)
+{
+    // Log the raw webview_data to see its structure
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": RAW webview_data - " << webview_data.dump();
+    boost::log::core::get()->flush();
+    
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_PRINT_BEGIN;
+    
+    // Note: webview_data is already the extracted 'data' field object (not the full {command, data} structure)
+    // Build event data from frontend JSON (empty string if field not provided)
+    nlohmann::json data;
+    data["printer"] = webview_data.value("printer", "");           // Printer model from frontend
+    data["calibration"] = webview_data.value("calibration", "");   // "0" or "1" from frontend
+    data["time_lapse"] = webview_data.value("time_lapse", "");     // "0" or "1" from frontend
+    data["format"] = webview_data.value("format", "");             // "GCode" or "3MF" from frontend
+    data["network"] = webview_data.value("network", "");           // "Local" or "Global" from frontend
+    data["filament_device"] = webview_data.value("filament_device", ""); // From frontend
+    data["entry"] = webview_data.value("entry", "");               // Entry point from frontend
+    data["error_code"] = webview_data.value("error_code", "");     // Error code from frontend
+    
+    payload.data = data;
+
+    BOOST_LOG_TRIVIAL(error) << "PrinterMgrView::fire_print_begin_event: Analytics payload - " << payload.data.dump();
+    boost::log::core::get()->flush();
+
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
 }
 void PrinterMgrView::ExecuteScriptCommand(const std::string& commandInfo, bool async)
 {

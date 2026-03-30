@@ -71,7 +71,7 @@ bool GLGizmoDrill::on_is_activable() const
     const Selection& selection = m_parent.get_selection();
     bool res = (wxGetApp().preset_bundle->printers.get_edited_preset().printer_technology() == ptSLA) ?
                 selection.is_single_full_instance() :
-                selection.is_single_full_instance() || selection.is_single_volume() || selection.is_single_modifier();
+                selection.is_from_single_instance() && !selection.is_mixed() && !selection.is_wipe_tower();
     if (res)
         res &= !selection.contains_sinking_volumes();
 

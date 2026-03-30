@@ -18,73 +18,117 @@
 #include <algorithm>
 
 #include <libslic3r.h>
+#include <tbb/parallel_for.h>
 
 namespace Slic3r {
 
 const static bool g_wipe_into_objects = false;
 
+// Maximum number of extruders for exact TSP bitmask DP (2^n states).
+// Beyond this threshold, fall back to O(n^2) greedy nearest-neighbor to avoid std::bad_alloc.
+// n=16: 2^16 * 16 * 4B = 4MB, acceptable; n=17 would be 8MB+.
+static constexpr int k_tsp_exact_max_extruders = 20;
 
 // Shortest hamilton path problem
 static std::vector<unsigned int> solve_extruder_order(const std::vector<std::vector<float>>& wipe_volumes, std::vector<unsigned int> all_extruders, std::optional<unsigned int> start_extruder_id) 
 {
+    if (all_extruders.empty())
+        return all_extruders;
+
     bool add_start_extruder_flag = false;
 
     if (start_extruder_id) {
-        auto start_iter = std::find(all_extruders.begin(), all_extruders.end(), start_extruder_id);
+        auto start_iter = std::find(all_extruders.begin(), all_extruders.end(), *start_extruder_id);
         if (start_iter == all_extruders.end())
             all_extruders.insert(all_extruders.begin(), *start_extruder_id), add_start_extruder_flag = true;
         else
             std::swap(*all_extruders.begin(), *start_iter);
     }
-    else {
-        *start_extruder_id = all_extruders.front();
+    // When start_extruder_id is nullopt, just treat the first element as start (no swap needed).
+
+    const int n          = (int) all_extruders.size();
+    const float INF_COST = std::numeric_limits<float>::max();
+
+    // Greedy nearest-neighbor fallback for large n to avoid 2^n memory explosion.
+    if (n > k_tsp_exact_max_extruders) {
+        std::vector<bool>        visited(n, false);
+        std::vector<unsigned int> path;
+        path.reserve(n);
+        // Start from index 0 (already placed as first element above).
+        int cur = 0;
+        visited[cur] = true;
+        path.push_back(all_extruders[cur]);
+        for (int step = 1; step < n; ++step) {
+            int   best_next = -1;
+            float best_w    = INF_COST;
+            for (int j = 0; j < n; ++j) {
+                if (!visited[j]) {
+                    float w = wipe_volumes[all_extruders[cur]][all_extruders[j]];
+                    if (w < best_w) { best_w = w; best_next = j; }
+                }
+            }
+            if (best_next == -1) break;
+            visited[best_next] = true;
+            path.push_back(all_extruders[best_next]);
+            cur = best_next;
+        }
+        if (add_start_extruder_flag && !path.empty())
+            path.erase(path.begin()); // remove the virtual start node
+        return path;
     }
 
-    unsigned int iterations = (1 << all_extruders.size());
-    unsigned int final_state = iterations - 1;
-    std::vector<std::vector<float>>cache(iterations, std::vector<float>(all_extruders.size(),0x7fffffff));
-    std::vector<std::vector<int>>prev(iterations, std::vector<int>(all_extruders.size(), -1));
-    cache[1][0] = 0.;
-    for (unsigned int state = 0; state < iterations; ++state) {
-        if (state & 1) {
-            for (unsigned int target = 0; target < all_extruders.size(); ++target) {
-                if (state >> target & 1) {
-                    for (unsigned int mid_point = 0; mid_point < all_extruders.size(); ++mid_point) {
-                        if(state>>mid_point&1){
-                            auto tmp = cache[state - (1 << target)][mid_point] + wipe_volumes[all_extruders[mid_point]][all_extruders[target]];
-                            if (cache[state][target] >tmp) {
-                                cache[state][target] = tmp;
-                                prev[state][target] = mid_point;
-                            }
-                        }
-                    }
+    // Flat 1-D DP arrays: single allocation, cache-friendly.
+    const int states = 1 << n;
+    std::vector<float>  cache(states * n, INF_COST);
+    std::vector<int8_t> dp_prev(states * n, -1);
+    cache[1 * n + 0] = 0.f; // start at index 0 with mask=1
+
+    for (int state = 1; state < states; ++state) {
+        if (!(state & 1))
+            continue; // must include start node (index 0)
+        for (int target = 0; target < n; ++target) {
+            if (!(state >> target & 1))
+                continue;
+            float c = cache[state * n + target];
+            if (c == INF_COST)
+                continue;
+            for (int next = 0; next < n; ++next) {
+                if (state & (1 << next))
+                    continue;
+                float        tmp       = c + wipe_volumes[all_extruders[target]][all_extruders[next]];
+                int          nxt_state = state | (1 << next);
+                float&       slot      = cache[nxt_state * n + next];
+                if (tmp < slot) {
+                    slot                         = tmp;
+                    dp_prev[nxt_state * n + next] = (int8_t) target;
                 }
             }
         }
     }
 
-    //get res
-    float cost = std::numeric_limits<float>::max();
-    int final_dst =0;
-    for (unsigned int dst = 0; dst < all_extruders.size(); ++dst) {
-        if (all_extruders[dst] != start_extruder_id && cost > cache[final_state][dst]) {
-            cost = cache[final_state][dst];
+    // Find best end node (prefer not ending on start node to avoid trivial paths).
+    float cost      = INF_COST;
+    int   final_dst = 0;
+    for (int dst = 0; dst < n; ++dst) {
+        float c = cache[(states - 1) * n + dst];
+        if (c < cost) {
+            cost      = c;
             final_dst = dst;
         }
     }
 
-    std::vector<unsigned int>path;
-    unsigned int curr_state = final_state;
+    std::vector<unsigned int> path;
+    int curr_state = states - 1;
     int curr_point = final_dst;
     while (curr_point != -1) {
         path.emplace_back(all_extruders[curr_point]);
-        auto mid_point = prev[curr_state][curr_point];
-        curr_state -= (1 << curr_point);
-        curr_point = mid_point;
-    };
+        int8_t mid = dp_prev[curr_state * n + curr_point];
+        curr_state &= ~(1 << curr_point);
+        curr_point = (int) mid; // int8_t -1 stays -1 as int
+    }
 
-    if (add_start_extruder_flag)
-        path.pop_back();
+    if (add_start_extruder_flag && !path.empty())
+        path.pop_back(); // remove the virtual start node (it was pushed last, reversed to front)
 
     std::reverse(path.begin(), path.end());
     return path;
@@ -902,12 +946,35 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
     if (!print_config || m_layer_tools.empty())
         return;
 
+    std::vector<int> valid_layers;
+    for (int i = 0; i < (int) m_layer_tools.size(); ++i) {
+        if (!m_layer_tools[i].extruders.empty())
+            valid_layers.push_back(i);
+    }
+
+    int minFlush               = 2;
+    const ConfigOptionInts* first_layer_seq_op = print_config->option<ConfigOptionInts>("first_layer_print_sequence");
+    if (first_layer_seq_op && !first_layer_seq_op->values.empty() &&
+        first_layer_seq_op->values.size() >= m_layer_tools[valid_layers[0]].extruders.size())
+            minFlush -= 1;
+
+    std::vector<LayerPrintSequence> other_layers_seqs;
+    const ConfigOptionInts*         other_layers_print_sequence_op = print_config->option<ConfigOptionInts>("other_layers_print_sequence");
+    const ConfigOptionInt* other_layers_print_sequence_nums_op = print_config->option<ConfigOptionInt>("other_layers_print_sequence_nums");
+    if (other_layers_print_sequence_op && other_layers_print_sequence_nums_op) {
+        const std::vector<int>& print_sequence = other_layers_print_sequence_op->values;
+        int                     sequence_nums  = other_layers_print_sequence_nums_op->value;
+        other_layers_seqs                      = get_other_layers_print_sequence(sequence_nums, print_sequence);
+        if (sequence_nums > 0)
+            minFlush -= 1;
+    }
+
     // Get wiping matrix to get number of extruders and convert vector<double> to vector<float>:
     std::vector<float> flush_matrix(cast<float>(print_config->flush_volumes_matrix.values));
     const unsigned int number_of_extruders = (unsigned int) (sqrt(flush_matrix.size()) + EPSILON);
     // Extract purging volumes for each extruder pair:
     std::vector<std::vector<float>> wipe_volumes;
-    if (print_config->purge_in_prime_tower || m_is_BBL_printer) {
+    if (print_config->purge_in_prime_tower || m_is_BBL_printer || minFlush > 1) {
         for (unsigned int i = 0; i < number_of_extruders; ++i)
             wipe_volumes.push_back( std::vector<float>(flush_matrix.begin() + i * number_of_extruders,
                                                        flush_matrix.begin() + (i + 1) * number_of_extruders));
@@ -916,31 +983,11 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
         for (unsigned int i = 0; i < number_of_extruders; ++i)
             wipe_volumes.push_back(std::vector<float>(number_of_extruders, print_config->prime_volume));
     }
-
-    auto extruders_to_hash_key = [](const std::vector<unsigned int>& extruders,
-                                    std::optional<unsigned int>      initial_extruder_id) -> uint32_t {
-        uint32_t hash_key = 0;
-        // high 16 bit define initial extruder ,low 16 bit define extruder set
-        if (initial_extruder_id)
-            hash_key |= (1 << (16 + *initial_extruder_id));
-        for (auto item : extruders)
-            hash_key |= (1 << item);
-        return hash_key;
-    };
-
-    std::vector<LayerPrintSequence> other_layers_seqs;
-    const ConfigOptionInts *other_layers_print_sequence_op = print_config->option<ConfigOptionInts>("other_layers_print_sequence");
-    const ConfigOptionInt *other_layers_print_sequence_nums_op = print_config->option<ConfigOptionInt>("other_layers_print_sequence_nums");
-    if (other_layers_print_sequence_op && other_layers_print_sequence_nums_op) {
-        const std::vector<int> &print_sequence = other_layers_print_sequence_op->values;
-        int sequence_nums = other_layers_print_sequence_nums_op->value;
-        other_layers_seqs = get_other_layers_print_sequence(sequence_nums, print_sequence);
-    }
-
+  
     // other_layers_seq: the layer_idx and extruder_idx are base on 1
     auto get_custom_seq = [&other_layers_seqs](int layer_idx, std::vector<int>& out_seq) -> bool {
         for (size_t idx = other_layers_seqs.size() - 1; idx != size_t(-1); --idx) {
-            const auto &other_layers_seq = other_layers_seqs[idx];
+            const auto& other_layers_seq = other_layers_seqs[idx];
             if (layer_idx + 1 >= other_layers_seq.first.first && layer_idx + 1 <= other_layers_seq.first.second) {
                 out_seq = other_layers_seq.second;
                 return true;
@@ -949,49 +996,342 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
         return false;
     };
 
-    std::optional<unsigned int>current_extruder_id;
-    for (int i = 0; i < m_layer_tools.size(); ++i) {
-        LayerTools& lt = m_layer_tools[i];
-        if (lt.extruders.empty())
-            continue;
 
-        std::vector<int> custom_extruder_seq;
-        if (get_custom_seq(i, custom_extruder_seq) && !custom_extruder_seq.empty()) {
-            std::vector<unsigned int> unsign_custom_extruder_seq;
-            for (int extruder : custom_extruder_seq) {
-                unsigned int unsign_extruder = static_cast<unsigned int>(extruder) - 1;
-                auto it = std::find(lt.extruders.begin(), lt.extruders.end(), unsign_extruder);
-                if (it != lt.extruders.end()) {
-                    unsign_custom_extruder_seq.emplace_back(unsign_extruder);
+    if (print_config->purge_in_prime_tower || m_is_BBL_printer || minFlush > 1)
+    {
+        if (valid_layers.empty())
+            return;
+
+        // CompactPath: stores cost and the ordered extruder path for one TSP result.
+        // Used only inside tsp_cache; dp_global no longer stores paths.
+        struct CompactPath
+        {
+            float                cost = std::numeric_limits<float>::max();
+            std::vector<uint8_t> path;
+
+            bool is_better_than(float new_cost, const uint8_t* new_p, size_t new_l) const
+            {
+                if (new_cost < cost - 1e-4f)
+                    return true;
+                if (new_cost > cost + 1e-4f)
+                    return false;
+                size_t curr_l = path.size();
+                for (size_t i = 0; i < std::min(curr_l, new_l); ++i) {
+                    if (new_p[i] < path[i])
+                        return true;
+                    if (new_p[i] > path[i])
+                        return false;
+                }
+                return new_l < curr_l;
+            }
+
+            void set(float c, const uint8_t* p, size_t l)
+            {
+                cost = c;
+                path.assign(p, p + l);
+            }
+        };
+
+        const unsigned int num_ex = (unsigned int) (sqrt(flush_matrix.size()) + EPSILON);
+        const float        INF    = std::numeric_limits<float>::max();
+
+        // Opt-4: threshold n>16 (instead of n>20) to limit TSP DP memory to at most 2^16*16*4=4MB.
+        auto compute_layer_tsp = [&](const std::vector<unsigned int>& extruders, unsigned int start_ex) -> std::vector<CompactPath> {
+            int n = (int) extruders.size();
+            // Fall back to O(n^2) greedy nearest-neighbor when n is too large to avoid std::bad_alloc.
+            if (n > k_tsp_exact_max_extruders) {
+                std::vector<CompactPath> results(num_ex);
+                std::vector<bool>        visited(n, false);
+                int                      cur = -1;
+                for (int i = 0; i < n; ++i) {
+                    if (extruders[i] == start_ex) { cur = i; break; }
+                }
+                if (cur == -1) cur = 0;
+                std::vector<uint8_t> path;
+                path.reserve(n);
+                float total_cost = 0.0f;
+                visited[cur]     = true;
+                path.push_back((uint8_t) extruders[cur]);
+                for (int step = 1; step < n; ++step) {
+                    int   best_next = -1;
+                    float best_w    = INF;
+                    for (int j = 0; j < n; ++j) {
+                        if (!visited[j]) {
+                            float w = wipe_volumes[extruders[cur]][extruders[j]];
+                            if (w < best_w) { best_w = w; best_next = j; }
+                        }
+                    }
+                    if (best_next == -1) break;
+                    total_cost += best_w;
+                    visited[best_next] = true;
+                    path.push_back((uint8_t) extruders[best_next]);
+                    cur = best_next;
+                }
+                if (!path.empty()) {
+                    unsigned int end_ex = (unsigned int) path.back();
+                    if (end_ex < (unsigned int) results.size())
+                        results[end_ex].set(total_cost, path.data(), path.size());
+                }
+                return results;
+            }
+
+            // Opt-3: flat 1-D arrays (single allocation, cache-friendly) instead of vector-of-vector.
+            const int states = 1 << n;
+            std::vector<float>  dp_cost(states * n, INF);
+            std::vector<int8_t> tsp_parent(states * n, -1);
+
+            int start_idx = -1;
+            for (int i = 0; i < n; ++i) {
+                if (extruders[i] == start_ex)
+                    start_idx = i;
+            }
+            if (start_idx != -1)
+                dp_cost[(1 << start_idx) * n + start_idx] = 0.0f;
+
+            for (int mask = 1; mask < states; ++mask) {
+                for (int curr = 0; curr < n; ++curr) {
+                    float c = dp_cost[mask * n + curr];
+                    if (c == INF)
+                        continue;
+                    for (int next = 0; next < n; ++next) {
+                        if (!(mask & (1 << next))) {
+                            float        new_cost  = c + wipe_volumes[extruders[curr]][extruders[next]];
+                            unsigned int next_mask = (unsigned int) mask | (1 << next);
+                            float&       slot      = dp_cost[next_mask * n + next];
+                            if (new_cost < slot) {
+                                slot                              = new_cost;
+                                tsp_parent[next_mask * n + next] = (int8_t) curr;
+                            }
+                        }
+                    }
                 }
             }
-            assert(lt.extruders.size() == unsign_custom_extruder_seq.size());
-            lt.extruders = unsign_custom_extruder_seq;
-            current_extruder_id = lt.extruders.back();
-            continue;
+
+            std::vector<CompactPath> results(num_ex);
+            int                      final_mask = states - 1;
+            for (int i = 0; i < n; ++i) {
+                float end_cost = dp_cost[final_mask * n + i];
+                if (end_cost == INF)
+                    continue;
+                std::vector<uint8_t> path;
+                int                  curr_p = i;
+                int                  curr_m = final_mask;
+                while (curr_p != -1) {
+                    path.push_back((uint8_t) extruders[curr_p]);
+                    int8_t prev_p = tsp_parent[curr_m * n + curr_p];
+                    curr_m &= ~(1 << curr_p);
+                    curr_p = (int) prev_p;
+                }
+                std::reverse(path.begin(), path.end());
+                results[extruders[i]].set(end_cost, path.data(), path.size());
+            }
+            return results;
+        };
+
+        struct TspQuery
+        {
+            uint32_t                  mask_val;
+            unsigned int              start_ex;
+            std::vector<unsigned int> extruders;
+
+            bool operator<(const TspQuery& other) const
+            {
+                if (mask_val != other.mask_val)
+                    return mask_val < other.mask_val;
+                return start_ex < other.start_ex;
+            }
+        };
+
+        std::set<TspQuery> unique_queries;
+
+        for (size_t v = 0; v < valid_layers.size(); ++v) {
+            LayerTools& lt           = m_layer_tools[valid_layers[v]];
+            uint32_t    current_mask = 0;
+            for (auto ex : lt.extruders)
+                current_mask |= (1 << ex);
+
+            if (v == 0) {
+                unique_queries.insert({current_mask, lt.extruders.front(), lt.extruders});
+            } else {
+                for (auto start_ex : lt.extruders) {
+                    unique_queries.insert({current_mask, start_ex, lt.extruders});
+                }
+            }
         }
 
-        // The algorithm complexity is O(n2*2^n)
-        if (i != 0) {
-            auto hash_key = extruders_to_hash_key(lt.extruders, current_extruder_id);
-            auto iter = m_tool_order_cache.find(hash_key);
-            if (iter == m_tool_order_cache.end()) {
-                lt.extruders = get_extruders_order(wipe_volumes, lt.extruders, current_extruder_id);
-                std::vector<uint8_t> hash_val;
-                hash_val.reserve(lt.extruders.size());
-                for (auto item : lt.extruders)
-                    hash_val.emplace_back(static_cast<uint8_t>(item));
-                m_tool_order_cache[hash_key] = hash_val;
-            }
-            else {
-                std::vector<unsigned int>extruder_order;
-                extruder_order.reserve(iter->second.size());
-                for (auto item : iter->second)
-                    extruder_order.emplace_back(static_cast<unsigned int>(item));
-                lt.extruders = std::move(extruder_order);
+        std::vector<TspQuery>                 query_vec(unique_queries.begin(), unique_queries.end());
+        std::vector<std::vector<CompactPath>> query_results(query_vec.size());
+
+        tbb::parallel_for(size_t(0), query_vec.size(),
+                          [&](size_t idx) { query_results[idx] = compute_layer_tsp(query_vec[idx].extruders, query_vec[idx].start_ex); });
+
+        std::map<std::pair<uint32_t, unsigned int>, std::vector<CompactPath>> tsp_cache;
+        for (size_t i = 0; i < query_vec.size(); ++i) {
+            tsp_cache[{query_vec[i].mask_val, query_vec[i].start_ex}] = std::move(query_results[i]);
+        }
+        query_results.clear(); // release temporary memory early
+
+        auto get_layer_tsp = [&](const std::vector<unsigned int>& extruders, unsigned int start_ex) -> const std::vector<CompactPath>& {
+            uint32_t mask_val = 0;
+            for (auto ex : extruders)
+                mask_val |= (1 << ex);
+            return tsp_cache.at({mask_val, start_ex});
+        };
+
+        // Opt-1+2: replace dp_global (L x num_ex CompactPath, each storing a full path vector)
+        // with two rolling float rows + compact int8_t parent/which_start tables.
+        // Saves ~L * num_ex * avg_path_len bytes; paths are reconstructed during traceback.
+        const size_t L = valid_layers.size();
+        std::vector<float>   dp_prev(num_ex, INF);
+        std::vector<float>   dp_curr(num_ex, INF);
+        std::vector<std::vector<int8_t>>  parent_ex(L, std::vector<int8_t>(num_ex, -1));
+        std::vector<std::vector<uint8_t>> which_start(L, std::vector<uint8_t>(num_ex, 0xFF));
+
+        {
+            LayerTools& lt  = m_layer_tools[valid_layers[0]];
+            const auto& res = get_layer_tsp(lt.extruders, lt.extruders.front());
+            for (unsigned int ex : lt.extruders) {
+                if (res[ex].cost < INF) {
+                    dp_prev[ex]         = res[ex].cost;
+                    which_start[0][ex]  = (uint8_t) lt.extruders.front();
+                }
             }
         }
-        current_extruder_id = lt.extruders.back();
+
+        for (size_t v = 1; v < L; ++v) {
+            LayerTools& lt           = m_layer_tools[valid_layers[v]];
+            uint32_t    current_mask = 0;
+            for (auto ex : lt.extruders)
+                current_mask |= (1 << ex);
+
+            std::fill(dp_curr.begin(), dp_curr.end(), INF);
+
+            for (unsigned int prev_e = 0; prev_e < num_ex; ++prev_e) {
+                if (dp_prev[prev_e] == INF)
+                    continue;
+
+                bool                      can_link = (current_mask & (1 << prev_e)) != 0;
+                std::vector<unsigned int> starts   = can_link ? std::vector<unsigned int>{prev_e} : lt.extruders;
+
+                for (unsigned int start : starts) {
+                    float       transition = (start == prev_e) ? 0.0f : wipe_volumes[prev_e][start];
+                    const auto& tsp_res    = get_layer_tsp(lt.extruders, start);
+
+                    for (unsigned int curr_e : lt.extruders) {
+                        if (tsp_res[curr_e].cost == INF)
+                            continue;
+                        float total = dp_prev[prev_e] + transition + tsp_res[curr_e].cost;
+                        // Use the same tie-breaking as before: lower cost wins; equal cost uses
+                        // lexicographic path comparison via tsp_res paths.
+                        bool better = false;
+                        if (total < dp_curr[curr_e] - 1e-4f) {
+                            better = true;
+                        } else if (total <= dp_curr[curr_e] + 1e-4f) {
+                            // Tie-break: compare paths lexicographically
+                            if (which_start[v][curr_e] != 0xFF) {
+                                const auto& old_path = get_layer_tsp(lt.extruders, (unsigned int) which_start[v][curr_e])[curr_e].path;
+                                const auto& new_path = tsp_res[curr_e].path;
+                                for (size_t pi = 0; pi < std::min(old_path.size(), new_path.size()); ++pi) {
+                                    if (new_path[pi] < old_path[pi]) { better = true; break; }
+                                    if (new_path[pi] > old_path[pi]) break;
+                                }
+                                if (!better && new_path.size() < old_path.size())
+                                    better = true;
+                            } else {
+                                better = true;
+                            }
+                        }
+                        if (better) {
+                            dp_curr[curr_e]         = total;
+                            parent_ex[v][curr_e]    = (int8_t) prev_e;
+                            which_start[v][curr_e]  = (uint8_t) start;
+                        }
+                    }
+                }
+            }
+            std::swap(dp_prev, dp_curr);
+        }
+
+        float min_total = INF;
+        int   best_last = -1;
+        for (unsigned int i = 0; i < num_ex; ++i) {
+            if (dp_prev[i] < min_total) {
+                min_total = dp_prev[i];
+                best_last = (int) i;
+            }
+        }
+
+        // Traceback: reconstruct paths by re-querying tsp_cache with which_start.
+        if (best_last != -1) {
+            int curr = best_last;
+            for (int v = (int) L - 1; v >= 0; --v) {
+                LayerTools&  lt    = m_layer_tools[valid_layers[v]];
+                uint8_t      ws    = which_start[v][(unsigned int) curr];
+                unsigned int s_ex  = (ws != 0xFF) ? (unsigned int) ws : lt.extruders.front();
+                const auto&  tpath = get_layer_tsp(lt.extruders, s_ex)[(unsigned int) curr].path;
+                lt.extruders.assign(tpath.begin(), tpath.end());
+                // parent_ex stores int8_t; -1 (0xFF) means no parent (first layer).
+                int8_t p = parent_ex[v][(unsigned int) curr];
+                curr = (p == -1) ? -1 : (int)(unsigned int)(uint8_t) p;
+            }
+        }
+
+
+    } else {
+        auto extruders_to_hash_key = [](const std::vector<unsigned int>& extruders,
+                                        std::optional<unsigned int>      initial_extruder_id) -> uint32_t {
+            uint32_t hash_key = 0;
+            // high 16 bit define initial extruder ,low 16 bit define extruder set
+            if (initial_extruder_id)
+                hash_key |= (1 << (16 + *initial_extruder_id));
+            for (auto item : extruders)
+                hash_key |= (1 << item);
+            return hash_key;
+        };
+
+        std::optional<unsigned int> current_extruder_id;
+        for (int i = 0; i < m_layer_tools.size(); ++i) {
+            LayerTools& lt = m_layer_tools[i];
+            if (lt.extruders.empty())
+                continue;
+
+            std::vector<int> custom_extruder_seq;
+            if (get_custom_seq(i, custom_extruder_seq) && !custom_extruder_seq.empty()) {
+                std::vector<unsigned int> unsign_custom_extruder_seq;
+                for (int extruder : custom_extruder_seq) {
+                    unsigned int unsign_extruder = static_cast<unsigned int>(extruder) - 1;
+                    auto         it              = std::find(lt.extruders.begin(), lt.extruders.end(), unsign_extruder);
+                    if (it != lt.extruders.end()) {
+                        unsign_custom_extruder_seq.emplace_back(unsign_extruder);
+                    }
+                }
+                assert(lt.extruders.size() == unsign_custom_extruder_seq.size());
+                lt.extruders        = unsign_custom_extruder_seq;
+                current_extruder_id = lt.extruders.back();
+                continue;
+            }
+
+            // The algorithm complexity is O(n2*2^n)
+            if (i != 0) {
+                auto hash_key = extruders_to_hash_key(lt.extruders, current_extruder_id);
+                auto iter     = m_tool_order_cache.find(hash_key);
+                if (iter == m_tool_order_cache.end()) {
+                    lt.extruders = get_extruders_order(wipe_volumes, lt.extruders, current_extruder_id);
+                    std::vector<uint8_t> hash_val;
+                    hash_val.reserve(lt.extruders.size());
+                    for (auto item : lt.extruders)
+                        hash_val.emplace_back(static_cast<uint8_t>(item));
+                    m_tool_order_cache[hash_key] = hash_val;
+                } else {
+                    std::vector<unsigned int> extruder_order;
+                    extruder_order.reserve(iter->second.size());
+                    for (auto item : iter->second)
+                        extruder_order.emplace_back(static_cast<unsigned int>(item));
+                    lt.extruders = std::move(extruder_order);
+                }
+            }
+            current_extruder_id = lt.extruders.back();
+        }
     }
 }
 

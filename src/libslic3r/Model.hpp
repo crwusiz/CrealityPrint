@@ -251,6 +251,8 @@ public:
     bool          is_seam_painted() const;
     // Checks if any of objects is painted using the multi-material painting gizmo.
     bool          is_mm_painted() const;
+    // Checks if any of objects is painted using the fuzzy skin painting gizmo.
+    bool          is_fuzzy_skin_painted() const;
 
     std::unique_ptr<CalibPressureAdvancePattern> calib_pa_pattern;
 
@@ -305,6 +307,11 @@ bool model_custom_seam_data_changed(const ModelObject& mo, const ModelObject& mo
 // Test whether the now ModelObject has newer MMU segmentation data than the old one.
 // The function assumes that volumes list is synchronized.
 extern bool model_mmu_segmentation_data_changed(const ModelObject& mo, const ModelObject& mo_new);
+
+// Test whether the now ModelObject has newer fuzzy skin data than the old one.
+// The function assumes that volumes list is synchronized.
+extern bool model_fuzzy_skin_data_changed(const ModelObject &mo, const ModelObject &mo_new);
+bool model_brim_points_data_changed(const ModelObject& mo, const ModelObject& mo_new);
 
 // If the model has multi-part objects, then it is currently not supported by the SLA mode.
 // Either the model cannot be loaded, or a SLA printer has to be activated.

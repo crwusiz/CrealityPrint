@@ -142,6 +142,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Gizmos/GLGizmoFdmSupports.hpp
     GUI/Gizmos/GLGizmoFlatten.cpp
     GUI/Gizmos/GLGizmoFlatten.hpp
+    GUI/Gizmos/GLGizmoFuzzySkin.cpp
+    GUI/Gizmos/GLGizmoFuzzySkin.hpp
     GUI/Gizmos/GLGizmoCut.cpp
     GUI/Gizmos/GLGizmoCut.hpp
     GUI/Gizmos/GLGizmoHollow.cpp
@@ -158,12 +160,18 @@ set(SLIC3R_GUI_SOURCES
     #GUI/Gizmos/GLGizmoFaceDetector.hpp
 	GUI/Gizmos/GLGizmoMeasure.cpp
     GUI/Gizmos/GLGizmoMeasure.hpp
+    GUI/Gizmos/GLGizmoBrimEars.cpp
+    GUI/Gizmos/GLGizmoBrimEars.hpp
     GUI/Gizmos/GLGizmoSeam.cpp
     GUI/Gizmos/GLGizmoSeam.hpp
     #GUI/Gizmos/GLGizmoText.cpp
     #GUI/Gizmos/GLGizmoText.hpp
     GUI/Gizmos/GLGizmoMeshBoolean.cpp
     GUI/Gizmos/GLGizmoMeshBoolean.hpp
+    GUI/UIHelpers/MeshBooleanUI.cpp
+    GUI/UIHelpers/MeshBooleanUI.hpp
+    GUI/UIHelpers/TextEllipsis.cpp
+    GUI/UIHelpers/TextEllipsis.hpp
     GUI/GLSelectionRectangle.cpp
     GUI/GLSelectionRectangle.hpp
     GUI/Gizmos/GizmoObjectManipulation.cpp
@@ -180,6 +188,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLToolbar.cpp
     GUI/IMToolbar.hpp
     GUI/IMToolbar.cpp
+    GUI/HybridIndexBuffer.hpp
+    GUI/HybridIndexBuffer.cpp
+    GUI/DiskVectorImp.hpp
+    GUI/DiskVectorImp.cpp
+    GUI/HybridVertexBuffer.hpp
+    GUI/HybridVertexBuffer.cpp
     GUI/GCodeViewer.hpp
     GUI/GCodeViewer.cpp
     GUI/Preferences.cpp
@@ -204,6 +218,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/GUI_App.cpp
     GUI/SupportMeshCreator.hpp
     GUI/SupportMeshCreator.cpp
+    GUI/AppUpdater.cpp
+    GUI/AppUpdater.hpp
+    GUI/AppUpdateDialogs.cpp
+    GUI/AppUpdateDialogs.hpp
     GUI/FileDownloader.hpp
     GUI/FileDownloader.cpp
     GUI/FileUploader.hpp
@@ -475,6 +493,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/BindJob.cpp
     GUI/Jobs/NotificationProgressIndicator.hpp
     GUI/Jobs/NotificationProgressIndicator.cpp
+    GUI/Jobs/BooleanOperationJob.hpp
+    GUI/Jobs/BooleanOperationJob.cpp
     GUI/Jobs/ThreadSafeQueue.hpp
     GUI/Jobs/SLAImportDialog.hpp
     GUI/PhysicalPrinterDialog.hpp
@@ -765,6 +785,14 @@ endif ()
 add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
 target_include_directories(libslic3r_gui PRIVATE Utils)
 
+# AUE custom preview in GCodeViewer is development-oriented.
+# The switch is declared at top-level CMake as SLIC3R_DEV_AUE_CUSTOM_PREVIEW.
+if (SLIC3R_DEV_AUE_CUSTOM_PREVIEW)
+    target_compile_definitions(libslic3r_gui PRIVATE ENABLE_AUE_CUSTOM_PREVIEW=1)
+else ()
+    target_compile_definitions(libslic3r_gui PRIVATE ENABLE_AUE_CUSTOM_PREVIEW=0)
+endif ()
+
 if (WIN32)
     target_include_directories(libslic3r_gui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../deps/WebView2/include)
 endif()
@@ -773,7 +801,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SLIC3R_GUI_SOURCES})
 
 encoding_check(libslic3r_gui)
 
-target_link_libraries(libslic3r_gui libslic3r cereal::cereal imgui imguizmo minilzo GLEW::GLEW OpenGL::GL hidapi ${wxWidgets_LIBRARIES} glfw  libcurl OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(libslic3r_gui libslic3r cereal::cereal imgui imguizmo minilzo GLEW::GLEW OpenGL::GL hidapi ${wxWidgets_LIBRARIES} glfw  libcurl OpenSSL::SSL OpenSSL::Crypto noise::noise)
 if(WIN32)
     target_link_libraries(libslic3r_gui iphlpapi)
 endif()

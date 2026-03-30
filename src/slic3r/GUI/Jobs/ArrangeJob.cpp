@@ -788,8 +788,9 @@ void ArrangeJob::process(Ctl &ctl)
         ctl.was_canceled() ? _u8L("Arranging canceled.") :
         we_have_unpackable_items ? _u8L("Arranging is done but there are unpacked items. Reduce spacing and try again.") : _u8L("Arranging done."));*/
 
-    
-    m_plater->get_notification_manager()->cleanup_arrange_notifications();
+    ctl.call_on_main_thread([this]{
+        m_plater->get_notification_manager()->cleanup_arrange_notifications();
+    });
 }
 
 ArrangeJob::ArrangeJob() : m_plater{wxGetApp().plater()} { }

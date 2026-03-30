@@ -87,6 +87,7 @@ static t_config_enum_values s_keys_map_PrintHostType {
     { "obico",          htObico },
     { "flashforge",     htFlashforge },
     { "simplyprint",    htSimplyPrint },
+    { "crealityprint",    htCrealityPrint },
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(PrintHostType)
 
@@ -133,6 +134,21 @@ static t_config_enum_values s_keys_map_FuzzySkinType {
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(FuzzySkinType)
 
+static t_config_enum_values s_keys_map_NoiseType {
+    { "classic",        int(NoiseType::Classic) },
+    { "perlin",         int(NoiseType::Perlin) },
+    { "billow",         int(NoiseType::Billow) },
+    { "ridgedmulti",    int(NoiseType::RidgedMulti) },
+    { "voronoi",        int(NoiseType::Voronoi) }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(NoiseType)
+
+static t_config_enum_values s_keys_map_FuzzySkinMode {
+    { "displacement",   int(FuzzySkinMode::Displacement) },
+    { "extrusion",      int(FuzzySkinMode::Extrusion) },
+    { "combined",       int(FuzzySkinMode::Combined)}
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(FuzzySkinMode)
 
 static t_config_enum_values s_keys_map_GradualDirection {
     {"gradualdir_x", int(GradualDirection::GradualDir_X)},
@@ -375,6 +391,7 @@ static const t_config_enum_values s_keys_map_BrimType = {
     {"outer_and_inner", btOuterAndInner},
     {"auto_brim", btAutoBrim},  // BBS
     {"brim_ears", btEar},     // Orca
+    {"painted", btPainted},    // BBS
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(BrimType)
 
@@ -1190,9 +1207,9 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionBool{ false });
 
     def = this->add("overhang_1_4_speed", coFloatOrPercent);
-    def->label = "(10%, 25%)";
+    def->label = "10%";
     def->category = L("Speed");
-    def->full_label = "(10%, 25%)";
+    def->full_label = "10%";
     //def->tooltip = L("Speed for line of wall which has degree of overhang between 10% and 25% line width. "
     //                 "0 means using original wall speed");
     def->sidetext = L("mm/s or %");
@@ -1202,9 +1219,9 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
 
     def = this->add("overhang_2_4_speed", coFloatOrPercent);
-    def->label = "[25%, 50%)";
+    def->label = "25%";
     def->category = L("Speed");
-    def->full_label = "[25%, 50%)";
+    def->full_label = "25%";
     //def->tooltip = L("Speed for line of wall which has degree of overhang between 25% and 50% line width. "
     //                 "0 means using original wall speed");
     def->sidetext = L("mm/s or %");
@@ -1214,9 +1231,9 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
 
     def = this->add("overhang_3_4_speed", coFloatOrPercent);
-    def->label = "[50%, 75%)";
+    def->label = "50%";
     def->category = L("Speed");
-    def->full_label = "[50%, 75%)";
+    def->full_label = "50%";
     //def->tooltip = L("Speed for line of wall which has degree of overhang between 50% and 75% line width. 0 means using original wall speed");
     def->sidetext = L("mm/s or %");
     def->ratio_over = "outer_wall_speed";
@@ -1225,9 +1242,9 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
 
     def = this->add("overhang_4_4_speed", coFloatOrPercent);
-    def->label = "[75%, 100%)";
+    def->label = "75%";
     def->category = L("Speed");
-    def->full_label = "[75%, 100%)";
+    def->full_label = "75%";
     //def->tooltip = L("Speed for line of wall which has degree of overhang between 75% and 100% line width. 0 means using original wall speed");
     def->sidetext = L("mm/s or %");
     def->ratio_over = "outer_wall_speed";
@@ -1236,10 +1253,10 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
 
     def             = this->add("overhang_totally_speed", coFloatOrPercent);
-    def->label      = L("Over 100% wall (not brige) (Beta)");
+    def->label      = L("100%");
     def->category   = L("Speed");
     def->full_label = "100%";
-    def->tooltip    = L("Speed of 100% overhang wall which has 0 overlap with the lower layer.");
+    //def->tooltip    = L("Speed of 100% overhang wall which has 0 overlap with the lower layer.");
     def->sidetext   = L("mm/s or %");
     def->ratio_over = "outer_wall_speed";
     def->min        = 0;
@@ -1298,12 +1315,14 @@ void PrintConfigDef::init_fff_params()
     def->enum_keys_map = &ConfigOptionEnum<BrimType>::get_enum_values();
     def->enum_values.emplace_back("auto_brim");
     def->enum_values.emplace_back("brim_ears");
+    def->enum_values.emplace_back("painted");
     def->enum_values.emplace_back("outer_only");
     def->enum_values.emplace_back("inner_only");
     def->enum_values.emplace_back("outer_and_inner");
     def->enum_values.emplace_back("no_brim");
     def->enum_labels.emplace_back(L("Auto"));
     def->enum_labels.emplace_back(L("Mouse ear"));
+    def->enum_labels.emplace_back(L("Painted"));
     def->enum_labels.emplace_back(L("Outer brim only"));
     def->enum_labels.emplace_back(L("Inner brim only"));
     def->enum_labels.emplace_back(L("Outer and inner brim"));
@@ -3007,6 +3026,80 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(0));
 
+    def = this->add("fuzzy_skin_mode", coEnum);
+    def->label = L("Fuzzy skin generator mode");
+    def->category = L("Others");
+    def->tooltip = L("Fuzzy skin generation mode. Works only with Arachne!\n"
+                     "Displacement: Сlassic mode when the pattern is formed by shifting the nozzle sideways from the original path.\n"
+                     "Extrusion: The mode when the pattern formed by the amount of extruded plastic. "
+                     "This is the fast and straight algorithm without unnecessary nozzle shake that gives a smooth pattern. "
+                     "But it is more useful for forming loose walls in the entire they array.\n"
+                     "Combined: Joint mode [Displacement] + [Extrusion]. The appearance of the walls is similar to [Displacement] Mode, but it leaves no pores between the perimeters.\n\n"
+                     "Attention! The [Extrusion] and [Combined] modes works only the fuzzy_skin_thickness parameter not more than the thickness of printed loop. "
+                     "At the same time, the width of the extrusion for a particular layer should also not be below a certain level. "
+                     "It is usually equal 15-25%% of a layer height. Therefore, the maximum fuzzy skin thickness with a perimeter width of 0.4 mm and a layer height of 0.2 mm will be 0.4-(0.2*0.25)=±0.35mm! "
+                     "If you enter a higher parameter than this, the error Flow::spacing() will displayed, and the model will not be sliced. You can choose this number until this error is repeated." );
+    def->enum_keys_map = &ConfigOptionEnum<FuzzySkinMode>::get_enum_values();
+    def->enum_values.push_back("displacement");
+    def->enum_values.push_back("extrusion");
+    def->enum_values.push_back("combined");
+    def->enum_labels.push_back(L("Displacement"));
+    def->enum_labels.push_back(L("Extrusion"));
+    def->enum_labels.push_back(L("Combined"));
+    def->mode = comSimple;
+    def->set_default_value(new ConfigOptionEnum<FuzzySkinMode>(FuzzySkinMode::Displacement));
+    
+    def = this->add("fuzzy_skin_noise_type", coEnum);
+    def->label = L("Fuzzy skin noise type");
+    def->category = L("Others");
+    def->tooltip = L("Noise type to use for fuzzy skin generation:\n"
+                     "Classic: Classic uniform random noise.\n"
+                     "Perlin: Perlin noise, which gives a more consistent texture.\n"
+                     "Billow: Similar to perlin noise, but clumpier.\n"
+                     "Ridged Multifractal: Ridged noise with sharp, jagged features. Creates marble-like textures.\n"
+                     "Voronoi: Divides the surface into voronoi cells, and displaces each one by a random amount. Creates a patchwork texture.");
+    def->enum_keys_map = &ConfigOptionEnum<NoiseType>::get_enum_values();
+    def->enum_values.push_back("classic");
+    def->enum_values.push_back("perlin");
+    def->enum_values.push_back("billow");
+    def->enum_values.push_back("ridgedmulti");
+    def->enum_values.push_back("voronoi");
+    def->enum_labels.push_back(L("Classic"));
+    def->enum_labels.push_back(L("Perlin"));
+    def->enum_labels.push_back(L("Billow"));
+    def->enum_labels.push_back(L("Ridged Multifractal"));
+    def->enum_labels.push_back(L("Voronoi"));
+    def->mode = comSimple;
+    def->set_default_value(new ConfigOptionEnum<NoiseType>(NoiseType::Classic));
+    
+    def = this->add("fuzzy_skin_scale", coFloat);
+    def->label = L("Fuzzy skin feature size");
+    def->category = L("Others");
+    def->tooltip = L("The base size of the coherent noise features, in mm. Higher values will result in larger features.");
+    def->sidetext = L("mm");	// milimeters, CIS languages need translation
+    def->min = 0.1;
+    def->max = 500;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1.0));
+
+    def = this->add("fuzzy_skin_octaves", coInt);
+    def->label = L("Fuzzy Skin Noise Octaves");
+    def->category = L("Others");
+    def->tooltip = L("The number of octaves of coherent noise to use. Higher values increase the detail of the noise, but also increase computation time.");
+    def->min = 1;
+    def->max = 10;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(4));
+
+    def = this->add("fuzzy_skin_persistence", coFloat);
+    def->label = L("Fuzzy skin noise persistence");
+    def->category = L("Others");
+    def->tooltip = L("The decay rate for higher octaves of the coherent noise. Lower values will result in smoother noise.");
+    def->min = 0.01;
+    def->max = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.5));
+
     def = this->add("filter_out_gap_fill", coFloat);
     def->label = L("Filter out tiny gaps");
     def->category = L("Layers and Perimeters");
@@ -3910,6 +4003,47 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(3));
 
+    def = this->add("msao_recovery_enable", coBool);
+    def->label   = L("Material shortage recovery after overhang(Beta)");
+    def->tooltip = L("This parameter conflicts with the max_volumetric_extrusion_rate_slope and "
+                    "cannot be enabled at the same time.\n\n"
+                    "When the slicer detects that a segment of continuous low-speed extrusion has "
+                    "finished and the path immediately returns to normal high-speed printing, "
+                    "sudden changes in speed and acceleration can cause the extrusion pressure to "
+                    "lag behind."
+                    "This may lead to temporary under-extrusion on external walls, resulting in "
+                    "thin lines, whitening, or hollow-looking artifacts."
+                    "After enabling this option, the slicer inserts additional speed control "
+                    "during the recovery phase so that the printer does not jump "
+                    "directly from “slow” to “fast,” but instead transitions more smoothly back "
+                    "to normal motion.\n\n"
+                    "Typical usage scenarios include outer walls with overhangs, chamfers, small "
+                    "cross-sections, or the recovery segment after bridging."
+                    "Compared to the parameter of Extrusion rate smoothing, this parameter has a "
+                    "smaller impact on the result of slice.");
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("msao_safe_accel", coFloat);
+    def->label   = L("Safe acceleration after overhang(Beta)");
+    def->tooltip = L("When the slicer detects the end of a continuous low-speed extrusion region such as an overhang, it will not immediately restore the normal printing acceleration."
+                    "Instead, it first uses a lower and more conservative acceleration value for a short “safe recovery segment,”"
+                    "allowing extrusion pressure, molten material flow, and nozzle output to gradually return to a stable state.");
+    def->sidetext = L("mm/s²");
+    def->min     = 1.0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(200.0));
+
+    def = this->add("msao_safe_velocity", coFloat);
+    def->label   = L("Safe speed after overhang(Beta)");
+   def->tooltip = L("When the slicer detects the end of a continuous low-speed extrusion region such as an overhang, it will not immediately restore the normal printing speed."
+                    "Instead, it first uses a lower and more conservative cruise speed for a short “safe recovery segment,”"
+                    "allowing the printer to pass through the transition more gently before gradually returning to the normal printing speed.");
+    def->sidetext = L("mm/s");
+    def->min     = 1.0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(50.0));
+
+
     def             = this->add("acceleration_limit_mess", coString);
     def->label      = L("Weight limit speed and acceleration");
     def->tooltip    = L("Weight limit speed and acceleration");
@@ -4062,6 +4196,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("obico");
     def->enum_values.push_back("flashforge");
     def->enum_values.push_back("simplyprint");
+    def->enum_values.push_back("crealityPrint");
     def->enum_labels.push_back("PrusaLink");
     def->enum_labels.push_back("PrusaConnect");
     def->enum_labels.push_back("Octo/Klipper");
@@ -4074,6 +4209,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back("Obico");
     def->enum_labels.push_back("Flashforge");
     def->enum_labels.push_back("SimplyPrint");
+    def->enum_labels.push_back("CrealityPrint");
     def->mode = comAdvanced;
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionEnum<PrintHostType>(htOctoPrint));
@@ -4234,6 +4370,12 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->max = 1000;
     def->set_default_value(new ConfigOptionInt(2));
+
+    def = this->add("embedding_wall_into_infill", coBool);
+    def->label = L("Embedding the wall into the infill");
+    def->category = L("Strength");
+    def->tooltip  = L("Embedding the wall into parts where the wall loops are absent ensures that the wall connects seamlessly to the infill.");
+    def->set_default_value(new ConfigOptionBool(false));
     
     def = this->add("alternate_extra_wall", coBool);
     def->label = L("Alternate extra wall");
@@ -5616,6 +5758,49 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("This setting specifies whether to add infill inside large hollows of tree support");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
+
+    def           = this->add("support_ironing", coBool);
+    def->label    = L("Ironing Support Interface");
+    def->category = L("Support");
+    def->tooltip  = L(
+        "Ironing is using small flow to print on same height of support interface again to make it more smooth. "
+         "This setting controls whether support interface being ironed. When enabled, support interface will be extruded as solid too.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def                = this->add("support_ironing_pattern", coEnum);
+    def->label         = L("Support Ironing Pattern");
+    def->tooltip       = L("The pattern that will be used when ironing.");
+    def->category      = L("Support");
+    def->enum_keys_map = &ConfigOptionEnum<InfillPattern>::get_enum_values();
+    def->enum_values.push_back("concentric");
+    def->enum_values.push_back("rectilinear");
+    def->enum_labels.push_back(L("Concentric"));
+    def->enum_labels.push_back(L("Rectilinear"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipRectilinear));
+
+    def             = this->add("support_ironing_flow", coPercent);
+    def->label      = L("Support Ironing flow");
+    def->category   = L("Support");
+    def->tooltip    = L("The amount of material to extrude during ironing. Relative to flow of normal support interface layer height. "
+                           "Too high value results in overextrusion on the surface.");
+    def->sidetext   = "%";
+    def->ratio_over = "layer_height";
+    def->min        = 0;
+    def->max        = 100;
+    def->mode       = comAdvanced;
+    def->set_default_value(new ConfigOptionPercent(10));
+
+    def           = this->add("support_ironing_spacing", coFloat);
+    def->label    = L("Support Ironing line spacing");
+    def->category = L("Support");
+    def->tooltip  = L("The distance between the lines of ironing.");
+    def->sidetext = L("mm"); // milimeters, CIS languages need translation
+    def->min      = 0;
+    def->max      = 1;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.2));
 
     def = this->add("activate_chamber_temp_control",coBools);
     def->label = L("Activate temperature control");

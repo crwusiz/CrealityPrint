@@ -43,7 +43,7 @@
         },
         {
             "name": "weiyusuo-relwithdeb",
-            "displayName": "weiyusuo-release",
+            "displayName": "weiyusuo-debug",
             "description": "Sets release build type",
             "inherits": "x64-release",
             "cacheVariables": {

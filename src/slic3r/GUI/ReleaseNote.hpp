@@ -111,6 +111,7 @@ public:
     void on_dpi_changed(const wxRect& suggested_rect) override;
     void update_version_info(wxString release_note, wxString version);
     std::vector<std::string> splitWithStl(std::string str, std::string pattern);
+    void set_update_info(bool is_major_update, const std::string& version_str, const std::string& update_url);
 
     wxStaticBitmap*   m_brand{nullptr};
     Label *           m_text_up_info{nullptr};
@@ -127,6 +128,9 @@ public:
     Button*           m_button_download;
     Button*           m_button_cancel;
     std::string       url_line;
+    bool              m_is_major_update{true}; // Default to major update
+    std::string       m_version_str; // Store version string
+    std::string       m_update_url; // Store update URL
 };
 
 class SecondaryCheckDialog : public DPIFrame

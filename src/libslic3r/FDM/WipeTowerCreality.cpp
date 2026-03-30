@@ -2800,7 +2800,7 @@ WipeTower::ToolChangeResult WipeTowerCreality::finish_block(const WipeTower::Wip
         writer.travel(fill_box.ld + Vec2f(line_width * 2, 0.f), feedrate)
             .append(";---------------\n"
                     "; CP EMPTY GRID START\n")
-            .comment_with_value(" layer #", m_num_layer_changes + 1);
+            .comment_with_value(" level #", m_num_layer_changes + 1);
         if (distance > m_perimeter_width) {
 
             writer.retract(-retract_length, retract_speed);
@@ -2959,7 +2959,7 @@ WipeTower::ToolChangeResult WipeTowerCreality::finish_block_solid(const WipeTowe
         writer
             .append(";----------------\n"
                     "; CP EMPTY GRID START\n")
-            .comment_with_value(" layer #", m_num_layer_changes + 1);
+            .comment_with_value(" level #", m_num_layer_changes + 1);
 
         float y       = fill_box.ld.y();
         int   n       = (dy + 0.25 * line_width) / line_width + 1;

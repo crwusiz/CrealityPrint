@@ -4,6 +4,7 @@
 #include "SlicingProgressNotification.hpp"
 #include "GUI.hpp"
 #include "ImGuiWrapper.hpp"
+#include "GLTexture.hpp"
 #include "wxExtensions.hpp"
 #include "ObjectDataViewModel.hpp"
 #include "GUI_ObjectList.hpp"
@@ -18,6 +19,7 @@
 #include <boost/bind/bind.hpp>
 #include <boost/nowide/convert.hpp>
 
+#include <algorithm>
 #include <iostream>
 
 #include <wx/glcanvas.h>
@@ -208,6 +210,7 @@ void NotificationManager::ObjectInfoNotification::render(
     if (m_line_height != ImGui::CalcTextSize("A").y)
         init();
 
+    ensure_ui_inited();
 	Size cnv_size = canvas.get_canvas_size();
 	ImGuiWrapper& imgui = *wxGetApp().imgui();
 	set_next_window_size(imgui);
@@ -236,7 +239,7 @@ void NotificationManager::ObjectInfoNotification::render(
             set_hovered();
         bbl_render_left_sign(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
         render_left_sign(imgui);
-        ImGui::PushStyleColor(ImGuiCol_Text, m_is_dark ? ImVec4(1.0f,1.0f,1.0f,1.0f) : ImVec4(135/255.0f, 142/255.0f, 154/255.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, m_is_dark ? ImVec4(1.0f,1.0f,1.0f,1.0f) : ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
         render_text(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
         ImGui::PopStyleColor();
         m_minimize_b_visible = false;
@@ -290,7 +293,10 @@ void NotificationManager::PopNotification::bbl_render_block_notification(
 
     case Slic3r::GUI::NotificationManager::NotificationLevel::ProgressBarNotificationLevel: 
 	{
-        bg_color = ImVec4(210.0 / 255.0, 148.0 / 255.0, 0.0, 0.8f);
+        // Use white background in light mode, keep original in dark mode
+        if (!m_is_dark) {
+            bg_color = ImVec4(1.0, 1.0, 1.0, 0.8f);
+        }
 	} break;
 
     case Slic3r::GUI::NotificationManager::NotificationLevel::WarningNotificationLevel:
@@ -1178,13 +1184,18 @@ void NotificationManager::ProgressBarNotification::render_bar(ImGuiWrapper& imgu
 {
 	//ImVec4 orange_color			= ImVec4(.99f, .313f, .0f, 1.0f);
 	//ImVec4 gray_color			= ImVec4(.34f, .34f, .34f, 1.0f);
+
+    int alpha = (int)(255 * m_current_fade_opacity);
+    ImColor bg_color(74, 74, 77, alpha);   
+    ImColor fg_color(23, 204, 95, alpha);  
+
     ImVec4 orange_color         = ImVec4(0, 0.588, 0.533, 1);
     ImVec4 gray_color           = ImVec4(.7f, .7f, .7f, 1.0f);
 	ImVec2 lineEnd				= ImVec2(win_pos_x - m_window_width_offset, win_pos_y + win_size_y / 2 + (m_multiline ? m_line_height / 2 : 0));
 	ImVec2 lineStart			= ImVec2(win_pos_x - win_size_x + m_left_indentation, win_pos_y + win_size_y / 2 + (m_multiline ? m_line_height / 2 : 0));
 	ImVec2 midPoint				= ImVec2(lineStart.x + (lineEnd.x - lineStart.x) * m_percentage, lineStart.y);
-	ImGui::GetWindowDrawList()->AddLine(lineStart, lineEnd, IM_COL32((int)(gray_color.x * 255), (int)(gray_color.y * 255), (int)(gray_color.z * 255), (m_current_fade_opacity * 255.f)), m_line_height * 0.2f);
-	ImGui::GetWindowDrawList()->AddLine(lineStart, midPoint, IM_COL32((int)(orange_color.x * 255), (int)(orange_color.y * 255), (int)(orange_color.z * 255), (m_current_fade_opacity * 255.f)), m_line_height * 0.2f);
+    ImGui::GetWindowDrawList()->AddLine(lineStart, lineEnd, bg_color, m_line_height * 0.2f);
+    ImGui::GetWindowDrawList()->AddLine(lineStart, midPoint, fg_color, m_line_height * 0.2f);
 	if (m_render_percentage) {
 		std::string text;
 		std::stringstream stream;
@@ -1234,6 +1245,7 @@ void NotificationManager::UpdatedItemsInfoNotification::add_type(InfoItemType ty
 		// BBS
 		//case InfoItemType::Sinking:             text += format(("%1$d Object has partial sinking.",		"%1$d Objects have partial sinking.",		(*it).second), (*it).second) + "\n"; break;
 		case InfoItemType::CutConnectors:       text += format(_L_PLURAL("%1$d object was loaded as a part of cut object.",		"%1$d objects were loaded as parts of cut object", (*it).second), (*it).second) + "\n"; break;
+		case InfoItemType::FuzzySkin:           text += format(_L_PLURAL("%1$d object was loaded with fuzzy skin painting.",    "%1$d objects were loaded with fuzzy skin painting.",   (*it).second), (*it).second) + "\n"; break;
 		default: BOOST_LOG_TRIVIAL(error) << "Unknown InfoItemType: " << (*it).second; break;
 		}
 	}
@@ -1244,14 +1256,36 @@ void NotificationManager::UpdatedItemsInfoNotification::add_type(InfoItemType ty
 
 //------URLDownloadNotification----------------
 
+void NotificationManager::URLDownloadNotification::set_next_window_size(ImGuiWrapper& imgui)
+{
+	const float sc = wxGetApp().plater()->get_current_canvas3D()->get_scale();
+	m_window_width = 220.0f * sc;
+	m_window_height = 80.0f * sc;
+}
+
+void NotificationManager::URLDownloadNotification::bbl_render_left_sign(ImGuiWrapper& imgui, const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
+{
+	PopNotification::bbl_render_left_sign(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
+}
+
+void NotificationManager::URLDownloadNotification::render_text(ImGuiWrapper& imgui, const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
+{
+	if (m_endlines.empty() || m_endlines[0] > m_text1.size())
+		return;
+
+	const float sc = wxGetApp().plater()->get_current_canvas3D()->get_scale();
+	const float title_bar_h = 40.0f * sc;
+
+	ImGui::SetCursorPosX(m_left_indentation);
+	ImGui::SetCursorPosY(std::max(0.0f, (title_bar_h - m_line_height) * 0.5f));
+	imgui.text(m_text1.substr(0, m_endlines[0]).c_str());
+
+	render_bar(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
+}
+
 void NotificationManager::URLDownloadNotification::render_close_button(ImGuiWrapper& imgui, const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
 {
-	if (m_percentage < 0.f || m_percentage >= 1.f) {
-		render_close_button_inner(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
-		if (m_percentage >= 1.f)
-			render_open_button_inner(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
-	} else
-		render_pause_cancel_buttons_inner(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
+	render_open_button_inner(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
 }
 void NotificationManager::URLDownloadNotification::render_close_button_inner(ImGuiWrapper& imgui, const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
 {
@@ -1298,8 +1332,7 @@ void NotificationManager::URLDownloadNotification::render_close_button_inner(ImG
 void NotificationManager::URLDownloadNotification::render_pause_cancel_buttons_inner(ImGuiWrapper& imgui, const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
 {
 
-	render_cancel_button_inner(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
-	render_pause_button_inner(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
+	render_open_button_inner(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
 }
 void NotificationManager::URLDownloadNotification::render_pause_button_inner(ImGuiWrapper& imgui, const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
 {
@@ -1352,34 +1385,52 @@ void NotificationManager::URLDownloadNotification::render_open_button_inner(ImGu
 	push_style_color(ImGuiCol_TextSelectedBg, ImVec4(0, .75f, .75f, 1.f), m_state == EState::FadingOut, m_current_fade_opacity);
 	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.0f, .0f, .0f, .0f));
 
-	std::wstring button_text;
-    // Orca: Change based on dark mode
-	button_text = m_is_dark ? ImGui::OpenDarkButton : ImGui::OpenButton;
+    static GLTexture s_normal_open_dark;
+    static GLTexture s_normal_open_light;
+    if (!s_normal_open_dark.vaild())
+        s_normal_open_dark.load_from_png_file(Slic3r::resources_dir() + "/images/dark/normal_open.png", false, GLTexture::SingleThreaded, false);
+    if (!s_normal_open_light.vaild())
+        s_normal_open_light.load_from_png_file(Slic3r::resources_dir() + "/images/light/normal_open.png", false, GLTexture::SingleThreaded, false);
 
-	if (ImGui::IsMouseHoveringRect(ImVec2(win_pos.x - m_line_height * 5.f, win_pos.y),
-		ImVec2(win_pos.x - m_line_height * 2.5f, win_pos.y + win_size.y),
-		true))
-	{
-        // Orca: Change based on dark mode
-		button_text = m_is_dark ? ImGui::OpenHoverDarkButton : ImGui::OpenHoverButton;
+    GLTexture& tex = m_is_dark ? s_normal_open_dark : s_normal_open_light;
+    const bool tex_ok = tex.vaild();
+    const ImTextureID tex_id = (void*)static_cast<intptr_t>(tex.get_id());
+
+	const float sc = wxGetApp().plater()->get_current_canvas3D()->get_scale();
+	const float title_bar_h = 40.0f * sc;
+	const float margin = 12.0f * sc;
+	const float icon_px = 16.0f * sc;
+	const ImVec2 icon_size(icon_px, icon_px);
+	const ImVec2 pad = ImGui::GetStyle().WindowPadding;
+	const float x = win_size.x - pad.x - margin - icon_size.x;
+	const float y = 8.0f * sc;
+	const float x_px = ImFloor(x + 0.5f);
+	const float y_px = ImFloor(y + 0.5f);
+
+	ImGui::SetCursorPosX(x_px);
+	ImGui::SetCursorPosY(y_px);
+	ImGui::PushID("open_folder_btn");
+
+	if (tex_ok) {
+		ImDrawList* dl = ImGui::GetWindowDrawList();
+
+		ImGui::InvisibleButton("##open_folder", icon_size);
+		const bool hovered = ImGui::IsItemHovered();
+		const bool clicked = ImGui::IsItemClicked();
+
+		const float alpha = hovered ? 0.85f : 1.0f;
+		ImVec4 col = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+		col.w *= alpha;
+		dl->AddImage(tex_id, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImVec2(0, 0), ImVec2(1, 1), ImGui::GetColorU32(col));
+
+		if (clicked)
+			trigger_user_action_callback(DownloaderUserAction::DownloadUserOpenedFolder);
+	} else {
+		if (imgui.button(ImGui::OpenButton, icon_size.x, icon_size.y))
+			trigger_user_action_callback(DownloaderUserAction::DownloadUserOpenedFolder);
 	}
 
-	ImVec2 button_pic_size = ImGui::CalcTextSize(boost::nowide::narrow(button_text).c_str());
-	ImVec2 button_size(button_pic_size.x * 1.25f, button_pic_size.y * 1.25f);
-	ImGui::SetCursorPosX(win_size.x - m_line_height * 5.0f);
-	ImGui::SetCursorPosY(win_size.y / 2 - button_size.y);
-	if (imgui.button(button_text.c_str(), button_size.x, button_size.y))
-	{
-		trigger_user_action_callback(DownloaderUserAction::DownloadUserOpenedFolder);
-	}
-
-	//invisible large button
-	ImGui::SetCursorPosX(win_size.x - m_line_height * 4.625f);
-	ImGui::SetCursorPosY(0);
-	if (imgui.button("  ", m_line_height * 2.f, win_size.y))
-	{
-		trigger_user_action_callback(DownloaderUserAction::DownloadUserOpenedFolder);
-	}
+	ImGui::PopID();
 	ImGui::PopStyleColor(5);
 }
 
@@ -1433,26 +1484,46 @@ void NotificationManager::URLDownloadNotification::trigger_user_action_callback(
 
 void NotificationManager::URLDownloadNotification::render_bar(ImGuiWrapper& imgui, const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
 {
-	ProgressBarNotification::render_bar(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
 	std::string text;
 	if (m_percentage < 0.f) {
 		text = _u8L("ERROR") + ": " + m_error_message;
-	} else if (m_percentage >= 1.f) {
-		text = _u8L("COMPLETED");
-	} else {
-		std::stringstream stream;
-		stream << std::fixed << std::setprecision(2) << (int)(m_percentage * 100) << "%";
-		text = stream.str();
+		ImGui::SetCursorPosX(m_left_indentation);
+		ImGui::SetCursorPosY(win_size_y / 2 + win_size_y / 6 - (m_multiline ? 0 : m_line_height / 4));
+		imgui.text(text.c_str());
+		return;
 	}
-	ImGui::SetCursorPosX(m_left_indentation);
-	ImGui::SetCursorPosY(win_size_y / 2 + win_size_y / 6 - (m_multiline ? 0 : m_line_height / 4));
-	imgui.text(text.c_str());
+
+	const int pct = std::min(100, std::max(0, (int)(m_percentage * 100)));
+	text = std::to_string(pct) + "%";
+
+	const bool pushed_bold_font = imgui.push_bold_font_24();
+	ImFont* font = ImGui::GetFont();
+	const float font_size = ImGui::GetFontSize();
+	const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
+
+	const float sc = wxGetApp().plater()->get_current_canvas3D()->get_scale();
+	const float title_bottom = 40.0f * sc;
+	const float content_h = std::max(0.0f, win_size_y - title_bottom);
+	const ImVec2 pos_local((win_size_x - text_size.x) * 0.5f, title_bottom + (content_h - text_size.y) * 0.5f);
+	ImVec2 pos_screen = ImGui::GetWindowPos() + pos_local;
+	pos_screen.x = ImFloor(pos_screen.x + 0.5f);
+	pos_screen.y = ImFloor(pos_screen.y + 0.5f);
+
+	ImGui::GetWindowDrawList()->AddText(font, font_size, pos_screen, ImGui::GetColorU32(ImGuiCol_Text), text.c_str());
+	if (pushed_bold_font)
+		imgui.pop_bold_font_24();
 }
 
 void NotificationManager::URLDownloadNotification::count_spaces()
 {
 	ProgressBarNotification::count_spaces();
-	m_window_width_offset = m_line_height * 6;
+	const float sc = wxGetApp().plater()->get_current_canvas3D()->get_scale();
+	m_window_width = 220.0f * sc;
+
+	const float icon_px = 16.0f * sc;
+	const float margin_px = 8.0f * sc;
+	m_left_indentation = std::max(m_left_indentation, 12.0f * sc);
+	m_window_width_offset = m_left_indentation + icon_px + 2.0f * margin_px;
 }
 
 //------PrintHostUploadNotification----------------
@@ -1506,7 +1577,15 @@ void NotificationManager::PrintHostUploadNotification::render_bar(ImGuiWrapper& 
 	switch (m_uj_state) {
 	case Slic3r::GUI::NotificationManager::PrintHostUploadNotification::UploadJobState::PB_PROGRESS:
 	{
-		ProgressBarNotification::render_bar(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
+        ImVec2 wp = ImGui::GetWindowPos();
+        ImVec2 ws = ImGui::GetWindowSize();
+        const float parent_win_size_x = ws.x;
+        const float parent_win_size_y = ws.y;
+        const float parent_win_pos_x  = wp.x + ws.x; // 右边界
+        const float parent_win_pos_y  = wp.y;        // 顶部
+
+        ProgressBarNotification::render_bar(imgui, parent_win_size_x,parent_win_size_y,parent_win_pos_x, parent_win_pos_y);
+
 		float uploaded = m_file_size * m_percentage;
 		std::stringstream stream;
 		stream << std::fixed << std::setprecision(2) << (int)(m_percentage * 100) << "% - " << uploaded << " of " << m_file_size << "MB uploaded";
@@ -2011,7 +2090,7 @@ void NotificationManager::push_support_manual_hint(const std::string& text, int 
         NotificationLevel::WarningNotificationLevel,
         duration_sec,                                     
         text,                               
-        into_u8("前往绘制支撑(L)"),
+        into_u8("ǰ������֧��(L)"),
 		[](wxEvtHandler*) {
         if (auto* canvas = wxGetApp().plater()->get_current_canvas3D()) {
             auto& gm = canvas->get_gizmos_manager();
@@ -2048,15 +2127,21 @@ void NotificationManager::push_import_finished_notification(const std::string& p
 
 void NotificationManager::push_download_URL_progress_notification(size_t id, const std::string& text, std::function<bool(DownloaderUserAction, int)> user_action_callback)
 {
+    const std::string title = text.empty() ? _u8L("Download") : text;
     // If already exists
     for (std::unique_ptr<PopNotification>& notification : m_pop_notifications) {
         if (notification->get_type() == NotificationType::URLDownload && dynamic_cast<URLDownloadNotification*>(notification.get())->get_download_id() == id) {
+            NotificationData data{ NotificationType::URLDownload, NotificationLevel::ProgressBarNotificationLevel, 5, title };
+            notification->update(data);
+            dynamic_cast<URLDownloadNotification*>(notification.get())->set_user_action_callback(user_action_callback);
+            wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0);
             return;
         }
     }
     // push new one
-    NotificationData data{ NotificationType::URLDownload, NotificationLevel::ProgressBarNotificationLevel, 5, _u8L("Download") + ": " + text };
+    NotificationData data{ NotificationType::URLDownload, NotificationLevel::ProgressBarNotificationLevel, 5, title };
     push_notification_data(std::make_unique<NotificationManager::URLDownloadNotification>(data, m_id_provider, m_evt_handler, id, user_action_callback), 0);
+    wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0);
 }
 
 void NotificationManager::set_download_URL_progress(size_t id, float percentage)
@@ -2118,6 +2203,20 @@ void NotificationManager::set_download_URL_error(size_t id, const std::string& t
                 wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0);
             return;
         }
+    }
+}
+
+void NotificationManager::close_download_URL_notification(size_t id)
+{
+    for (std::unique_ptr<PopNotification>& notification : m_pop_notifications) {
+        if (notification->get_type() != NotificationType::URLDownload)
+            continue;
+        URLDownloadNotification* ntf = dynamic_cast<URLDownloadNotification*>(notification.get());
+        if (ntf == nullptr || ntf->get_download_id() != id)
+            continue;
+        notification->close();
+        wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0);
+        return;
     }
 }
 
@@ -2385,6 +2484,51 @@ void NotificationManager::set_slicing_progress_export_possible()
 			break;
 		}
 	}
+}
+
+nlohmann::json NotificationManager::get_slicing_progress_snapshot() const
+{
+	nlohmann::json out;
+	out["found"]      = false;
+	out["state"]      = "unknown";
+	out["state_code"] = -1;
+	out["percentage"] = 0.0f;
+	out["text"]       = "";
+	out["export"]     = false;
+	out["cancel"]     = false;
+
+	auto state_to_string = [](SlicingProgressNotification::SlicingProgressState s) -> const char* {
+		switch (s) {
+		case SlicingProgressNotification::SlicingProgressState::SP_NO_SLICING: return "no_slicing";
+		case SlicingProgressNotification::SlicingProgressState::SP_BEGAN:      return "began";
+		case SlicingProgressNotification::SlicingProgressState::SP_PROGRESS:   return "progress";
+		case SlicingProgressNotification::SlicingProgressState::SP_CANCELLED:  return "cancelled";
+		case SlicingProgressNotification::SlicingProgressState::SP_COMPLETED:  return "completed";
+		default: return "unknown";
+		}
+	};
+
+	for (const std::unique_ptr<PopNotification>& notification : m_pop_notifications) {
+		if (notification->get_type() != NotificationType::SlicingProgress)
+			continue;
+
+		out["found"] = true;
+		out["text"]  = notification->get_text1();
+
+		auto* spn = dynamic_cast<SlicingProgressNotification*>(notification.get());
+		if (!spn)
+			return out;
+
+		const auto st = spn->get_progress_state();
+		out["state"]      = state_to_string(st);
+		out["state_code"] = static_cast<int>(st);
+		out["percentage"] = spn->get_percentage();
+		out["export"]     = spn->get_export_possible();
+		out["cancel"]     = spn->has_cancel_callback();
+		return out;
+	}
+
+	return out;
 }
 void NotificationManager::init_progress_indicator()
 {
@@ -3278,7 +3422,33 @@ void NotificationManager::PopNotification::render(GLCanvas3D& canvas, float& ini
 
 	std::string name = "!!Ntfctn" + std::to_string(m_id);
 	
-	ImGui::PushStyleColor(ImGuiCol_Border, ImVec4()), ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.f, 0.f, 0.f, 0.2f));
+	// Set background color based on notification level and dark mode
+	ImVec4 bg_color = ImVec4(0.f, 0.f, 0.f, 0.2f);
+	NotificationLevel level = get_data().level;
+    switch (level) {
+    case Slic3r::GUI::NotificationManager::NotificationLevel::ErrorNotificationLevel:
+	{
+        bg_color = ImVec4(1.0, 43.0 / 255.0, 43.0 / 255.0, 0.8f);
+    } break;
+
+    case Slic3r::GUI::NotificationManager::NotificationLevel::ProgressBarNotificationLevel: 
+	{
+        // Use white background in light mode, keep original in dark mode
+        if (!m_is_dark) {
+            bg_color = ImVec4(1.0, 1.0, 1.0, 0.8f);
+        }
+	} break;
+
+    case Slic3r::GUI::NotificationManager::NotificationLevel::WarningNotificationLevel:
+	case Slic3r::GUI::NotificationManager::NotificationLevel::SeriousWarningNotificationLevel:
+	{
+        bg_color = ImVec4(0.7, 0.51, 0.04, 0.8f);
+    } break;
+
+    default: break;
+    }
+	
+	ImGui::PushStyleColor(ImGuiCol_Border, ImVec4()), ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_color);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 5.0);
 
     ImGui::BeginChild(name.c_str(), win_size, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse); //
@@ -3290,7 +3460,7 @@ void NotificationManager::PopNotification::render(GLCanvas3D& canvas, float& ini
             set_hovered();
         bbl_render_left_sign(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
         render_left_sign(imgui);
-        ImGui::PushStyleColor(ImGuiCol_Text, m_is_dark ? ImVec4(1.0f,1.0f,1.0f,1.0f) : ImVec4(135/255.0f, 142/255.0f, 154/255.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, m_is_dark ? ImVec4(1.0f,1.0f,1.0f,1.0f) : ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
         render_text(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y);
         ImGui::PopStyleColor();
         m_minimize_b_visible = false;

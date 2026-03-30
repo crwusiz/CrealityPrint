@@ -199,7 +199,7 @@ namespace DM{
 
     bool Material::compareMaterials(const DM::Material& a, const DM::Material& b)
     {
-        return a.type == b.type && a.color == b.color && a.state == b.state && a.editStatus == b.editStatus;
+        return a.type == b.type && a.color == b.color && a.state == b.state && a.editStatus == b.editStatus && a.name == b.name;
     }
 
     bool MaterialBox::compareMaterialBoxes(const DM::MaterialBox& a, const DM::MaterialBox& b)

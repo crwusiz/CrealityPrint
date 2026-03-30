@@ -17,6 +17,7 @@ class PlaterWorker: public Worker {
     WorkerSubclass m_w;
     wxWindow *m_plater;
 
+    // Adapter wrapping a Job to integrate with Plater's UI event handling.
     class PlaterJob : public Job {
         std::unique_ptr<Job> m_job;
         wxWindow *m_plater;
@@ -62,11 +63,13 @@ class PlaterWorker: public Worker {
 
             } wctl{c};
 
-            CursorSetterRAII busycursor{wctl};
-            
             using namespace std::chrono;
             steady_clock::time_point process_start = steady_clock::now();
-            m_job->process(wctl);
+            {
+                // Always show busy cursor while processing Plater jobs.
+                CursorSetterRAII busycursor{ wctl };
+                m_job->process(wctl);
+            }
             steady_clock::time_point process_end = steady_clock::now();
             m_process_duration = duration_cast<milliseconds>(process_end - process_start).count();
         }
@@ -133,7 +136,9 @@ public:
     // Always package the job argument into a PlaterJob
     bool push(std::unique_ptr<Job> job) override
     {
-        return m_w.push(std::make_unique<PlaterJob>(m_plater, std::move(job)));
+        // Avoid std::make_unique here to keep template usage simple for MSVC.
+        std::unique_ptr<Job> wrapped_job(new PlaterJob(m_plater, std::move(job)));
+        return m_w.push(std::move(wrapped_job));
     }
 
     bool is_idle() const override { return m_w.is_idle(); }

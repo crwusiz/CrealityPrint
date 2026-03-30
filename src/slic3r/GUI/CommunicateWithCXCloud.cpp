@@ -584,6 +584,8 @@ int CommunicateWithCXCloud::preUpdateProfile_create(const UploadFileInfo& fileIn
     boost::uuids::uuid uuid = boost::uuids::random_generator()();
     http.header("Content-Type", "application/json")
         .header("__CXY_REQUESTID_", to_string(uuid))
+        .timeout_connect(5)
+        .timeout_max(15)
         .set_post_body(j.dump())
         .on_complete([&](std::string body, unsigned status) {
             CXCloudDataCenter::getInstance().setNetworkError(false);
@@ -619,6 +621,8 @@ int CommunicateWithCXCloud::preUpdateProfile_create(const UploadFileInfo& fileIn
                 .form_add("Key", Key)
                 .form_add("Callback", Callback)
                 .form_add_file("File", fileInfo.file, fileInfo.name)
+                .timeout_connect(5)
+                .timeout_max(15)
                 .on_complete([&](std::string body, unsigned status) { auto ifs = fileInfo.file; })
                 .on_error([&](std::string body, std::string error, unsigned status) {
                     nRet       = 0;
@@ -666,6 +670,8 @@ int CommunicateWithCXCloud::preUpdateProfile_update(const UploadFileInfo& fileIn
     boost::uuids::uuid uuid = boost::uuids::random_generator()();
     http.header("Content-Type", "application/json")
         .header("__CXY_REQUESTID_", to_string(uuid))
+        .timeout_connect(5)
+        .timeout_max(15)
         .set_post_body(j.dump())
         .on_complete([&](std::string body, unsigned status) {
             CXCloudDataCenter::getInstance().setNetworkError(false);
@@ -703,6 +709,8 @@ int CommunicateWithCXCloud::preUpdateProfile_update(const UploadFileInfo& fileIn
                 .form_add("Key", Key)
                 .form_add("Callback", Callback)
                 .form_add_file("File", fileInfo.file, fileInfo.name)
+                .timeout_connect(5)
+                .timeout_max(15)
                 .on_complete([&](std::string body, unsigned status) {
                     nRet = 0;
                 })
@@ -747,6 +755,8 @@ int CommunicateWithCXCloud::deleteProfile(const std::string& ssDeleteSettingId)
     boost::uuids::uuid uuid = boost::uuids::random_generator()();
     http.header("Content-Type", "application/json")
         .header("__CXY_REQUESTID_", to_string(uuid))
+        .timeout_connect(5)
+        .timeout_max(15)
         .set_post_body(j.dump())
         .on_complete([&](std::string body, unsigned status) {
             CXCloudDataCenter::getInstance().setNetworkError(false);

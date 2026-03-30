@@ -490,9 +490,9 @@ void KBShortcutsDialog::fill_shortcuts()
             { ctrl + "R", L("Slice plate")},
             // Send to Print
 #ifdef __APPLE__
-            { L("⌘+Shift+G"), L("Print plate")},
+            { L("⌘+Shift+G"), L("Send print")},
 #else
-            { L("Ctrl+Shift+G"), L("Print plate")},
+            { L("Ctrl+Shift+G"), L("Send print")},
 #endif // __APPLE
 
             // Edit
@@ -566,6 +566,7 @@ void KBShortcutsDialog::fill_shortcuts()
             { "S", L("Gizmo scale") },
             { "R", L("Gizmo rotate") },
             { "C", L("Gizmo cut") },
+            { "H", L("Gizmo FDM paint-on fuzzy skin") },
             { "F", L("Gizmo Place face on bed") },
             { "L", L("Gizmo SLA support points") },
             { "P", L("Gizmo FDM paint-on seam") },

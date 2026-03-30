@@ -63,6 +63,7 @@ wxDEFINE_EVENT(EVT_GLTOOLBAR_SELECT_SLICED_PLATE, wxCommandEvent);
 
 wxDEFINE_EVENT(EVT_GLVIEWTOOLBAR_3D, SimpleEvent);
 wxDEFINE_EVENT(EVT_GLVIEWTOOLBAR_PREVIEW, SimpleEvent);
+wxDEFINE_EVENT(EVT_GLVIEWTOOLBAR_BRIM_EARS, SimpleEvent);
 wxDEFINE_EVENT(EVT_GLVIEWTOOLBAR_ASSEMBLE, SimpleEvent);
 wxDEFINE_EVENT(EVT_GLVIEWTOOLBAR_AI_CLOUD_SERVICE, SimpleEvent);
 
@@ -105,6 +106,7 @@ GLToolbarItem::GLToolbarItem(GLToolbarItem::EType type, const GLToolbarItem::Dat
 {
     render_left_pos = 0.0f;
 }
+
 
 bool GLToolbarItem::update_visibility()
 {

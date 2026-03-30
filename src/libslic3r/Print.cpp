@@ -381,7 +381,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "enable_arc_fitting"
             || opt_key == "print_order"
             || opt_key == "wall_sequence"
-            || opt_key == "z_direction_outwall_speed_continuous") {
+            || opt_key == "z_direction_outwall_speed_continuous"
+            || opt_key == "embedding_wall_into_infill") {
             osteps.emplace_back(posPerimeters);
             osteps.emplace_back(posEstimateCurledExtrusions);
             osteps.emplace_back(posInfill);
@@ -2044,6 +2045,8 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
                 return false;
             if (!model_volume1.mmu_segmentation_facets.equals(model_volume2.mmu_segmentation_facets))
                 return false;
+            if (!model_volume1.fuzzy_skin_facets.equals(model_volume2.fuzzy_skin_facets))
+                return false;
             if (model_volume1.config.get() != model_volume2.config.get())
                 return false;
         }
@@ -2150,10 +2153,10 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
                     obj->set_done(posIroning);
             }
         }
-
+        
         BOOST_LOG_TRIVIAL(error) << "generate_support_material " << " start memory info " << log_memory_info();
         tbb::parallel_for(tbb::blocked_range<int>(0, int(m_objects.size())),
-            [this, need_slicing_objects](const tbb::blocked_range<int>& range) {
+              [this, need_slicing_objects](const tbb::blocked_range<int>& range) {
                 for (int i = range.begin(); i < range.end(); i++) {
                     PrintObject* obj = m_objects[i];
                     if (need_slicing_objects.count(obj) != 0) {
@@ -2367,6 +2370,35 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
         }
     }
 
+    
+    m_toolpath_outside_result.reset(); // 清除旧结果
+    // 1. 构建床身多边形 (需要将 ConfigOptionPoints 转换为 Polygon 并进行缩放)
+    Polygons bed_polys;
+    {
+        const ConfigOptionPoints* bed_points_opt = m_config.option<ConfigOptionPoints>("printable_area");
+        if (bed_points_opt) {
+            Polygon bed;
+            for (const Vec2d& pt : bed_points_opt->values) {
+                bed.points.push_back(Point::new_scale(pt.x(), pt.y()));
+            }
+            bed_polys.push_back(bed);
+        }
+    }
+
+    // 2. 执行检查
+    if (!bed_polys.empty()) {
+        // 注意：find_toolpath_outside 实现时需要处理 Polygons 类型的 bed_poly
+        auto outsideRes = ConflictChecker::find_toolpath_outside(m_objects, bed_polys);
+
+        if (outsideRes.has_value()) {
+            m_toolpath_outside_result = outsideRes;
+            BOOST_LOG_TRIVIAL(error) << "Toolpath outside print area found.";
+        }
+    }
+    
+
+
+
     system_memory_stats(__FUNCTION__);
     BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " end memory info " << log_memory_info();
 }
@@ -2437,6 +2469,9 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
 
     //BBS
     result->conflict_result = m_conflict_result;
+    //Creality
+    result->toolpath_outside_result = m_toolpath_outside_result;
+
     BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " end";
 
     return path.c_str();
@@ -4838,6 +4873,22 @@ Point PrintInstance::shift_without_plate_offset() const
     return shift - Point(scaled(plate_offset.x()), scaled(plate_offset.y()));
 }
 
+PrintRegion *PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_region(const LayerRangeRegions &layer_range) const
+{
+    using FuzzySkinParentType = PrintObjectRegions::FuzzySkinPaintedRegion::ParentType;
+
+    if (this->parent_type == FuzzySkinParentType::PaintedRegion) {
+        return layer_range.painted_regions[this->parent].region;
+    }
+
+    assert(this->parent_type == FuzzySkinParentType::VolumeRegion);
+    return layer_range.volume_regions[this->parent].region;
+}
+
+int PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_region_id(const LayerRangeRegions &layer_range) const
+{
+    return this->parent_print_object_region(layer_range)->print_object_region_id();
+}
 
 // FakeWipeTower
 std::vector<ExtrusionPaths> FakeWipeTower::getFakeExtrusionPathsFromWipeTower() const

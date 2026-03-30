@@ -117,6 +117,7 @@ static constexpr const char* INSTANCESCOUNT_ATTR = "instances_count";
 static constexpr const char* CUSTOM_SUPPORTS_ATTR = "slic3rpe:custom_supports";
 static constexpr const char* CUSTOM_SEAM_ATTR = "slic3rpe:custom_seam";
 static constexpr const char* MMU_SEGMENTATION_ATTR = "slic3rpe:mmu_segmentation";
+static constexpr const char* FUZZY_SKIN_ATTR = "slic3rpe:fuzzy_skin";
 
 static constexpr const char* KEY_ATTR = "key";
 static constexpr const char* VALUE_ATTR = "value";
@@ -422,6 +423,7 @@ ModelVolumeType type_from_string(const std::string &s)
             std::vector<std::string> custom_supports;
             std::vector<std::string> custom_seam;
             std::vector<std::string> mmu_segmentation;
+            std::vector<std::string> fuzzy_skin;
 
             bool empty() { return vertices.empty() || triangles.empty(); }
 
@@ -431,6 +433,7 @@ ModelVolumeType type_from_string(const std::string &s)
                 custom_supports.clear();
                 custom_seam.clear();
                 mmu_segmentation.clear();
+                fuzzy_skin.clear();
             }
         };
 
@@ -1744,6 +1747,7 @@ ModelVolumeType type_from_string(const std::string &s)
 
         m_curr_object.geometry.custom_supports.push_back(get_attribute_value_string(attributes, num_attributes, CUSTOM_SUPPORTS_ATTR));
         m_curr_object.geometry.custom_seam.push_back(get_attribute_value_string(attributes, num_attributes, CUSTOM_SEAM_ATTR));
+        m_curr_object.geometry.fuzzy_skin.push_back(get_attribute_value_string(attributes, num_attributes, FUZZY_SKIN_ATTR));
         m_curr_object.geometry.mmu_segmentation.push_back(get_attribute_value_string(attributes, num_attributes, MMU_SEGMENTATION_ATTR));
         return true;
     }
@@ -2157,10 +2161,11 @@ ModelVolumeType type_from_string(const std::string &s)
             if (has_transform)
                 volume->source.transform = Slic3r::Geometry::Transformation(volume_matrix_to_object);
 
-            // recreate custom supports, seam and mmu segmentation from previously loaded attribute
+            // recreate custom supports, seam and mmu segmentation and and fuzzy skin from previously loaded attribute
             volume->supported_facets.reserve(triangles_count);
             volume->seam_facets.reserve(triangles_count);
             volume->mmu_segmentation_facets.reserve(triangles_count);
+            volume->fuzzy_skin_facets.reserve(triangles_count);
             for (size_t i=0; i<triangles_count; ++i) {
                 size_t index = volume_data.first_triangle_id + i;
                 assert(index < geometry.custom_supports.size());
@@ -2172,6 +2177,8 @@ ModelVolumeType type_from_string(const std::string &s)
                     volume->seam_facets.set_triangle_from_string(i, geometry.custom_seam[index]);
                 if (! geometry.mmu_segmentation[index].empty())
                     volume->mmu_segmentation_facets.set_triangle_from_string(i, geometry.mmu_segmentation[index]);
+                if (! geometry.fuzzy_skin[index].empty())
+                	volume->fuzzy_skin_facets.set_triangle_from_string(i, geometry.fuzzy_skin[index]);
             }
             volume->supported_facets.shrink_to_fit();
             volume->seam_facets.shrink_to_fit();
@@ -2828,6 +2835,15 @@ ModelVolumeType type_from_string(const std::string &s)
                     output_buffer += MMU_SEGMENTATION_ATTR;
                     output_buffer += "=\"";
                     output_buffer += mmu_painting_data_string;
+                    output_buffer += "\"";
+                }
+
+                std::string fuzzy_skin_data_string = volume->fuzzy_skin_facets.get_triangle_as_string(i);
+                if (!fuzzy_skin_data_string.empty()) {
+                    output_buffer += " ";
+                    output_buffer += FUZZY_SKIN_ATTR;
+                    output_buffer += "=\"";
+                    output_buffer += fuzzy_skin_data_string;
                     output_buffer += "\"";
                 }
 

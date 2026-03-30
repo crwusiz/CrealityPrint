@@ -392,6 +392,15 @@ void PrinterBoxFilamentPanel::on_auto_device_filament_mapping()
 void PrinterBoxFilamentPanel::on_show_box_color_selection(wxPoint popup_pos, int sync_filament_item_index)
 {
     try {
+        if (m_device_data.deviceType == 1) {
+            nlohmann::json commandJson;
+            nlohmann::json dataJson;
+            dataJson["device_id"]  = m_device_data.mac;
+            commandJson["command"] = "update_current_device";
+            commandJson["data"]    = dataJson;
+            auto jsonStr           = RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true));
+            wxGetApp().mainframe->get_printer_mgr_view()->ExecuteScriptCommand(jsonStr);
+        }
         if(m_box_color_pop_panel)
         {
             int displayIndex = wxDisplay::GetFromPoint(popup_pos);

@@ -138,6 +138,15 @@ struct ConflictComputeResult
 
 using ConflictComputeOpt = std::optional<ConflictComputeResult>;
 
+//struct ToolpathOutsideResult
+//{
+//    const void* _obj; // Object pointer that causes out-of-bounds
+//
+//    ToolpathOutsideResult(const void* o) : _obj(o) {}
+//    ToolpathOutsideResult() = default;
+//};
+//using ToolpathOutsideResultOpt = std::optional<ToolpathOutsideResult>;
+
 using ConflictObjName = std::optional<std::pair<std::string, std::string>>;
 
 struct ConflictChecker
@@ -145,7 +154,10 @@ struct ConflictChecker
     static ConflictResultOpt  find_inter_of_lines_in_diff_objs(PrintObjectPtrs objs, std::optional<const FakeWipeTower *> wtdptr);
     static ConflictComputeOpt find_inter_of_lines(const LineWithIDs &lines);
     static ConflictComputeOpt line_intersect(const LineWithID &l1, const LineWithID &l2);
+    static ToolpathOutsideResultOpt find_toolpath_outside(const PrintObjectPtrs& objs, const Polygons& bed_poly);
 };
+
+
 
 } // namespace Slic3r
 

@@ -90,7 +90,8 @@ PrintObject::PrintObject(Print* print, ModelObject* model_object, const Transfor
     PrintObjectBaseWithState(print, model_object),
     m_trafo(trafo),
     // BBS
-    m_tree_support_preview_cache(nullptr)
+    m_tree_support_preview_cache(nullptr),
+    m_has_support_outside(false)
 {
     // Compute centering offet to be applied to our meshes so that we work with smaller coordinates
     // requiring less bits to represent Clipper coordinates.
@@ -823,7 +824,6 @@ void PrintObject::generate_support_material()
                                               PrintStateBase::SlicingNeedSupportOn);
             }
         }
-
         this->set_done(posSupportMaterial);
     }
 
@@ -1291,6 +1291,11 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "fuzzy_skin_thickness"
             || opt_key == "fuzzy_skin_point_distance"
             || opt_key == "fuzzy_skin_first_layer"
+            || opt_key == "fuzzy_skin_mode"
+            || opt_key == "fuzzy_skin_noise_type"
+            || opt_key == "fuzzy_skin_scale"
+            || opt_key == "fuzzy_skin_octaves"
+            || opt_key == "fuzzy_skin_persistence"
             || opt_key == "detect_overhang_wall"
             || opt_key == "overhang_reverse"
             || opt_key == "overhang_reverse_internal_only"
@@ -1565,7 +1570,11 @@ void PrintObject::detect_surfaces_type()
                     if (! top.empty() && ! bottom.empty()) {
                         const auto cracks = intersection_ex(top, bottom);
                         if (!cracks.empty()) {
-                            if (lower_layer) { // Only detect small cracks for non-first layer, because first layer should always be bottom
+                            // Small-crack refinement below is expensive (roughly O(cracks * bottom_surfaces)).
+                            // Skip it on pathological layers to avoid long stalls.
+                            constexpr size_t kMaxSmallCrackRefineWork = 300000;
+                            const bool run_small_crack_refine = lower_layer && (cracks.size() * bottom.size() <= kMaxSmallCrackRefineWork);
+                            if (run_small_crack_refine) { // Only detect small cracks for non-first layer, because first layer should always be bottom
                                 const float small_crack_threshold = -layerm->flow(frExternalPerimeter).scaled_width() * 1.5;
                                 
                                 for (const auto& crack : cracks) {

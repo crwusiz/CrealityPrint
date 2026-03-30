@@ -28,8 +28,10 @@ public:
         set_progress_state(SlicingProgressState::SP_NO_SLICING);
     }
     void                set_percentage(float percent) { m_percentage = percent; }
+    float               get_percentage() const { return m_percentage; }
     DailyTipsPanel*     get_dailytips_panel() { return m_dailytips_panel; }
     SlicingProgressState get_progress_state() { return m_sp_state; }
+    bool                get_export_possible() const { return m_export_possible; }
     // sets text of notification - call after setting progress state
     void				set_status_text(const std::string& text);
     // sets cancel button callback

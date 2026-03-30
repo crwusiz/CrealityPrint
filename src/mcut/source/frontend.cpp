@@ -1568,6 +1568,7 @@ void triangulate_face(
     // We leave that to the user to fix upon visual inspection.
     //
     const bool have_seed_halfedge = cc_seed_halfedge != hmesh_t::null_halfedge();
+    bool have_valid_fixed_edge = false;
 
     if (have_seed_halfedge) {
         // if the seed halfedge exists then the triangulated face must have
@@ -1594,16 +1595,40 @@ void triangulate_face(
                     (e.v2() == cdt_src && e.v1() == cdt_tgt);
             });
 
-        MCUT_ASSERT(fixed_edge_iter != cdt.fixedEdges.cend());
+       //  MCUT_ASSERT(fixed_edge_iter != cdt.fixedEdges.cend());
+        have_valid_fixed_edge = (fixed_edge_iter != cdt.fixedEdges.cend());
+
+        if (!have_valid_fixed_edge) {
+            context_uptr->dbg_cb(MC_DEBUG_SOURCE_KERNEL, MC_DEBUG_TYPE_OTHER, 0, MC_DEBUG_SEVERITY_NOTIFICATION,
+                                 "face " + std::to_string(cc_face_iter) + " no matching fixed edge, fallback to arbitrary seed triangle");
+        }
     }
 
     // must always exist since cdt edge ultimately came from the CC, and also
     // due to the fact that we have inserted edges into the CDT
-    MCUT_ASSERT(fixed_edge_iter != cdt.fixedEdges.cend());
+   // MCUT_ASSERT(fixed_edge_iter != cdt.fixedEdges.cend());
+
+    bool have_valid_fixed_edge_cend = (fixed_edge_iter != cdt.fixedEdges.cend());
+
+    if (!have_valid_fixed_edge_cend) {
+        context_uptr->dbg_cb(MC_DEBUG_SOURCE_KERNEL, MC_DEBUG_TYPE_OTHER, 0, MC_DEBUG_SEVERITY_NOTIFICATION,
+                             "fixed edge missing, fallback to triangle-based seed");
+    }
+
+
 
     // get the two vertices of the "seed" fixed edge (indices into CDT)
-    const std::uint32_t fixed_edge_vtx0_id = fixed_edge_iter->v1();
-    const std::uint32_t fixed_edge_vtx1_id = fixed_edge_iter->v2();
+ /*   const std::uint32_t fixed_edge_vtx0_id = fixed_edge_iter->v1();
+    const std::uint32_t fixed_edge_vtx1_id = fixed_edge_iter->v2();*/
+
+    uint32_t fixed_edge_vtx0_id = cdt::null_neighbour;
+    uint32_t fixed_edge_vtx1_id = cdt::null_neighbour;
+
+    if (have_valid_fixed_edge) {
+        fixed_edge_vtx0_id = fixed_edge_iter->v1();
+        fixed_edge_vtx1_id = fixed_edge_iter->v2();
+    }
+
 
     //
     // Since these vertices share an edge, they will share a triangle in the CDT
@@ -1617,26 +1642,60 @@ void triangulate_face(
     MCUT_ASSERT(fixed_edge_vtx0_tris.empty() == false);
     // incident triangles of second vertex
     const std::vector<std::uint32_t>& fixed_edge_vtx1_tris = SAFE_ACCESS(vertex_to_triangle_map, fixed_edge_vtx1_id);
-    MCUT_ASSERT(fixed_edge_vtx1_tris.empty() == false);
+   // MCUT_ASSERT(fixed_edge_vtx1_tris.empty() == false);
 
-    // the shared triangle between the two vertices of fixed edge
     std::uint32_t fix_edge_seed_triangle = cdt::null_neighbour;
 
-    // for each CDT triangle incident to the first vertex
-    for (std::vector<std::uint32_t>::const_iterator it = fixed_edge_vtx0_tris.begin(); it != fixed_edge_vtx0_tris.end(); ++it) {
+    // 1️⃣ 优先：通过 fixed edge 找共享 triangle
+    if (have_valid_fixed_edge) {
+        const auto& tris0 = SAFE_ACCESS(vertex_to_triangle_map, fixed_edge_vtx0_id);
+        const auto& tris1 = SAFE_ACCESS(vertex_to_triangle_map, fixed_edge_vtx1_id);
 
-        if (*it == cdt::null_neighbour) {
-            continue;
-        }
-
-        // does it exist in the incident triangle list of the other vertex?
-        if (std::find(fixed_edge_vtx1_tris.begin(), fixed_edge_vtx1_tris.end(), *it) != fixed_edge_vtx1_tris.end()) {
-            fix_edge_seed_triangle = *it; // found
-            break; // done
+        if (!tris0.empty() && !tris1.empty()) {
+            for (uint32_t t : tris0) {
+                if (t == cdt::null_neighbour)
+                    continue;
+                if (std::find(tris1.begin(), tris1.end(), t) != tris1.end()) {
+                    fix_edge_seed_triangle = t;
+                    break;
+                }
+            }
         }
     }
 
-    MCUT_ASSERT(fix_edge_seed_triangle != cdt::null_neighbour);
+    // 2️⃣ 回退：fixed edge 路线失败，选任意 triangle
+    if (fix_edge_seed_triangle == cdt::null_neighbour) {
+        if (!cdt.triangles.empty()) {
+            fix_edge_seed_triangle = 0;
+            context_uptr->dbg_cb(MC_DEBUG_SOURCE_KERNEL, MC_DEBUG_TYPE_OTHER, 0, MC_DEBUG_SEVERITY_NOTIFICATION,
+                                 "face " + std::to_string(cc_face_iter) + " fallback to first triangle as seed");
+        } else {
+            // 3️⃣ 极端情况：完全没有三角形
+            context_uptr->dbg_cb(MC_DEBUG_SOURCE_KERNEL, MC_DEBUG_TYPE_ERROR, 0, MC_DEBUG_SEVERITY_HIGH,
+                                 "face " + std::to_string(cc_face_iter) + " triangulation empty, skip face");
+            return;
+        }
+    }
+
+
+    //// the shared triangle between the two vertices of fixed edge
+    //fix_edge_seed_triangle = cdt::null_neighbour;
+
+    //// for each CDT triangle incident to the first vertex
+    //for (std::vector<std::uint32_t>::const_iterator it = fixed_edge_vtx0_tris.begin(); it != fixed_edge_vtx0_tris.end(); ++it) {
+
+    //    if (*it == cdt::null_neighbour) {
+    //        continue;
+    //    }
+
+    //    // does it exist in the incident triangle list of the other vertex?
+    //    if (std::find(fixed_edge_vtx1_tris.begin(), fixed_edge_vtx1_tris.end(), *it) != fixed_edge_vtx1_tris.end()) {
+    //        fix_edge_seed_triangle = *it; // found
+    //        break; // done
+    //    }
+    //}
+
+    //MCUT_ASSERT(fix_edge_seed_triangle != cdt::null_neighbour);
 
     std::stack<std::uint32_t> seeds(std::deque<std::uint32_t>(1, fix_edge_seed_triangle));
 
@@ -1735,7 +1794,14 @@ void triangulate_face(
     } // while (!seeds.empty()) {
 
     // every triangle in the finalized CDT must be walked!
-    MCUT_ASSERT(traversed.size() == cdt.triangles.size()); // this might be violated if CDT produced duplicate triangles
+   // MCUT_ASSERT(traversed.size() == cdt.triangles.size()); // this might be violated if CDT produced duplicate triangles
+    if (traversed.size() != cdt.triangles.size()) {
+        context_uptr->dbg_cb(MC_DEBUG_SOURCE_KERNEL, MC_DEBUG_TYPE_OTHER, 0, MC_DEBUG_SEVERITY_NOTIFICATION,
+                             "triangulation on face f" + std::to_string(cc_face_iter) + " did not traverse all CDT triangles (" +
+                                 std::to_string(traversed.size()) + "/" + std::to_string(cdt.triangles.size()) + ")");
+    }
+
+
 
     //
     // Final sanity check
@@ -3164,12 +3230,16 @@ void get_connected_component_data_impl_detail(
                     }
                 };
 
-                parallel_for(
+               /* parallel_for(
                     context_ptr->get_shared_compute_threadpool(),
                     cc_uptr->kernel_hmesh_data->mesh->faces_begin(),
                     cc_uptr->kernel_hmesh_data->mesh->faces_end(),
                     fn_triangulate_faces,
-                    min_per_thread);
+                    min_per_thread);*/
+
+                fn_triangulate_faces(cc_uptr->kernel_hmesh_data->mesh->faces_begin(), cc_uptr->kernel_hmesh_data->mesh->faces_end());
+                
+
             }
 #else // #if defined(MCUT_WITH_COMPUTE_HELPER_THREADPOOL)
             uint32_t face_indices_offset = 0;

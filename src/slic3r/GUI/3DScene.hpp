@@ -472,6 +472,17 @@ private:
     bool m_use_color_clip_plane{ false };
     std::array<ColorRGBA, 2> m_color_clip_plane_colors{ ColorRGBA::RED(), ColorRGBA::BLUE() };
 
+    // Per-volume color overrides (used by MeshBoolean gizmo to color A/B lists).
+    struct VolumeColorOverrideState
+    {
+        ColorRGBA original_color;
+        bool      original_force_native_color{false};
+        bool      original_force_neutral_color{false};
+        ColorRGBA override_color;
+    };
+    bool m_use_volume_color_override{false};
+    std::unordered_map<unsigned int, VolumeColorOverrideState> m_volume_color_overrides;
+
     struct Slope
     {
         // toggle for slope rendering
@@ -516,6 +527,15 @@ public:
         bool               in_assemble_view = false,
         bool               use_loaded_id = false,
         bool               lod_enabled = true);
+
+    // Volume color override methods (for mesh boolean gizmo A/B lists).
+    // Implemented by temporarily forcing GLVolume native colors. No redraw is scheduled here.
+    void set_use_volume_color_override(bool use);
+    void set_volume_color_override(unsigned int volume_idx, const std::array<float, 4>& color);
+    void set_volumes_color_override(const std::vector<unsigned int>& volume_indices, const std::array<float, 4>& color);
+    void clear_volume_color_override(unsigned int volume_idx);
+    void clear_all_volume_color_overrides();
+    void remap_volume_color_overrides(const std::vector<size_t>& old_to_new);
 
     // Load SLA auxiliary GLVolumes (for support trees or pad).
     void load_object_auxiliary(

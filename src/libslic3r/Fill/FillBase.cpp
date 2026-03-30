@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include "../ClipperUtils.hpp"
+#include "../Clipper2Utils.hpp"
 #include "../EdgeGrid.hpp"
 #include "../Geometry.hpp"
 #include "../Geometry/Circle.hpp"
@@ -4563,7 +4564,7 @@ void Fill::connect_base_support(Polylines &&infill_ordered, const Polygons &boun
 //Fill  Multiline
 void multiline_fill(Polylines& polylines, const FillParams& params, float spacing)
 {
-    if (params.multiline > 1) {
+   /* if (params.multiline > 1) {
         const int n_lines = params.multiline;
         const int n_polylines = static_cast<int>(polylines.size());
         Polylines all_polylines;
@@ -4608,7 +4609,73 @@ void multiline_fill(Polylines& polylines, const FillParams& params, float spacin
             }
         }
         polylines = std::move(all_polylines);
+    }*/
+    if (params.multiline <= 1)
+        return;
+
+    const int n_lines     = params.multiline;
+    const int n_polylines = static_cast<int>(polylines.size());
+    Polylines all_polylines;
+    all_polylines.reserve(n_lines * n_polylines);
+
+    // Remove invalid polylines
+    polylines.erase(std::remove_if(polylines.begin(), polylines.end(), [](const Polyline& p) { return p.size() < 2; }), polylines.end());
+
+    if (polylines.empty())
+        return;
+    // Convert source polylines to Clipper2 paths
+    Clipper2Lib::Paths64 subject_paths = Slic3rPolylines_to_Paths64(polylines);
+
+    const double miter_limit = 2.0;
+    const int    rings       = n_lines / 2;
+
+    // Compute offsets (in units of spacing)
+    std::vector<double> offsets;
+    offsets.reserve(n_lines);
+
+    if (n_lines % 2 != 0) {
+        // Odd: center line at offset = 0
+        offsets.push_back(0.0);
+
+        for (int i = 1; i <= rings; ++i)
+            offsets.push_back(i * spacing);
+    } else {
+        // Even: no center, start at 0.5 * spacing
+        double start = 0.5 * spacing;
+        for (int i = 0; i < rings; ++i)
+            offsets.push_back(start + i * spacing);
     }
+
+    // Process each offset
+    Clipper2Lib::ClipperOffset offsetter(miter_limit);
+    offsetter.AddPaths(subject_paths, Clipper2Lib::JoinType::Round, Clipper2Lib::EndType::Round);
+
+    for (double t : offsets) {
+        if (t == 0.0) {
+            // Center line (only applies when n_lines is odd)
+            all_polylines.insert(all_polylines.end(), polylines.begin(), polylines.end());
+            continue;
+        }
+
+        // ClipperOffset with current offset distance (union is not needed here)
+        Clipper2Lib::Paths64 offset_paths;
+        offsetter.Execute(scale_(t), offset_paths);
+        if (offset_paths.empty())
+            continue;
+
+        // Convert back to polylines
+        Polylines new_polylines = Paths64_to_polylines(offset_paths);
+
+        for (Polyline& pl : new_polylines) {
+            if (pl.points.size() < 3)
+                continue;
+            if (pl.points.front() != pl.points.back())
+                pl.points.push_back(pl.points.front());
+            all_polylines.emplace_back(std::move(pl));
+        }
+    }
+
+    polylines = std::move(all_polylines);
 }
 
 } // namespace Slic3r

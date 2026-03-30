@@ -3,6 +3,7 @@ set ROOT_C3D=%CD%
 
 echo ROOT=%ROOT_C3D%
 set build_type=Release
+set SIGNTOOL_CMD=
 if [%1] == [] (
 	echo "build Usage:"
 	echo "Only build: build.bat 0.1.0.1"
@@ -92,6 +93,27 @@ if [%ENV_DEPS%] == [] (
 ) else (
     SET BUILD_DEPLIB=%ENV_DEPS%
 )
+
+for /f "delims=" %%i in ('where signtool.exe 2^>nul') do (
+    set SIGNTOOL_CMD=%%i
+    goto AfterFindSignTool
+)
+
+for /f "delims=" %%i in ('dir /b /ad /o-n "C:\Program Files (x86)\Windows Kits\10\bin" 2^>nul') do (
+    if exist "C:\Program Files (x86)\Windows Kits\10\bin\%%i\x64\signtool.exe" (
+        set SIGNTOOL_CMD=C:\Program Files (x86)\Windows Kits\10\bin\%%i\x64\signtool.exe
+        goto AfterFindSignTool
+    )
+)
+
+for /f "delims=" %%i in ('dir /b /ad /o-n "C:\Program Files\Windows Kits\10\bin" 2^>nul') do (
+    if exist "C:\Program Files\Windows Kits\10\bin\%%i\x64\signtool.exe" (
+        set SIGNTOOL_CMD=C:\Program Files\Windows Kits\10\bin\%%i\x64\signtool.exe
+        goto AfterFindSignTool
+    )
+)
+
+:AfterFindSignTool
 if exist "%BUILD_DEPLIB%" (
     goto C3DGenerate
 )
@@ -148,6 +170,11 @@ if [%INSTALL_TYPE%]==[nsis] (
         echo EXE_NAME=%EXE_NAME%
         "C:\curl.exe" -X POST -F file=@%EXE_NAME% http://172.20.180.14:3001/sign
         "C:\curl.exe" -L http://172.20.180.14:3001/exe/%EXE_NAME% -O
+        if [%SIGNTOOL_CMD%] == [] (
+            echo signtool.exe not found, skip signature verification
+        ) else (
+            call "%SIGNTOOL_CMD%" verify /pa /q %EXE_NAME% || exit /b 1
+        )
         echo SIGN_PACKAGE_PATH=%APPNAME%> %ROOT_C3D%\var.prop
         echo SIGN_PACKAGE_NAME=%EXE_NAME%>> %ROOT_C3D%\var.prop
         mkdir %JOB_NAME%

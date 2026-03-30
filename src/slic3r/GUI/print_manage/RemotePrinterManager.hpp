@@ -4,6 +4,8 @@
 #include <functional>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
+#include <thread>
 #include "Device/LanPrinterInterface.hpp"
 #include "Device/OctoPrintInterface.hpp"
 #include "Device/KlipperInterface.hpp"
@@ -113,7 +115,8 @@ private:
     std::deque<std::tuple<std::string, std::string, std::string, std::function<void(std::string, float,double)>, std::function<void(std::string, int)>, std::function<void(std::string, std::string)> >> m_uploadTasks;
     std::queue<std::function<void()>> tasks;
     std::vector<std::thread> m_multUploadThreads;
-    bool m_bExit = false;
+    std::thread m_uploadThread;
+    std::atomic<bool> m_bExit { false };
 
     static std::unique_ptr<RemotePrinterManager> instance;
     static std::once_flag flag;

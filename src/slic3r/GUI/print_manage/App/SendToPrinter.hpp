@@ -68,6 +68,8 @@ private:
     std::string get_updated_plate_preview_img(int plateIndex);
     void update_send_page_content();
     void run_script(std::string content);
+    void post_script(const wxString& script);
+    void post_close();
     bool LoadFile(std::string jPath, std::string & sContent);
     void handle_register_complete(const nlohmann::json& json_data);
     void handle_send_gcode(const nlohmann::json& json_data);
@@ -91,8 +93,15 @@ private:
     void restore_extruder_colors();
     void OnCloseWindow(wxCloseEvent& event);
     void handle_set_error_cmd(const nlohmann::json& json_data);
+    void handle_save_user_operation_state(const nlohmann::json& json_data);
+    void handle_request_user_operation_state(const nlohmann::json& json_data);
+    std::string get_user_operation_state_file_path() const;
+    bool save_user_operation_state(const nlohmann::json& state_data);
+    nlohmann::json load_user_operation_state() const;
     void replaceIllegalChars(std::string& str);
     void check_upload_analytics_data(const std::string& device_ip);
+    void fire_print_send_event(const nlohmann::json& frontend_data, const std::string& error_code);
+    void fire_print_begin_event(const nlohmann::json& json_data);
 
     wxWebView* m_browser;
     long       m_zoomFactor;
@@ -106,6 +115,8 @@ private:
     SendType m_sendtype {Single}; // 1: single, 2: multi
     bool     m_is_first_show {true};
     wxString m_uploadingIp = wxEmptyString;
+    std::string m_last_send_format;  // "GCode" or "3MF", stored when upload starts
+    bool m_print_send_fired = false; // prevents duplicate print_send event firing
     // when open this SendToPrinterDialog, backup the extruder colors, then restore them when dialog closed
     std::vector<std::string> m_backup_extruder_colors;
 

@@ -237,7 +237,7 @@ wxBoxSizer *PreferencesDialog::create_item_language_combobox(
                 // or sometimes the application crashes into wxDialogBase() destructor
                 // so we put it into an inner scope
                 MessageDialog msg_wingow(nullptr, _L("Switching the language requires application restart.\n") + "\n" + _L("Do you want to continue?"),
-                                         L("Language selection"), wxICON_QUESTION | wxOK | wxCANCEL);
+                                         _L("Language selection"), wxICON_QUESTION | wxOK | wxCANCEL);
                 if (msg_wingow.ShowModal() == wxID_CANCEL) {
                     combobox->SetSelection(m_current_language_selected);
                     return;
@@ -977,8 +977,24 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
             }
         }
 		
+		
+		if (param == "enable_preview_mem_optimize") {
+            MessageDialog msg_wingow(nullptr,
+                                     _L("Please note that the Gcode show will undergo certain changes at small pixels case.\nMemory-Optimized Preview "
+                                        "requires application restart.") +
+                                         "\n" + _L("Do you want to continue?"),
+                                     _L("Enable"), wxYES | wxYES_DEFAULT | wxCANCEL | wxCENTRE);
+            if (msg_wingow.ShowModal() == wxID_YES) {
+                Close();
+                GetParent()->RemoveChild(this);
+                wxGetApp().recreate_GUI(_L("Enable"));
 
-
+            } else {
+                checkbox->SetValue(!checkbox->GetValue());
+                app_config->set_bool(param, checkbox->GetValue());
+                app_config->save();
+            }
+        }
 
         e.Skip();
     });
@@ -1277,6 +1293,9 @@ PreferencesDialog::PreferencesDialog(wxWindow *parent, wxWindowID id, const wxSt
         //} catch(...) {}
 
         AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_PREFERENCES_CHANGED,{ AnalyticsDataEventType::ANALYTICS_PREFERENCES_CHANGED });
+        AnalyticsEventPayload payload;
+        payload.type = AnalyticsDataEventType::ANALYTICS_PREFERENCES_CHANGED;
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
 
         event.Skip();
         });
@@ -1471,6 +1490,12 @@ wxWindow* PreferencesDialog::create_general_page()
         create_item_checkbox(_L("Improve preview rendering performance by lod"), page,
                              _L("Improved rendering performance under the scene of multiple plates and many models."), 50, "enable_preview_lod");
 
+
+	auto enable_preview_mem_optimize =
+        create_item_checkbox(_L("Memory-Optimized Preview"), page,
+                             _L("Enabling this will significantly reduce memory and VRAM usage on the preview page, improving operation smoothness with large models or complex scenes. Please note: This mode may introduce very minor visual artifacts and is best suited for performance-focused scenarios."), 50, "enable_preview_mem_optimize");
+
+
     //item_user_exp->
     auto item_save_presets = create_item_button(_L("Clear my choice on the unsaved presets."), _L("Clear"), page, L"", _L("Clear my choice on the unsaved presets."), []() {
         wxGetApp().app_config->set("save_preset_choise", "");
@@ -1527,6 +1552,9 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->AddSpacer(FromDIP(5));
 
 	sizer_page->Add(enable_preview_lod_settings, 0, wxTOP, FromDIP(3));
+    sizer_page->AddSpacer(FromDIP(5));
+
+	sizer_page->Add(enable_preview_mem_optimize, 0, wxTOP, FromDIP(3));
     sizer_page->AddSpacer(FromDIP(5));
 
     sizer_page->Add(item_step_import_setting, 0, wxTOP, FromDIP(3));

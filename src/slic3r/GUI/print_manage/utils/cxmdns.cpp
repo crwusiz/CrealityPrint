@@ -147,10 +147,14 @@ namespace cxnet
 				if (rtype == MDNS_RECORDTYPE_PTR) {
 					mdns_string_t namestr = mdns_record_parse_ptr(buffer, data_size, offset, length,
 						namebuf, sizeof(namebuf));
+					if (!namestr.str || namestr.length == 0) {
+						return;
+					}
+					const std::string answer_name(namestr.str, namestr.length);
 					bool bFound = false;
 					for (const auto& item : prefix)
 					{
-						if (strstr(namestr.str, item.c_str()))
+						if (answer_name.find(item) != std::string::npos)
 							bFound = true;
 					}
 					if (!bFound)
@@ -160,7 +164,7 @@ namespace cxnet
 
 					char ip[16] = { 0 };
 					sscanf(fromaddrstr.str, "%[^:]", ip);
-					retmachineInfos.push_back({ ip,namestr.str });
+					retmachineInfos.push_back({ ip, answer_name });
 				}
 			}
 		}

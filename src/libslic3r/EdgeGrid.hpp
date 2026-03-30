@@ -376,6 +376,9 @@ public:
 	{
         assert(row >= 0 && size_t(row) < m_rows);
         assert(col >= 0 && size_t(col) < m_cols);
+        // 防御性检查：防止越界访问
+        if (row < 0 || size_t(row) >= m_rows || col < 0 || size_t(col) >= m_cols)
+            return std::make_pair(m_cell_data.end(), m_cell_data.end());
 		const EdgeGrid::Grid::Cell &cell = m_cells[row * m_cols + col];
 		return std::make_pair(m_cell_data.begin() + cell.begin, m_cell_data.begin() + cell.end);
 	}

@@ -59,6 +59,7 @@ if %GIT_COUNT% equ %WEB_TAG_NUM% (
 @REM run web build
 cd %web_root%\Community
 rmdir /s /q "%sync_source_dir%"
+call npm install || exit /b 1
 call npm run po2json || exit /b 1
 call npm run release || exit /b 1
 echo npm run release end
@@ -85,6 +86,7 @@ set "sync_source_dir=%web_root%\DMgr\dist"
 set "sync_target_dir=%cp_source%\resources\web\deviceMgr"
 cd %web_root%\DMgr
 rmdir /s /q "%sync_source_dir%"
+call npm install || exit /b 1
 call npm run po2json || exit /b 1
 call npm run build || exit /b 1
 echo npm run build end
@@ -110,6 +112,7 @@ set "sync_source_dir=%web_root%\SendToPrinterPage\dist"
 set "sync_target_dir=%cp_source%\resources\web\sendToPrinterPage"
 cd %web_root%\SendToPrinterPage
 rmdir /s /q "%sync_source_dir%"
+call npm install || exit /b 1
 call npm run po2json || exit /b 1
 call npm run build || exit /b 1
 echo npm run build end

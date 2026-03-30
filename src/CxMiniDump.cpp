@@ -18,6 +18,21 @@ std::string PWSTRToString(PWSTR pwsz) {
 
 	return str;
 }
+
+static std::string get_cpu_model()
+{
+	constexpr DWORD bufsize_ = 500;
+	DWORD           bufsize  = bufsize_ - 1;
+	char            buf[bufsize_] = "";
+	memset(buf, 0, sizeof(buf));
+	const std::string reg_path = "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0";
+	if (RegGetValueA(HKEY_LOCAL_MACHINE, reg_path.c_str(), "ProcessorNameString",
+		RRF_RT_REG_SZ, NULL, &buf, &bufsize) == ERROR_SUCCESS) {
+		return std::string(buf);
+	}
+	return std::string();
+}
+
 std::wstring GetExecutableDirectory() {
 	wchar_t path_to_exe[MAX_PATH + 1] = { 0 };
 	// 获取当前可执行文件的完整路径
@@ -178,7 +193,25 @@ void MiniDump::CreateDumpFile(LPCWSTR strPath, EXCEPTION_POINTERS *pException)
 	dumpInfo.ThreadId = GetCurrentThreadId();
 	dumpInfo.ClientPointers = TRUE;
 
+	// 附加包含完整 CPU 型号信息的用户流，便于后续仅凭 dump 也能还原型号
+	std::string cpu_model = get_cpu_model();
+	std::string comment;
+	if (!cpu_model.empty()) {
+		comment = "CPU: " + cpu_model;
+	} else {
+		comment = "CPU: <unknown>";
+	}
+
+	MINIDUMP_USER_STREAM cpu_stream;
+	cpu_stream.Type = CommentStreamA;
+	cpu_stream.BufferSize = static_cast<ULONG>(comment.size() + 1);
+	cpu_stream.Buffer = const_cast<char*>(comment.c_str());
+
+	MINIDUMP_USER_STREAM_INFORMATION user_streams;
+	user_streams.UserStreamCount = 1;
+	user_streams.UserStreamArray = &cpu_stream;
+
 	// 写入Dump文件内容;
-	MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hDumpFile, MiniDumpNormal, &dumpInfo, NULL, NULL);
+	MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hDumpFile, MiniDumpNormal, &dumpInfo, &user_streams, NULL);
 	CloseHandle(hDumpFile);
 }

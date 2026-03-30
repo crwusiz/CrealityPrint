@@ -1788,6 +1788,38 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         }
     }
 
+    // Creality:for appearance shortage
+    // Mutual exclusion: accel recovery smoothing vs extrusion rate smoothing.
+    // UI guard: apply the "last changed wins" rule.
+    if (opt_key == "msao_recovery_enable") {
+        bool enabled = false;
+        try {
+            enabled = boost::any_cast<bool>(value);
+        } catch (...) {
+            enabled = m_config->opt_bool(opt_key);
+        }
+        if (enabled) {
+            const double slope = m_config->opt_float("max_volumetric_extrusion_rate_slope");
+            if (slope != 0.0) {
+                DynamicPrintConfig new_conf = *m_config;
+                new_conf.set_key_value("max_volumetric_extrusion_rate_slope", new ConfigOptionFloat(0.0));
+                m_config_manipulation.apply(m_config, &new_conf);
+            }
+        }
+    } else if (opt_key == "max_volumetric_extrusion_rate_slope") {
+        double slope = 0.0;
+        try {
+            slope = boost::any_cast<double>(value);
+        } catch (...) {
+            slope = m_config->opt_float(opt_key);
+        }
+        if (slope != 0.0 && m_config->opt_bool("msao_recovery_enable")) {
+            DynamicPrintConfig new_conf = *m_config;
+            new_conf.set_key_value("msao_recovery_enable", new ConfigOptionBool(false));
+            m_config_manipulation.apply(m_config, &new_conf);
+        }
+    }
+
     // BBS set support style to default when support type changes
     // Orca: do this only in simple mode
     if (opt_key == "support_type" && m_mode == comSimple) {
@@ -2582,6 +2614,7 @@ void TabPrint::build()
     page = add_options_page(L("Strength"), "custom-gcode_strength"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Walls"), L"param_wall");
         optgroup->append_single_option_line("wall_loops");
+        optgroup->append_single_option_line("embedding_wall_into_infill");
         optgroup->append_single_option_line("alternate_extra_wall");
         optgroup->append_single_option_line("detect_thin_wall");
 
@@ -2669,10 +2702,10 @@ void TabPrint::build()
         line.append_option(optgroup->get_option("overhang_2_4_speed"));
         line.append_option(optgroup->get_option("overhang_3_4_speed"));
         line.append_option(optgroup->get_option("overhang_4_4_speed"));
-        //line.append_option(optgroup->get_option("overhang_totally_speed"));
+        line.append_option(optgroup->get_option("overhang_totally_speed"));
         optgroup->append_line(line);
         optgroup->append_separator();
-        optgroup->append_single_option_line("overhang_totally_speed");
+        //optgroup->append_single_option_line("overhang_totally_speed");
         line = { L("Bridge"), L("Set speed for external and internal bridges") };
         line.append_option(optgroup->get_option("bridge_speed"));
         line.append_option(optgroup->get_option("internal_bridge_speed"));
@@ -2709,6 +2742,11 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Advanced"), L"param_advanced", 15);
         optgroup->append_single_option_line("max_volumetric_extrusion_rate_slope", "extrusion-rate-smoothing");
         optgroup->append_single_option_line("max_volumetric_extrusion_rate_slope_segment_length", "extrusion-rate-smoothing");
+
+        optgroup->append_single_option_line("msao_recovery_enable");
+        optgroup->append_single_option_line("msao_safe_accel");
+        optgroup->append_single_option_line("msao_safe_velocity");
+
         //optgroup->append_single_option_line("acceleration_limit_mess_enable");
         create_line_with_widget(optgroup.get(), "acceleration_limit_mess_enable", "custom-svg-and-png-bed-textures_124612",[this](wxWindow* parent) { 
                 return create_limit_mess_enable_widget("acceleration_limit_mess_enable", parent);
@@ -2743,6 +2781,11 @@ void TabPrint::build()
         optgroup->append_single_option_line("support_interface_filament", "support#support-filament");
         optgroup->append_single_option_line("support_interface_not_for_body", "support#support-filament");
 
+        optgroup = page->new_optgroup(L("Support ironing"), L"param_ironing");
+        optgroup->append_single_option_line("support_ironing", "support_settings_ironing");
+        optgroup->append_single_option_line("support_ironing_pattern", "support_settings_ironing#pattern");
+        optgroup->append_single_option_line("support_ironing_flow", "support_settings_ironing#flow");
+        optgroup->append_single_option_line("support_ironing_spacing", "support_settings_ironing#line-spacing");
         //optgroup = page->new_optgroup(L("Options for support material and raft"));
 
         // Support 
@@ -2770,7 +2813,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("bridge_no_support", "support#base-pattern");
         optgroup->append_single_option_line("max_bridge_length", "support#base-pattern");
         optgroup->append_single_option_line("independent_support_layer_height", "support");
-        optgroup->append_single_option_line("ironing_support_layer", "support");
+        //optgroup->append_single_option_line("ironing_support_layer", "support");
         optgroup->append_single_option_line("tree_hybrid_cross_height", "support");
 
         optgroup = page->new_optgroup(L("Tree supports"), L"param_support_tree");
@@ -2868,8 +2911,13 @@ void TabPrint::build()
         optgroup->append_single_option_line("timelapse_type", "Timelapse");
 
         optgroup->append_single_option_line("fuzzy_skin");
+        optgroup->append_single_option_line("fuzzy_skin_mode");
+        optgroup->append_single_option_line("fuzzy_skin_noise_type");
         optgroup->append_single_option_line("fuzzy_skin_point_distance");
         optgroup->append_single_option_line("fuzzy_skin_thickness");
+        optgroup->append_single_option_line("fuzzy_skin_scale");
+        optgroup->append_single_option_line("fuzzy_skin_octaves");
+        optgroup->append_single_option_line("fuzzy_skin_persistence");
         optgroup->append_single_option_line("fuzzy_skin_first_layer");
 
         optgroup = page->new_optgroup(L("G-code output"), L"param_gcode");

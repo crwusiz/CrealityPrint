@@ -24,6 +24,9 @@ void FillConcentric::_fill_surface_single(
         this->spacing = unscale<double>(distance);
     }
 
+    // Contract surface polygon by half line width to avoid excesive overlap with perimeter
+    ExPolygons contracted = offset_ex(expolygon, -float(scale_(0.5 * (params.multiline - 1) * this->spacing)));
+
     Polygons   loops = to_polygons(expolygon);
     ExPolygons last { std::move(expolygon) };
     while (! last.empty()) {
@@ -37,11 +40,15 @@ void FillConcentric::_fill_surface_single(
     
     // split paths using a nearest neighbor search
     size_t iPathFirst = polylines_out.size();
-    Point last_pos(0, 0);
+    Point  last_pos(0, 0);
+
     for (const Polygon &loop : loops) {
         polylines_out.emplace_back(loop.split_at_index(last_pos.nearest_point_index(loop.points)));
         last_pos = polylines_out.back().last_point();
     }
+
+    // Apply multiline offset if needed
+    multiline_fill(polylines_out, params, spacing);
 
     // clip the paths to prevent the extruder from getting exactly on the first point of the loop
     // Keep valid paths only.

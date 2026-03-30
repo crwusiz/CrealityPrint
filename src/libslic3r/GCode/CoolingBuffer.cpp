@@ -23,6 +23,16 @@ namespace Slic3r {
 
 const constexpr float SEGMENT_SPLIT_EPSILON = 10. * GCodeFormatter::XYZ_EPSILON;
 static float s_last_nonzero_z = 0.f;
+static bool  s_force_z_on_next_xy_move = false;
+static bool  s_forced_first_layer_z = false;
+static float s_forced_z_value = 0.f;
+
+// Time-domain smoothing for overhang fan toggles. These defaults intentionally
+// avoid reacting to very short overhang fragments that cannot benefit from fan inertia.
+const constexpr float OVERHANG_FAN_MIN_ACTIVATION_DURATION = 0.7f; // s
+const constexpr float OVERHANG_FAN_MIN_HOLD_TIME           = 1.2f; // s
+const constexpr float OVERHANG_FAN_MERGE_GAP_TIME          = 0.20f; // s
+const constexpr int   FAN_MIN_DELTA_PERCENT                = 10;   // %
 
 // Strip explicit Z0 tokens to avoid resetting Z when previous Z is valid.
 static std::string sanitize_z0_tokens(const std::string& line)
@@ -63,18 +73,53 @@ static std::string sanitize_z0_tokens(const std::string& line)
 
 static std::string sanitize_buffer_z(const std::string& gcode_buffer)
 {
+    std::string buffer = gcode_buffer;
+    if (s_force_z_on_next_xy_move) {
+        if (s_forced_z_value > GCodeFormatter::XYZ_EPSILON) {
+            GCodeG1Formatter z_formatter;
+            z_formatter.emit_axis('Z', s_forced_z_value, GCodeFormatter::XYZF_EXPORT_DIGITS);
+            std::string z_line = z_formatter.string();
+            size_t insert_pos = 0;
+            while (insert_pos < buffer.size()) {
+                size_t line_end = buffer.find('\n', insert_pos);
+                if (line_end == std::string::npos)
+                    line_end = buffer.size();
+                size_t p = insert_pos;
+                while (p < line_end && (buffer[p] == ' ' || buffer[p] == '\t' || buffer[p] == '\r'))
+                    ++p;
+                if (p == line_end || buffer[p] == ';') {
+                    insert_pos = (line_end < buffer.size()) ? line_end + 1 : line_end;
+                    continue;
+                }
+                break;
+            }
+            size_t line_end = buffer.find('\n', insert_pos);
+            if (line_end == std::string::npos)
+                line_end = buffer.size();
+            size_t semicolon = buffer.find(';', insert_pos);
+            if (semicolon != std::string::npos && semicolon > line_end)
+                semicolon = std::string::npos;
+            size_t zpos = buffer.find('Z', insert_pos);
+            const bool first_line_has_z = (zpos != std::string::npos && zpos < line_end && (semicolon == std::string::npos || zpos < semicolon));
+            if (!first_line_has_z)
+                buffer.insert(insert_pos, z_line);
+        }
+        s_force_z_on_next_xy_move = false;
+        s_forced_z_value = 0.f;
+    }
     // Fast path: nothing to clean if there is no Z token at all.
-    if (gcode_buffer.find('Z') == std::string::npos)
-        return gcode_buffer;
+    const bool has_any_z = (buffer.find('Z') != std::string::npos);
+    if (!has_any_z)
+        return buffer;
     std::string result;
-    result.reserve(gcode_buffer.size());
+    result.reserve(buffer.size());
     size_t start = 0;
     double last_z = (s_last_nonzero_z > GCodeFormatter::XYZ_EPSILON) ? s_last_nonzero_z : 0.0;
-    while (start < gcode_buffer.size()) {
-        size_t end = gcode_buffer.find('\n', start);
+    while (start < buffer.size()) {
+        size_t end = buffer.find('\n', start);
         if (end == std::string::npos)
-            end = gcode_buffer.size();
-        std::string line = sanitize_z0_tokens(gcode_buffer.substr(start, end - start));
+            end = buffer.size();
+        std::string line = sanitize_z0_tokens(buffer.substr(start, end - start));
         // track last non-zero Z from the sanitized line
         auto posZ = line.find('Z');
         if (posZ != std::string::npos) {
@@ -85,7 +130,7 @@ static std::string sanitize_buffer_z(const std::string& gcode_buffer)
                 last_z = zval;
         }
         result.append(line);
-        if (end < gcode_buffer.size())
+        if (end < buffer.size())
             result.push_back('\n');
         start = end + 1;
     }
@@ -97,6 +142,10 @@ static std::string sanitize_buffer_z(const std::string& gcode_buffer)
 GCodeEditor::GCodeEditor(GCode &gcodegen) : m_config(gcodegen.config()), m_toolchange_prefix(gcodegen.writer().toolchange_prefix()), m_current_extruder(0)
 {
     this->reset(gcodegen.writer().get_position());
+
+    s_force_z_on_next_xy_move = false;
+    s_forced_first_layer_z = false;
+    s_forced_z_value = 0.f;
 
     const std::vector<Extruder> &extruders = gcodegen.writer().extruders();
     m_extruder_ids.reserve(extruders.size());
@@ -344,6 +393,16 @@ std::string GCodeEditor::process_layer(std::string&&                        gcod
                                        const bool                           flush,
                                        const bool                           spiral_vase)
 {
+    if (layer_id == 0 && m_config.print_sequence == PrintSequence::ByObject && !s_forced_first_layer_z) {
+        double target_z = m_config.initial_layer_print_height.value + m_config.z_offset.value;
+        if (std::abs(target_z) < GCodeFormatter::XYZ_EPSILON)
+            target_z = 0.2;
+        s_last_nonzero_z = float(target_z);
+        s_forced_z_value = float(target_z);
+        s_force_z_on_next_xy_move = true;
+        s_forced_first_layer_z = true;
+    }
+
     // Cache the input G-code.
     if (m_gcode.empty())
         m_gcode = std::move(gcode);
@@ -1077,6 +1136,84 @@ std::string GCodeEditor::write_layer_gcode(
                                                                {CoolingLine::TYPE_OVERHANG_FAN_END,false }};
     bool need_set_fan = false;
 
+    struct OverhangFanPlannerState {
+        bool  raw_requested       = false;
+        bool  effective_requested = false;
+        float pending_on_time     = 0.f;
+        float pending_off_time    = 0.f;
+        float active_time         = 0.f;
+    } overhang_fan_planner;
+
+    auto reset_overhang_fan_planner = [&overhang_fan_planner, &fan_speed_change_requests]() {
+        overhang_fan_planner = OverhangFanPlannerState{};
+        fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START] = false;
+        fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_END]   = false;
+    };
+
+    auto emit_part_fan_if_needed = [this, &new_gcode](int target_speed, bool force_emit = false) {
+        if (target_speed < 0)
+            return;
+        if (!force_emit) {
+            if (m_current_fan_speed == target_speed)
+                return;
+            if (m_current_fan_speed >= 0 && std::abs(target_speed - m_current_fan_speed) < FAN_MIN_DELTA_PERCENT)
+                return;
+        }
+        new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, target_speed);
+        m_current_fan_speed = target_speed;
+    };
+
+    auto sync_overhang_fan_plan = [&overhang_fan_planner, &fan_speed_change_requests, &need_set_fan, &overhang_fan_control](float dt_s) {
+        if (!overhang_fan_control) {
+            if (overhang_fan_planner.effective_requested) {
+                overhang_fan_planner = OverhangFanPlannerState{};
+                fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START] = false;
+                fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_END]   = true;
+                need_set_fan = true;
+            }
+            return;
+        }
+
+        if (dt_s <= 0.f)
+            return;
+
+        if (overhang_fan_planner.effective_requested)
+            overhang_fan_planner.active_time += dt_s;
+
+        if (overhang_fan_planner.raw_requested == overhang_fan_planner.effective_requested) {
+            overhang_fan_planner.pending_on_time  = 0.f;
+            overhang_fan_planner.pending_off_time = 0.f;
+            return;
+        }
+
+        if (overhang_fan_planner.raw_requested) {
+            overhang_fan_planner.pending_on_time += dt_s;
+            overhang_fan_planner.pending_off_time = 0.f;
+            if (overhang_fan_planner.pending_on_time >= OVERHANG_FAN_MIN_ACTIVATION_DURATION) {
+                overhang_fan_planner.effective_requested = true;
+                overhang_fan_planner.pending_on_time     = 0.f;
+                overhang_fan_planner.active_time         = 0.f;
+                fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START] = true;
+                fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_END]   = false;
+                need_set_fan = true;
+            }
+            return;
+        }
+
+        overhang_fan_planner.pending_on_time = 0.f;
+        overhang_fan_planner.pending_off_time += dt_s;
+        const bool hold_time_satisfied = overhang_fan_planner.active_time >= OVERHANG_FAN_MIN_HOLD_TIME;
+        const bool merge_gap_satisfied = overhang_fan_planner.pending_off_time >= OVERHANG_FAN_MERGE_GAP_TIME;
+        if (hold_time_satisfied && merge_gap_satisfied) {
+            overhang_fan_planner.effective_requested = false;
+            overhang_fan_planner.pending_off_time    = 0.f;
+            overhang_fan_planner.active_time         = 0.f;
+            fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START] = false;
+            fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_END]   = true;
+            need_set_fan = true;
+        }
+    };
+
     bool have_type_overhang = false;
     const CoolingLine* line_waiting_for_split = nullptr;
     for (const CoolingLine *line : lines) {
@@ -1151,24 +1288,18 @@ std::string GCodeEditor::write_layer_gcode(
                 if (new_extruder != m_current_extruder) {
                     m_current_extruder = new_extruder;
                     change_extruder_set_fan(true);
+                    reset_overhang_fan_planner();
                 }
             }
             new_gcode.append(line_start, line_end - line_start);
         } else if (line->type & CoolingLine::TYPE_OVERHANG_FAN_START) {
             have_type_overhang = true;
-            if (overhang_fan_control && !fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START]) {
-                need_set_fan = true;
-                fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START] = true;
-                fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_END]   = false;
-           }
+            overhang_fan_planner.raw_requested    = true;
+            overhang_fan_planner.pending_off_time = 0.f;
         } else if (line->type & CoolingLine::TYPE_OVERHANG_FAN_END) {
-            if (overhang_fan_control && fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START]) {            
-                fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START] = false;
-               
-            }
-            fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_END]   = true; 
-            need_set_fan                                                    = true;
-            
+            overhang_fan_planner.raw_requested   = false;
+            overhang_fan_planner.pending_on_time = 0.f;
+
         } else if (line->type & CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_START) {
             if (supp_interface_fan_control && !fan_speed_change_requests[CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_START]) {
                 fan_speed_change_requests[CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_START] = true;
@@ -1288,6 +1419,8 @@ std::string GCodeEditor::write_layer_gcode(
             new_gcode.append(line_start, line_end - line_start);
         }
 
+        sync_overhang_fan_plan(line->time());
+
         if (EXTRUDER_CONFIG(enable_special_area_additional_cooling_fan))
         {
             if (have_type_overhang && limit_height_fan)
@@ -1306,24 +1439,21 @@ std::string GCodeEditor::write_layer_gcode(
         if (need_set_fan) {
             if (fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] && m_current_fan_speed != -1)
             {
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_current_fan_speed);
+                emit_part_fan_if_needed(m_current_fan_speed, true);
                 fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] = false;
             }
             else if(fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START])
             {
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, overhang_fan_speed);
-                m_current_fan_speed = overhang_fan_speed;
+                emit_part_fan_if_needed(overhang_fan_speed);
             }
             else if (fan_speed_change_requests[CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_START]){
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, supp_interface_fan_speed);
-                m_current_fan_speed = supp_interface_fan_speed;
+                emit_part_fan_if_needed(supp_interface_fan_speed);
             }
             else if (fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_END]) {
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_fan_speed);
-                m_current_fan_speed = m_fan_speed;
+                emit_part_fan_if_needed(m_fan_speed);
             }
             else
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_fan_speed);
+                emit_part_fan_if_needed(m_fan_speed);
             need_set_fan = false;
         }
         pos = line_end;

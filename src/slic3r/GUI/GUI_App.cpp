@@ -10,6 +10,7 @@
 #include "slic3r/GUI/TaskManager.hpp"
 #include "format.hpp"
 #include "libslic3r_version.h"
+#include "libslic3r/CrealityVersion.hpp"
 #include "Downloader.hpp"
 #include <string>
 #include <wx/colour.h>
@@ -23,7 +24,6 @@
 #include "slic3r/Utils/ColorSpaceConvert.hpp"
 #include "ImGuiWrapper.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
-#include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "slic3r/GUI/HMS.hpp"
 #include "slic3r/GUI/WebViewDialog.hpp"
@@ -34,6 +34,7 @@
 #include "slic3r/GUI/print_manage/utils/cxmdns.h"
 #include "slic3r/GUI/print_manage/Utils.hpp"
 #include "Widgets/HoverBorderIcon.hpp"
+#include "slic3r/GUI/MsgDialog.hpp"
 // Localization headers: include libslic3r version first so everything in this file
 // uses the slic3r/GUI version (the macros will take precedence over the functions).
 // Also, there is a check that the former is not included from slic3r module.
@@ -47,6 +48,7 @@
 #include <iterator>
 #include <exception>
 #include <cstdlib>
+#include <cctype>
 #include <regex>
 #include <thread>
 #include <string_view>
@@ -66,6 +68,13 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <boost/uuid/detail/sha1.hpp>
+
+#ifndef _WIN32
+#include <sys/statvfs.h>
+#endif
+
+#include "slic3r/GUI/MsgDialog.hpp"
 
 #include <wx/stdpaths.h>
 #include <wx/imagpng.h>
@@ -142,6 +151,8 @@
 #include "KBShortcutsDialog.hpp"
 #include "DownloadProgressDialog.hpp"
 #include "CloudDownloadProgressDialog.hpp"
+#include "AppUpdater.hpp"
+#include "AppUpdateDialogs.hpp"
 
 #include "BitmapCache.hpp"
 #include "Notebook.hpp"
@@ -226,6 +237,140 @@ namespace GUI {
 
 class MainFrame;
 
+static AppUpdateProgressDialog* g_update_progress_dlg = nullptr;
+static bool g_update_ready_dialog_showing = false;
+
+// "Update Ready" can be triggered from multiple entry points (download complete event,
+// pending-install prompt on startup, update check hitting local cache, etc).
+// Use a minimal re-entrancy guard to prevent showing duplicate dialogs at the same time.
+static int show_update_ready_dialog_guarded(wxWindow* parent)
+{
+    if (g_update_ready_dialog_showing)
+        return wxID_CANCEL;
+    g_update_ready_dialog_showing = true;
+    AppUpdateFinishDialog dlg(parent);
+    const int res = dlg.ShowModal();
+    g_update_ready_dialog_showing = false;
+    return res;
+}
+
+// ---------------------------------------------------------------------------
+// Hot-update state helpers
+//
+// All state is stored in a single file  update_state.json  inside the
+// version-specific cache directory.  Schema:
+//   {
+//     "version":   "<target version string>",
+//     "timestamp": <unix time>,
+//     "attempted": <bool>   // true = user clicked "Install Now"; false = "Install Later"
+//   }
+//
+// attempted=false  → show "Update Ready" dialog on next startup (pending).
+// attempted=true   → user already triggered the installer; stay silent until a
+//                    genuinely newer version arrives from the server.
+// ---------------------------------------------------------------------------
+
+static fs::path get_update_state_path()
+{
+    std::string current_version = std::string(CREALITYPRINT_VERSION);
+    std::string cache_dir = AppUpdater::get_cache_dir(current_version);
+    return fs::path(cache_dir) / "update_state.json";
+}
+
+// Write (or overwrite) the state file.
+static void write_update_state(const std::string& version, bool attempted)
+{
+    if (version.empty())
+        return;
+    fs::path p = get_update_state_path();
+    nlohmann::json j;
+    j["version"]   = version;
+    j["timestamp"] = std::time(nullptr);
+    j["attempted"] = attempted;
+    boost::nowide::ofstream f(p.string());
+    if (f.is_open()) {
+        f << j.dump(4);
+    }
+}
+
+// Read the state file.  Returns empty string if not present or unreadable.
+// Populates *out_attempted when non-null.
+static std::string read_update_state(bool* out_attempted = nullptr)
+{
+    fs::path p = get_update_state_path();
+    boost::system::error_code ec;
+    if (!fs::exists(p, ec))
+        return "";
+    try {
+        boost::nowide::ifstream f(p.string());
+        if (!f.is_open())
+            return "";
+        nlohmann::json j = nlohmann::json::parse(f);
+        if (out_attempted)
+            *out_attempted = j.value("attempted", false);
+        return j.value("version", std::string());
+    } catch (...) {}
+    return "";
+}
+
+// Remove the state file entirely.
+static void clear_update_state()
+{
+    fs::path p = get_update_state_path();
+    boost::system::error_code ec;
+    if (fs::exists(p, ec))
+        fs::remove(p, ec);
+}
+
+// Convenience wrappers that preserve the old call-sites' semantics.
+
+// User clicked "Install Later" — prompt again on next startup.
+static void set_pending_app_update(AppConfig* /*cfg*/, const std::string& version)
+{
+    write_update_state(version, /*attempted=*/false);
+}
+
+// User clicked "Install Now" — don't auto-prompt again for this version.
+static void set_install_attempted(const std::string& version)
+{
+    write_update_state(version, /*attempted=*/true);
+}
+
+// Clear all update state (called after a successful install or stale data).
+static void clear_pending_app_update(AppConfig* /*cfg*/)
+{
+    clear_update_state();
+}
+
+// Returns the pending version if the user previously chose "Install Later",
+// or empty string otherwise.
+static std::string get_pending_app_update_version()
+{
+    bool attempted = false;
+    std::string ver = read_update_state(&attempted);
+    if (ver.empty() || attempted)
+        return "";   // no pending, or already attempted
+    return ver;
+}
+
+// Returns the version the user already clicked "Install Now" for,
+// or empty string if no such record exists.
+static std::string get_install_attempted_version()
+{
+    bool attempted = false;
+    std::string ver = read_update_state(&attempted);
+    if (ver.empty() || !attempted)
+        return "";
+    return ver;
+}
+
+// Clear the attempted flag only (called when a genuinely newer version arrives).
+static void clear_install_attempted(AppConfig* /*cfg*/)
+{
+    clear_update_state();
+}
+
+
 void start_ping_test()
 {
     return;
@@ -275,6 +420,52 @@ VersionInfo::VersionInfo()
     }
     force_upgrade = false;
     version_str = "";
+}
+
+void GUI_App::schedule_software_launch_analytics()
+{
+    if (m_app_launch_initialized)
+        return;
+    if (!is_privacy_checked())
+        return;
+
+    wxTimer* timer = new wxTimer();
+    timer->Bind(wxEVT_TIMER, [this, timer](wxTimerEvent&) {
+        if (m_app_launch_initialized || !is_privacy_checked()) {
+            timer->Stop();
+            delete timer;
+            return;
+        }
+
+        m_app_launch_initialized = true;
+
+        check_app_first_launch_info();
+        AnalyticsDataUploadManager::getInstance()
+            .triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
+                                {AnalyticsDataEventType::ANALYTICS_SOFTWARE_LAUNCH,
+                                 AnalyticsDataEventType::ANALYTICS_ACCOUNT_DEVICE_INFO});
+        AnalyticsEventPayload payload1;
+        payload1.type = AnalyticsDataEventType::ANALYTICS_SOFTWARE_LAUNCH;
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload1);
+        AnalyticsEventPayload payload2;
+        payload2.type = AnalyticsDataEventType::ANALYTICS_ACCOUNT_DEVICE_INFO;
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload2);
+
+        if (app_config->get_bool("software_crash")) {
+            AnalyticsDataUploadManager::getInstance()
+                .triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_CRASH,
+                                    {AnalyticsDataEventType::ANALYTICS_SOFTWARE_CRASH});
+            AnalyticsEventPayload payload;
+            payload.type = AnalyticsDataEventType::ANALYTICS_SOFTWARE_CRASH;
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+            app_config->set_bool("software_crash", false);
+            app_config->save();
+        }
+
+        timer->Stop();
+        delete timer;
+    });
+    timer->StartOnce(5000);
 }
 
 void VersionInfo::parse_version_str(std::string str) 
@@ -810,6 +1001,111 @@ wxString file_wildcards(FileType file_type, const std::string &custom_extension)
 
 static std::string libslic3r_translate_callback(const char *s) { return wxGetTranslation(wxString(s, wxConvUTF8)).utf8_str().data(); }
 
+static std::string sha1_hex_of_file(const boost::filesystem::path& path)
+{
+    boost::uuids::detail::sha1 sha;
+    std::ifstream stream(path.string(), std::ios::binary);
+    if (!stream)
+        return std::string();
+    char buffer[8192];
+    while (stream.good()) {
+        stream.read(buffer, sizeof(buffer));
+        std::streamsize count = stream.gcount();
+        if (count > 0)
+            sha.process_bytes(buffer, static_cast<size_t>(count));
+    }
+    unsigned int digest[5] = { 0 };
+    sha.get_digest(digest);
+    std::ostringstream oss;
+    oss.setf(std::ios::hex, std::ios::basefield);
+    oss.fill('0');
+    for (int i = 0; i < 5; ++i) {
+        oss.width(8);
+        oss << digest[i];
+    }
+    std::string s = oss.str();
+    boost::algorithm::to_lower(s);
+    return s;
+}
+
+static bool download_file_with_check(const std::string& url, const boost::filesystem::path& target_path, long long expected_size, const std::string& expected_sha1)
+{
+    namespace fs = boost::filesystem;
+    bool ok = false;
+    fs::path tmp_path = target_path;
+    tmp_path += ".tmp";
+
+    Slic3r::Http::get(url)
+        .on_error([&](std::string body, std::string error, unsigned http_status) {
+            (void)body;
+            BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]download failed: " << url << " status " << http_status << " error " << error;
+        })
+        .on_complete([&](std::string body, unsigned) {
+            try {
+                std::ofstream file(tmp_path.string(), std::ios::binary | std::ios::trunc);
+                file.write(body.data(), static_cast<std::streamsize>(body.size()));
+                file.close();
+                fs::rename(tmp_path, target_path);
+                ok = true;
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]write file failed: " << target_path.string() << " reason " << e.what();
+            }
+        })
+        .perform_sync();
+
+    if (!ok)
+        return false;
+
+    try {
+        if (expected_size > 0) {
+            uintmax_t size = fs::file_size(target_path);
+            if (size != static_cast<uintmax_t>(expected_size)) {
+                BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]size mismatch for " << target_path.string() << " expected " << expected_size << " got " << size;
+                fs::remove(target_path);
+                return false;
+            }
+        }
+        if (!expected_sha1.empty()) {
+            std::string actual = sha1_hex_of_file(target_path);
+            if (actual.empty()) {
+                BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]sha1 compute failed for " << target_path.string();
+                fs::remove(target_path);
+                return false;
+            }
+            if (!boost::iequals(actual, expected_sha1)) {
+                BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]sha1 mismatch for " << target_path.string() << " expected " << expected_sha1 << " got " << actual;
+                fs::remove(target_path);
+                return false;
+            }
+        }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]post-check failed for " << target_path.string() << " reason " << e.what();
+        return false;
+    }
+
+    return true;
+}
+
+static bool get_local_update_work_dir(wxString& out_dir)
+{
+#ifdef __WXMSW__
+    wxString local_appdata;
+    if (!wxGetEnv("LOCALAPPDATA", &local_appdata) || local_appdata.IsEmpty())
+        return false;
+    wxFileName updater_dest_dir(local_appdata, "crealityprint_squirrel");
+    wxString updater_dest_dir_path = updater_dest_dir.GetFullPath();
+    if (!wxDirExists(updater_dest_dir_path)) {
+        if (!wxFileName::Mkdir(updater_dest_dir_path, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL))
+            return false;
+    }
+    out_dir = updater_dest_dir_path;
+    return true;
+#else
+    (void)out_dir;
+    return false;
+#endif
+}
+
 #ifdef WIN32
 #if !wxVERSION_EQUAL_OR_GREATER_THAN(3,1,3)
 static void register_win32_dpi_event()
@@ -1061,29 +1357,16 @@ void GUI_App::reload_region_sensitive_views()
     auto mlv = mf->get_modellibrary_view();
     if (!mlv) return;
 
-    // 在线模型库切换区域需要切换到对应域名；为确保内容更新，这里统一走导航刷新，
-    // 同时尽量保留当前路径与查询参数以保持用户所在的页面。
+    // 在线模型库切换区域需要切换到对应域名；
+    // 切换地区会改变环境，不同环境配置的模型标签数据不同，
+    // 因此需要导航到模型库首页，避免黑屏问题。
     wxString new_base = wxString::FromUTF8(Slic3r::GUI::get_cloud_webaddress());
-    wxString current  = wxEmptyString;
-    if (mlv->GetWebView())
-        current = mlv->GetWebView()->GetCurrentURL();
 
-    wxString target;
-    if (current.IsEmpty() || current == wxWebViewDefaultURLStr) {
-        // 未初始化或首次进入，跳到模型库首页
-        target = new_base + "model-category/3d-print-all";
-    } else {
-        wxURI    uri(current);
-        wxString path  = uri.GetPath();
-        wxString query = uri.GetQuery();
+    // 规范化拼接，避免出现双斜杠
+    if (!new_base.EndsWith("/")) new_base += "/";
 
-        // 规范化拼接，避免出现双斜杠
-        if (!new_base.EndsWith("/")) new_base += "/";
-        if (path.StartsWith("/")) path = path.Mid(1);
-
-        target = new_base + path;
-        if (!query.IsEmpty()) target += "?" + query;
-    }
+    // 导航到模型库首页
+    wxString target = new_base + "model-category/3d-print-all";
 
     // 在导航到新的域名前刷新 Cookies（UA 仅在初始化设置）
     mlv->UpdateUserAgent();
@@ -1474,7 +1757,13 @@ void GUI_App::post_init()
             mainframe->m_topbar->SetSelection(size_t(MainFrame::tpHome));
          }
         mainframe->Thaw();
-        plater_->trigger_restore_project(1);
+        // If a pending hot-update is waiting (user chose "Install Later" last time),
+        // defer the restore-project prompt so the "Update Ready" dialog appears first.
+        if (!get_pending_app_update_version().empty()) {
+            m_restore_project_deferred = true;
+        } else {
+            plater_->trigger_restore_project(1);
+        }
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", end load_gl_resources";
     }
 //#endif
@@ -1571,6 +1860,9 @@ void GUI_App::post_init()
             //  设置应用启动完成
             SyncUserPresets::getInstance().setAppHasStartuped();
             //  检测token是否过期
+            
+            // Removed startup update ready dialog logic to avoid confusion with version checking
+            // Update ready dialog will be shown only when pending version matches detected new version
             
         });
     }
@@ -2555,6 +2847,15 @@ void GUI_App::init_webview_runtime()
         }
     }
 }
+bool GUI_App::mark_webview_runtime_repair_prompted()
+{
+    if (m_webview_runtime_repair_prompted) {
+        BOOST_LOG_TRIVIAL(info) << "[WebViewRuntime] Repair prompt already shown in this session, skip duplicate prompt.";
+        return false;
+    }
+    m_webview_runtime_repair_prompted = true;
+    return true;
+}
 void GUI_App::reinstall_webview_runtime()
 {
     // Check WebView Runtime
@@ -3379,6 +3680,9 @@ bool GUI_App::OnInit()
                     wxGetApp().app_config->save();
                     // software crash, upload analytics data here
                     AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_CRASH,{ AnalyticsDataEventType::ANALYTICS_SOFTWARE_CRASH });
+                    AnalyticsEventPayload payload;
+                    payload.type = AnalyticsDataEventType::ANALYTICS_SOFTWARE_CRASH;
+                    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
                     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " result is " << result;
                     if (result == wxID_OK) {
                         err_report_dialog->sendReport();
@@ -3420,6 +3724,9 @@ bool GUI_App::OnInit()
 int GUI_App::OnExit()
 {
     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " start";
+
+    // Clear resumable state on exit: remove any *.part files under the update cache root.
+    AppUpdater::getInstance().cleanup_partial_downloads(CREALITYPRINT_VERSION);
 
     //stop_sync_user_preset();
     SyncUserPresets::getInstance().shutdown();
@@ -3508,6 +3815,9 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
 
     // Set initialization of image handlers before any UI actions - See GH issue #7469
     wxInitAllImageHandlers();
+
+    // If the previous run exited unexpectedly, *.part may remain. Clear them on startup as well.
+    AppUpdater::getInstance().cleanup_partial_downloads(CREALITYPRINT_VERSION);
 #ifdef NDEBUG
     wxImage::SetDefaultLoadFlags(0); // ignore waring in release build
 #endif
@@ -3775,38 +4085,120 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
                 bool skip_this_version = false;
                 if (!skip_version_str.empty()) {
                     BOOST_LOG_TRIVIAL(info) << "new version = " << version_info.version_str << ", skip version = " << skip_version_str;
-                    if (version_info.version_str <= skip_version_str) {
+                    if (compare_creality_versions(version_info.version_str, skip_version_str) <= 0) {
                         skip_this_version = true;
                     } else {
                         app_config->set("skip_version", "");
                         skip_this_version = false;
                     }
                 }
+                // Only show update ready dialog if we're not checking for a new version
+                // When checking for new version, always show the version check dialog instead
+                if (evt.GetInt() == 0 && this->app_config) {
+                    // Background check (not user-initiated):
+                    // Only show "Update Ready" dialog if there is a pending install for this exact version.
+                    // If user has already clicked "Install Now" (pending was cleared), stay silent so we
+                    // don't re-prompt on every startup after a failed install.
+                    std::string pending_version = get_pending_app_update_version();
+                    if (!pending_version.empty() && pending_version == version_info.version_str) {
+                        // Prepare the cached hot update before showing dialog
+                        if (!AppUpdater::getInstance().prepare_cached_hot_update_from_version(version_info.version_str, version_info.url)) {
+                            // If preparation fails, clear pending update and stay silent
+                            clear_pending_app_update(this->app_config);
+                            // Update won't show; unblock deferred restore project if any.
+                            this->trigger_deferred_restore_project();
+                        } else {
+                            const int res = show_update_ready_dialog_guarded(this->mainframe);
+                            if (res == wxID_YES) {
+                                clear_pending_app_update(this->app_config);
+                                set_install_attempted(version_info.version_str);
+                                AppUpdater::getInstance().install_update();
+                                // App is about to close/restart; no need to restore project.
+                            } else {
+                                // User chose "Install Later" — now show restore project if deferred.
+                                this->trigger_deferred_restore_project();
+                            }
+                        }
+                        return;  // pending path always returns; UpdateVersionDialog not needed
+                    }
+                    // No pending install: silently skip.
+                    // If user already clicked "Install Now" for this version, don't nag again on every
+                    // startup (install may have failed but version number is unchanged).
+                    // When the server publishes a genuinely newer version, that version won't be in
+                    // the attempted list, so the background check will show the dialog normally.
+                    std::string attempted_version = get_install_attempted_version();
+                    if (!attempted_version.empty() && attempted_version == version_info.version_str) {
+                        // Already attempted this version; stay silent.
+                        // Still need to unblock deferred restore project if any.
+                        this->trigger_deferred_restore_project();
+                        return;
+                    }
+                    // Genuinely new version (never attempted): clear any stale attempted flag and
+                    // fall through to show the UpdateVersionDialog below.
+                    if (!attempted_version.empty())
+                        clear_install_attempted(this->app_config);
+                    // If there was a pending install but it was for a different/older version,
+                    // fall through as well (pending was already handled above or doesn't match).
+                }
                 if (!skip_this_version
                     || evt.GetInt() != 0) {
+                    // Parse version numbers to compare major versions
+                    int current_major = 0, current_minor = 0, current_patch = 0;
+                    int new_major = 0, new_minor = 0, new_patch = 0;
+                    
+                    // Parse current version
+                    std::string current_version = CREALITYPRINT_VERSION;
+                    sscanf(current_version.c_str(), "%d.%d.%d", &current_major, &current_minor, &current_patch);
+                    
+                    // Parse new version
+                    std::string new_version = version_info.version_str;
+                    sscanf(new_version.c_str(), "%d.%d.%d", &new_major, &new_minor, &new_patch);
+                    
+                    // Check if major version is greater
+                    bool is_major_update = (new_major > current_major);
+                    
                     UpdateVersionDialog dialog(this->mainframe);
                     wxString            extmsg = wxString::FromUTF8(version_info.description);
                     dialog.update_version_info(extmsg, version_info.version_str);
                     int isUser = evt.GetInt();
                     dialog.isUser(isUser);
-                    //dialog.update_version_info(version_info.description);
+                    
+                    // Set update information
+                    dialog.set_update_info(is_major_update, version_info.version_str, version_info.url);
+                    
+                    // If it's not a major update, change the download button to "Update"
+                    if (!is_major_update) {
+                        dialog.m_button_download->SetLabel(_L("Update"));
+                    }
+                    
                     if (evt.GetInt() != 0) {
                         dialog.m_button_skip_version->Hide();
                     }
                     switch (dialog.ShowModal())
                     {
                     case wxID_YES:
-                        wxLaunchDefaultBrowser(version_info.url);
+                        // For minor updates, use local hot update process
+                        if (!is_major_update) {
+                            // Use saved update packages directly
+                            if (!m_update_packages.empty()) {
+                                process_update_packages(m_update_packages, m_update_version, m_update_base_package_name, m_update_file_url, true, 1);
+                            }
+                        } else {
+                            // For major updates, use original online update process
+                            wxLaunchDefaultBrowser(version_info.url);
+                        }
                         break;
                     case wxID_NO:
                         break;
                     default:
                         ;
-                    }
+					}
+                    // Unblock deferred restore project (if any) now that the version dialog is gone.
+                    this->trigger_deferred_restore_project();
                 }
-#endif
             }
-            });
+        });
+#endif
 
         Bind(EVT_ENTER_FORCE_UPGRADE, [this](const wxCommandEvent& evt) {
             if (this->mainframe == nullptr || this->m_is_closing)
@@ -3924,12 +4316,108 @@ bool GUI_App::on_init_inner(bool isdump_launcher)
     BOOST_LOG_TRIVIAL(info) << "create the main window";
   
     mainframe = new MainFrame();
+    mainframe->Bind(EVT_APP_UPDATE_PROGRESS, [this](wxCommandEvent& e) {
+        if (g_update_progress_dlg)
+            g_update_progress_dlg->update_progress(e.GetInt(), e.GetString());
+    });
+    mainframe->Bind(EVT_APP_UPDATE_COMPLETE, [this](wxCommandEvent&) {
+        if (g_update_progress_dlg)
+            g_update_progress_dlg->close_imgui_notification();
+        if (g_update_progress_dlg)
+            g_update_progress_dlg->Hide();
+
+        // Write pending state immediately so that if the app crashes or is killed
+        // while the "Update Ready" dialog is shown, the user will still be prompted
+        // to install on next startup.
+        set_pending_app_update(this->app_config, AppUpdater::getInstance().get_version());
+
+        // Defer the "Update Ready" dialog until no other modal dialog (e.g. the
+        // "Restore unsaved project?" prompt) is blocking the UI.  Poll every
+        // 300 ms; give up after ~30 s to avoid an infinite loop.
+        struct ShowUpdateReady {
+            static void schedule(GUI_App* app, int retries_left) {
+                wxGetApp().CallAfter([app, retries_left]() {
+                    // Check whether a modal window is currently active.
+                    bool modal_busy = false;
+                    for (wxWindow* w : wxTopLevelWindows) {
+                        if (w == app->mainframe)
+                            continue;
+                        if (auto* dlg = dynamic_cast<wxDialog*>(w)) {
+                            if (dlg->IsModal() && dlg->IsShown()) {
+                                modal_busy = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (modal_busy && retries_left > 0) {
+                        // Another dialog is open — try again shortly.
+                        wxTimer* t = new wxTimer();
+                        t->Bind(wxEVT_TIMER, [app, retries_left, t](wxTimerEvent&) {
+                            // Delete the timer safely outside its own callback.
+                            wxTheApp->CallAfter([t]() { delete t; });
+                            schedule(app, retries_left - 1);
+                        });
+                        t->StartOnce(300);
+                        return;
+                    }
+                    // No competing dialog (or retries exhausted) — show now.
+                    const int res = show_update_ready_dialog_guarded(app->mainframe);
+                    if (res == wxID_YES) {
+                        clear_pending_app_update(app->app_config);
+                        set_install_attempted(AppUpdater::getInstance().get_version());
+                        AppUpdater::getInstance().install_update();
+                        // App is about to close/restart; no need to restore project.
+                    } else {
+                        set_pending_app_update(app->app_config, AppUpdater::getInstance().get_version());
+                        // User deferred install — unblock deferred restore project if any.
+                        app->trigger_deferred_restore_project();
+                    }
+                });
+            }
+        };
+        ShowUpdateReady::schedule(this, 100 /*retries ≈ 30 s*/);
+    });
+    mainframe->Bind(EVT_APP_UPDATE_CANCELED, [this](wxCommandEvent&) {
+        if (g_update_progress_dlg)
+            g_update_progress_dlg->close_imgui_notification();
+        if (g_update_progress_dlg)
+            g_update_progress_dlg->Hide();
+    });
+    mainframe->Bind(EVT_APP_UPDATE_ERROR, [this](wxCommandEvent& e) {
+        if (g_update_progress_dlg)
+            g_update_progress_dlg->close_imgui_notification();
+        if (g_update_progress_dlg)
+            g_update_progress_dlg->Hide();
+        
+        // Use CP's RichMessageDialog for consistent UI style
+        Slic3r::GUI::RichMessageDialog dlg(this->mainframe, _(L"Download incomplete, please check your network and try again"), _(L"Download Failed"), wxYES | wxNO);
+        
+        // Show dialog briefly to ensure buttons are created
+        dlg.Show(false);
+        
+        // Find and update button labels
+        if (Button* btn_yes = static_cast<Button*>(dlg.FindWindowById(wxID_YES))) {
+            btn_yes->SetLabel(_(L"Retry"));
+        }
+        if (Button* btn_no = static_cast<Button*>(dlg.FindWindowById(wxID_NO))) {
+            btn_no->SetLabel(_(L"Confirm"));
+        }
+        
+        dlg.Layout();
+        if (dlg.ShowModal() == wxID_YES) {
+            if (g_update_progress_dlg) {
+                g_update_progress_dlg->update_progress(0, _L("Preparing to download..."));
+                g_update_progress_dlg->Show();
+            }
+            AppUpdater::getInstance().retry();
+        }
+    });
     //UITour::Instance();
     // hide settings tabs after first Layout
     if (this->init_params->input_files.empty()) {
         mainframe->select_tab(size_t(0));
     }else{
-        mainframe->select_tab(size_t(1));
+        mainframe->select_tab(size_t(MainFrame::tp3DEditor));
     }
 
     sidebar().obj_list()->init();
@@ -4107,9 +4595,22 @@ void  GUI_App::on_init_custom_config()
 }
 void  GUI_App::track_event(const std::string& event, const std::string& data)
 {
-    if(mainframe)
-    {
-        mainframe->trackEvent(event, data);
+    std::string final_data = data;
+    try {
+        nlohmann::json js = nlohmann::json::parse(data);
+        if (js.is_object()) {
+            const std::string system_id = SystemId::get_system_id();
+            js["app_version"]    = GUI_App::format_display_version().c_str();
+            js["operating_system"] = wxGetOsDescription().ToStdString().c_str();
+            js["device_id"]      = system_id;
+            js["client_id"]      = system_id;
+            js["user_id"]        = wxGetApp().get_user().userId;
+            final_data = js.dump();
+        }
+    } catch (...) {
+    }
+    if (mainframe) {
+        mainframe->trackEvent(event, final_data);
     }
 }
 void GUI_App::copy_network_if_available()
@@ -4350,7 +4851,7 @@ bool GUI_App::dark_mode()
 
 const wxColour GUI_App::get_label_default_clr_system()
 {
-    return dark_mode() ? wxColour(115, 220, 103) : wxColour(26, 132, 57);
+    return dark_mode() ? wxColour(35, 59, 44) : wxColour(220, 246, 230);
 }
 
 const wxColour GUI_App::get_label_default_clr_modified()
@@ -5239,8 +5740,14 @@ void GUI_App::load_project(wxWindow *parent, wxString& input_file) const
         app_config->get_last_dir(), "",
         file_wildcards(FT_PROJECT), wxFD_OPEN | wxFD_FILE_MUST_EXIST);
 
-    if (dialog.ShowModal() == wxID_OK)
+    if (dialog.ShowModal() == wxID_OK) {
         input_file = dialog.GetPath();
+        
+        // Fire file_project_open analytics event when user selects a project file and clicks OK
+        AnalyticsEventPayload payload;
+        payload.type = AnalyticsDataEventType::ANALYTICS_FILE_PROJECT_OPEN;
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+    }
 }
 
 void GUI_App::import_model(wxWindow *parent, wxArrayString& input_files, bool Category_or_not) const
@@ -6105,7 +6612,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
         boost::optional<std::string> command = root.get_optional<std::string>("command");
 
         wxString strInput  = cmd;
-        
+
+        schedule_software_launch_analytics();
 
         if (command.has_value()) {
             std::string command_str = command.value();
@@ -6165,32 +6673,6 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     if (mainframe->m_webview) {
                         mainframe->m_webview->SendRecentList(INT_MAX);
                     }
-
-                    wxTimer* timer = new wxTimer();
-                    timer->Bind(wxEVT_TIMER, [this, timer](wxTimerEvent&) {
-                        // when reload_homepage() is called, will trigger  this "get_account_info", so we use  m_app_launch_initialized to
-                        // make sure only upload once
-                        if (wxGetApp().is_privacy_checked() && !m_app_launch_initialized) {
-                            m_app_launch_initialized = true;
-                            GUI::wxGetApp().check_app_first_launch_info();
-                            // software launch, upload analytics data here
-                            AnalyticsDataUploadManager::getInstance()
-                                .triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-                                                    {AnalyticsDataEventType::ANALYTICS_SOFTWARE_LAUNCH,
-                                                     AnalyticsDataEventType::ANALYTICS_ACCOUNT_DEVICE_INFO});
-
-                            if (wxGetApp().app_config->get_bool("software_crash")) {
-                                AnalyticsDataUploadManager::getInstance()
-                                    .triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_CRASH,
-                                                        {AnalyticsDataEventType::ANALYTICS_SOFTWARE_CRASH});
-                                wxGetApp().app_config->set_bool("software_crash", false);
-                                wxGetApp().app_config->save();
-                            }
-                        }
-                        timer->Stop();
-                        delete timer;
-                    });
-                    timer->StartOnce(8000);
                 }
             }else if(command_str.compare("get_account_info") == 0){
                 CallAfter([this] {
@@ -6232,32 +6714,6 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     }
                     wxString strJS = wxString::Format("window.handleStudioCmd(%s)", m_Res.dump(-1, ' ', true));
                     GUI::wxGetApp().run_script(strJS);
-
-                    wxTimer* timer = new wxTimer();
-                    timer->Bind(wxEVT_TIMER, [this, timer](wxTimerEvent&) {
-                        // when reload_homepage() is called, will trigger  this "get_account_info", so we use  m_app_launch_initialized to
-                        // make sure only upload once
-                        if (wxGetApp().is_privacy_checked() && !m_app_launch_initialized) {
-                            m_app_launch_initialized = true;
-                            GUI::wxGetApp().check_app_first_launch_info();
-                            // software launch, upload analytics data here
-                            AnalyticsDataUploadManager::getInstance()
-                                .triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-                                                    {AnalyticsDataEventType::ANALYTICS_SOFTWARE_LAUNCH,
-                                                     AnalyticsDataEventType::ANALYTICS_ACCOUNT_DEVICE_INFO});
-
-                            if (wxGetApp().app_config->get_bool("software_crash")) {
-                                AnalyticsDataUploadManager::getInstance()
-                                    .triggerUploadTasks(AnalyticsUploadTiming::ON_SOFTWARE_CRASH,
-                                                        {AnalyticsDataEventType::ANALYTICS_SOFTWARE_CRASH});
-                                wxGetApp().app_config->set_bool("software_crash", false);
-                                wxGetApp().app_config->save();
-                            }
-                        }
-                        timer->Stop();
-                        delete timer;
-                    });
-                    timer->StartOnce(8000);
 
                 });
 
@@ -7045,7 +7501,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                                     {
                                         std::string nozzle_diameter = printer["nozzleDiameter"][0].get<std::string>();
                                         std::string name = printer["name"].get<std::string>();
-                                        if(name.find("Creality")==std::string::npos)
+                                        if(name.find("Creality")==std::string::npos&&name.find("SPARKX")==std::string::npos)
                                         {
                                             name = "Creality " + name;
                                         }
@@ -7613,6 +8069,201 @@ void GUI_App::check_update(bool show_tips, int by_user)
     }
 }
 
+void GUI_App::check_new_version_local(bool show_tips, int by_user)
+{
+#ifdef __WXMSW__
+    // 从配置文件读取updater_server_ip，如果没有配置则使用localhost:9000
+    std::string updater_server_ip = app_config->get("updater_server_ip");
+    std::string base_url = updater_server_ip.empty() ? std::string("http://localhost:9000") : 
+                          (updater_server_ip.find("http") == 0 ? updater_server_ip : "http://" + updater_server_ip);
+    if (base_url.empty())
+        return;
+    
+    // Convert version to 3-part format for Squirrel compatibility
+    std::string version_base = std::string(CREALITYPRINT_VERSION_MAJOR) + "." + 
+                               std::string(CREALITYPRINT_VERSION_MINOR) + "." + 
+                               std::string(CREALITYPRINT_VERSION_PATCH);
+    std::string version_extra = std::string(PROJECT_VERSION_EXTRA);
+    
+    // Convert version extra to lowercase for Squirrel compatibility
+    std::transform(version_extra.begin(), version_extra.end(), version_extra.begin(), 
+                   [](unsigned char c) { return (char)std::tolower(c); });
+    
+    std::string current_version = version_base;
+    if (!version_extra.empty()) {
+        current_version += "-" + version_extra;
+    }
+    
+    std::string platform = "windows";
+    std::string url = base_url;
+    if (!url.empty() && url.back() == '/')
+        url.pop_back();
+    url += "/api/update/check";
+
+    Http::set_extra_headers(get_extra_header());
+    Http http = Http::post(url);
+    nlohmann::json req_body;
+    req_body["currentVersion"] = current_version;
+    req_body["platform"] = platform;
+    http.header("accept", "application/json")
+        .header("Content-Type", "application/json")
+        .set_post_body(req_body.dump())
+        .timeout_connect(TIMEOUT_CONNECT)
+        .timeout_max(TIMEOUT_RESPONSE)
+        .on_error([this, show_tips](std::string body, std::string error, unsigned http_status) {
+            (void)body;
+            BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]check_new_version_local error http_status=" << http_status << " error=" << error;
+            if (show_tips) {
+                CallAfter([this]() {
+                    this->show_dialog(_L("Network connection timed out. Please check your network settings and try again."));
+                });
+            }
+        })
+        .on_complete([this, show_tips, by_user, base_url, current_version](std::string body, unsigned status) {
+            if (status != 200) {
+                BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]check_new_version_local unexpected status " << status;
+                if (show_tips) {
+                    CallAfter([this]() {
+                        this->show_dialog(_L("Failed to check for updates."));
+                    });
+                }
+                return;
+            }
+            try {
+                nlohmann::json j = nlohmann::json::parse(body);
+                bool has_update = j.value("hasUpdate", false);
+                if (!has_update) {
+                    if (show_tips) {
+                        CallAfter([this]() {
+                            this->no_new_version();
+                        });
+                    }
+                    return;
+                }
+
+                std::string base_package_name = j.value("basePackage", std::string());
+                std::string version = j.value("latestVersion", std::string());
+                std::string file_url = j.value("fileUrl", std::string());
+                if (version.empty())
+                    version = CREALITYPRINT_VERSION;
+
+                struct LocalPackageInfo {
+                    std::string name;
+                    std::string url;
+                    long long size;
+                    std::string sha1;
+                };
+                std::vector<LocalPackageInfo> delta_packages;
+                LocalPackageInfo              full_package;
+                bool                     has_full = false;
+
+                if (j.contains("fullFile") && j["fullFile"].is_object()) {
+                    auto& item = j["fullFile"];
+                    full_package.name = item.value("name", std::string());
+                    full_package.url  = item.value("url", std::string());
+                    full_package.size = item.value("size", static_cast<long long>(-1));
+                    full_package.sha1 = item.value("sha1", std::string());
+                    has_full = !full_package.name.empty() && !full_package.url.empty();
+                }
+
+                if (j.contains("deltaFiles") && j["deltaFiles"].is_array()) {
+                    for (auto& item : j["deltaFiles"]) {
+                        if (!item.is_object())
+                            continue;
+                        LocalPackageInfo p;
+                        p.name = item.value("name", std::string());
+                        p.url = item.value("url", std::string());
+                        p.size = item.value("size", static_cast<long long>(-1));
+                        p.sha1 = item.value("sha1", std::string());
+                        if (!p.url.empty() && !p.name.empty())
+                            delta_packages.push_back(std::move(p));
+                    }
+                }
+
+                std::vector<LocalPackageInfo> packages;
+                long long total_delta_size = 0;
+                for (const auto& p : delta_packages) {
+                    if (p.size > 0)
+                        total_delta_size += p.size;
+                }
+                bool use_delta = !delta_packages.empty();
+                if (has_full && total_delta_size > 0 && total_delta_size > full_package.size)
+                    use_delta = false;
+
+                if (use_delta) {
+                    for (const auto& p : delta_packages)
+                        packages.push_back(p);
+                } else if (has_full) {
+                    packages.push_back(full_package);
+                }
+
+                if (packages.empty()) {
+                    BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]no packages in update response";
+                    if (show_tips) {
+                        CallAfter([this]() {
+                            this->show_dialog(_L("No valid update packages found."));
+                        });
+                    }
+                    return;
+                }
+
+                // Convert to AppUpdater::PackageInfo
+                std::vector<PackageInfo> updater_packages;
+                for (const auto& p : packages) {
+                    PackageInfo info;
+                    info.name = p.name;
+                    info.url = p.url;
+                    info.size = p.size;
+                    info.sha1 = p.sha1;
+                    updater_packages.push_back(info);
+                }
+
+                // Save update packages to member variables
+                m_update_version = version;
+                m_update_base_package_name = base_package_name;
+                m_update_file_url = file_url;
+                m_update_packages.clear();
+                
+                for (const auto& p : packages) {
+                    PackageInfo info;
+                    info.name = p.name;
+                    info.url = p.url;
+                    info.size = p.size;
+                    info.sha1 = p.sha1;
+                    m_update_packages.push_back(info);
+                }
+
+                // Call process_update_packages to handle download and hot update
+                process_update_packages(updater_packages, version, base_package_name, file_url, show_tips, by_user);
+
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]check_new_version_local exception: " << e.what();
+                if (show_tips) {
+                    CallAfter([this]() {
+                        this->show_dialog(_L("Failed to parse update information."));
+                    });
+                }
+            }
+        })
+        .perform();
+#else
+    (void)show_tips;
+    (void)by_user;
+#endif
+}
+
+// If the "Update Ready" dialog was shown before the "Restore unsaved project?"
+// prompt, call this after the update dialog is dismissed to release the deferred
+// restore so the user sees it next.
+void GUI_App::trigger_deferred_restore_project()
+{
+    if (m_restore_project_deferred) {
+        m_restore_project_deferred = false;
+        if (plater_)
+            plater_->trigger_restore_project(1);
+    }
+}
+
 void GUI_App::check_new_version(bool show_tips, int by_user)
 {
     std::string platform = "windows";
@@ -7676,13 +8327,13 @@ void GUI_App::check_new_version(bool show_tips, int by_user)
 }
 
 //parse the string, if it doesn't contain a valid version string, return invalid version.
+// Supports 4-part version strings like "7.7.1.4375" by extracting only the first 3 segments.
 Semver get_version(const std::string& str, const std::regex& regexp) {
     std::smatch match;
-    if (std::regex_match(str, match, regexp)) {
-        std::string version_cleaned = match[0];
-        const boost::optional<Semver> version = Semver::parse(version_cleaned);
-        if (version.has_value()) {
-            return *version;
+    if (std::regex_search(str, match, regexp)) {
+        ParsedCrealityVersion version = parse_creality_version(match[0].str());
+        if (version.valid()) {
+            return version.semver;
         }
     }
     return Semver::invalid();
@@ -7692,6 +8343,8 @@ void GUI_App::check_new_version_cx(bool show_tips, int by_user)
     int palform_ = 0;
     #ifdef __WINDOWS__
         palform_ = 1;
+        check_new_version_cx_updated(show_tips,by_user);
+        return ;
     #endif
     #ifdef __APPLE__
         palform_ = 3;
@@ -7734,19 +8387,21 @@ void GUI_App::check_new_version_cx(bool show_tips, int by_user)
                         if (list.empty() && show_tips) {
                             this->no_new_version();
                         } else {
-                             std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
-                             Semver  current_version = get_version(CREALITYPRINT_VERSION, matcher);
-                             Semver bigest_version = get_version("0.0.1", matcher);
+                             std::regex  matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
+                             const int   current_build_id    = parse_build_id_string(std::string(SLIC3R_BUILD_ID));
+                             std::string biggest_version_str = "0.0.1";
                              for(auto& item : list){
                                 int pf = item["platform"].get<int>();
                                 if (pf != palform_)
                                     continue;
                                 std::string version = item["versionNumber"];
                                 BOOST_LOG_TRIVIAL(warning) << "check_new_version_cx: " << version;
-                                if (version[0] == 'V')
+                                if (!version.empty() && version[0] == 'V')
                                     version.erase(0, 1);
                                 Semver tag_version = get_version(version, matcher);
-                                if (tag_version > bigest_version) {
+                                if (tag_version == Semver::invalid())
+                                    continue;
+                                if (compare_creality_versions(version, biggest_version_str) > 0) {
                                     version_info.url = item["fileUrl"];
                                     version_info.version_str = version;
                                     auto description = item["description"];
@@ -7755,12 +8410,12 @@ void GUI_App::check_new_version_cx(bool show_tips, int by_user)
                                         version_info.description += item;
                                     }
                                     version_info.force_upgrade = false;//item["force_update"];
-                                    bigest_version = tag_version;
+                                    biggest_version_str = version;
                                 }
                              }
-                             if (bigest_version > current_version) {
+                             if (compare_creality_versions(biggest_version_str, std::string(CREALITYPRINT_VERSION), -1, current_build_id) > 0) {
                                 wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
-                                evt->SetString(bigest_version.to_string());
+                                evt->SetString(GUI::from_u8(version_info.version_str));
                                 evt->SetInt(by_user);
                                 GUI::wxGetApp().QueueEvent(evt);
                                 return;
@@ -7772,6 +8427,339 @@ void GUI_App::check_new_version_cx(bool show_tips, int by_user)
                     }
                 } catch (...) {}
         }).perform();
+}
+
+void GUI_App::check_new_version_cx_updated(bool show_tips, int by_user)
+{
+    // Convert version to 3-part format for compatibility
+    std::string version_base = std::string(CREALITYPRINT_VERSION);
+    // Add 'V' prefix for cloud API request
+    std::string request_version = "V" + version_base;
+    
+    std::string base_url = get_cloud_api_url();
+    auto update_check_url = "/api/cxy/v2/firmware/softwareUpCheck";
+    std::map<std::string, std::string> extra_headers = get_extra_header();
+    Http::set_extra_headers(extra_headers);
+    Http http = Http::post(base_url + update_check_url);
+    nlohmann::json req_body;
+    req_body["currentVersion"] = request_version;
+    req_body["platform"] = 1;
+    boost::uuids::uuid uuid = boost::uuids::random_generator()();
+    std::string req_body_str = req_body.dump();
+    BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]check_new_version_cx_updated request headers: ";
+    for (const auto& header : extra_headers) {
+        BOOST_LOG_TRIVIAL(error) << "  " << header.first << ": " << header.second;
+    }
+    BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]check_new_version_cx_updated request body: " << req_body_str;
+    http.header("Content-Type", "application/json")
+        .header("__CXY_REQUESTID_", to_string(uuid))
+        .set_post_body(req_body_str)
+        .timeout_connect(TIMEOUT_CONNECT)
+        .timeout_max(TIMEOUT_RESPONSE)
+        .on_error([this, show_tips](std::string body, std::string error, unsigned http_status) {
+            BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]check_new_version_cx_updated error http_status=" << http_status << " error=" << error << " response body: " << body;
+            // Network failed — unblock deferred restore project (if any) on the UI thread.
+            CallAfter([this]() { this->trigger_deferred_restore_project(); });
+            if (show_tips) {
+                CallAfter([this]() {
+                    this->show_dialog(_L("Network connection timed out. Please check your network settings and try again."));
+                });
+            }
+        })
+        .on_complete([this, show_tips, by_user](std::string body, unsigned status) {
+            if (status != 200) {
+                BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]check_new_version_cx_updated unexpected status " << status;
+                CallAfter([this]() { this->trigger_deferred_restore_project(); });
+                if (show_tips) {
+                    CallAfter([this]() {
+                        this->show_dialog(_L("Failed to check for updates."));
+                    });
+                }
+                return;
+            }
+            try {
+                nlohmann::json j = nlohmann::json::parse(body);
+                
+                // Check if response contains result
+                if (!j.contains("result")) {
+                    BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]check_new_version_cx_updated invalid response format, response body: " << body;
+                    if (show_tips) {
+                        CallAfter([this]() {
+                            this->show_dialog(_L("Invalid response format."));
+                        });
+                    }
+                    return;
+                }
+                
+                nlohmann::json result = j["result"];
+                bool has_update = result.value("hasUpdate", false);
+                if (!has_update) {
+                    // No update available — unblock deferred restore project if any.
+                    CallAfter([this]() { this->trigger_deferred_restore_project(); });
+                    if (show_tips) {
+                        CallAfter([this]() {
+                            this->no_new_version();
+                        });
+                    }
+                    return;
+                }
+
+                std::string base_package_name = result.value("basePackage", std::string());
+                std::string version = result.value("versionNumber", std::string());
+                std::string file_url = result.value("fileUrl", std::string());
+                if (version.empty())
+                    version = CREALITYPRINT_VERSION;
+                
+                // Remove 'V' prefix if present
+                if (!version.empty() && version[0] == 'V')
+                    version.erase(0, 1);
+                
+                // Version comparison
+                std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
+                Semver current_version = get_version(CREALITYPRINT_VERSION, matcher);
+                Semver remote_version = get_version(version, matcher);
+                
+                if (remote_version <= current_version) {
+                    if (show_tips) {
+                        CallAfter([this]() {
+                            this->no_new_version();
+                        });
+                    }
+                    return;
+                }
+                
+                // Process description (may be an array)
+                std::string description = "";
+                if (result.contains("description")) {
+                    if (result["description"].is_array()) {
+                        for (auto& item : result["description"]) {
+                            description += item.get<std::string>();
+                        }
+                    } else if (result["description"].is_string()) {
+                        description = result["description"].get<std::string>();
+                    }
+                }
+                
+                // Update version_info
+                version_info.version_str = version;
+                version_info.description = description;
+                version_info.url = file_url;
+
+                struct LocalPackageInfo {
+                    std::string name;
+                    std::string url;
+                    long long size;
+                    std::string sha1;
+                };
+                std::vector<LocalPackageInfo> delta_packages;
+                LocalPackageInfo              full_package;
+                bool                     has_full = false;
+
+                if (result.contains("fullFile") && result["fullFile"].is_object()) {
+                    auto& item = result["fullFile"];
+                    full_package.name = item.value("name", std::string());
+                    full_package.url  = item.value("url", std::string());
+                    full_package.size = item.value("size", static_cast<long long>(-1));
+                    full_package.sha1 = item.value("sha1", std::string());
+                    has_full = !full_package.name.empty() && !full_package.url.empty();
+                }
+
+                if (result.contains("deltaFiles") && result["deltaFiles"].is_array()) {
+                    for (auto& item : result["deltaFiles"]) {
+                        if (!item.is_object())
+                            continue;
+                        LocalPackageInfo p;
+                        p.name = item.value("name", std::string());
+                        p.url = item.value("url", std::string());
+                        p.size = item.value("size", static_cast<long long>(-1));
+                        p.sha1 = item.value("sha1", std::string());
+                        if (!p.url.empty() && !p.name.empty())
+                            delta_packages.push_back(std::move(p));
+                    }
+                }
+
+                std::vector<LocalPackageInfo> packages;
+                long long total_delta_size = 0;
+                for (const auto& p : delta_packages) {
+                    if (p.size > 0)
+                        total_delta_size += p.size;
+                }
+                bool use_delta = !delta_packages.empty();
+                if (has_full && total_delta_size > 0 && total_delta_size >= full_package.size)
+                    use_delta = false;
+                if (use_delta) {
+                    for (const auto& p : delta_packages)
+                        packages.push_back(p);
+                } else if (has_full) {
+                    packages.push_back(full_package);
+                }
+
+                if (packages.empty()) {
+                    BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]no packages in update response";
+                    // No hot-update packages: fall back to showing the standard version dialog
+                    // so the user is still notified of the new version.
+                    wxCommandEvent* evt_fallback = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+                    evt_fallback->SetString(version);
+                    evt_fallback->SetInt(by_user);
+                    GUI::wxGetApp().QueueEvent(evt_fallback);
+                    return;
+                }
+                m_update_version = version;
+                m_update_base_package_name = base_package_name;
+                m_update_file_url = file_url;
+                m_update_packages.clear();
+                
+                // Convert to AppUpdater::PackageInfo
+                for (const auto& p : packages) {
+                    PackageInfo info;
+                    info.name = p.name;
+                    info.url = p.url;
+                    info.size = p.size;
+                    info.sha1 = p.sha1;
+                    m_update_packages.push_back(info);
+                }
+                
+                // Send event to show update dialog
+                wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+                evt->SetString(version);
+                evt->SetInt(by_user);
+                GUI::wxGetApp().QueueEvent(evt);
+                return;
+
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "[CrealityPrint Update]check_new_version_cx_updated exception: " << e.what();
+                if (show_tips) {
+                    CallAfter([this]() {
+                        this->show_dialog(_L("Failed to parse update information."));
+                    });
+                }
+            }
+        })
+        .perform();
+}
+
+void GUI_App::process_update_packages(const std::vector<PackageInfo>& updater_packages, 
+                                       const std::string& version, 
+                                       const std::string& base_package_name,
+                                       const std::string& manual_url,
+                                       bool show_tips, 
+                                       int by_user)
+{
+#ifdef __WXMSW__
+    // Check disk space before showing progress dialog
+    long long total_size = 0;
+    for (const auto& p : updater_packages) {
+        if (p.size > 0)
+            total_size += p.size;
+    }
+    
+    // Reserve 2GB for system safety
+    const long long required_space = total_size + (2LL * 1024 * 1024 * 1024);
+    long long available_space = 0;
+    
+    // Check LocalAppData drive space
+#ifdef _WIN32
+    PWSTR local_app_data_path = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_app_data_path))) {
+        ULARGE_INTEGER free_bytes;
+        if (GetDiskFreeSpaceExW(local_app_data_path, &free_bytes, nullptr, nullptr)) {
+            available_space = free_bytes.QuadPart;
+        }
+        CoTaskMemFree(local_app_data_path);
+    }
+#else
+    struct statvfs stat_buf;
+    if (statvfs("/tmp", &stat_buf) == 0) {
+        available_space = static_cast<long long>(stat_buf.f_bavail) * stat_buf.f_frsize;
+    }
+#endif
+    
+    if (available_space > 0 && available_space < required_space) {
+        CallAfter([]() {
+            MessageDialog msg_dlg(nullptr, 
+                _L("Insufficient storage space. Please free up some space and try again."), 
+                _L("Update Error"), wxICON_WARNING | wxOK);
+            msg_dlg.ShowModal();
+        });
+        return;
+    }
+    
+    // Show progress dialog immediately when triggered by user
+    if (by_user != 0 && show_tips) {
+        CallAfter([this]() {
+            if (!g_update_progress_dlg) {
+                g_update_progress_dlg = new AppUpdateProgressDialog(this->mainframe);
+            }
+            g_update_progress_dlg->update_progress(0, _L("Preparing to download..."));
+            g_update_progress_dlg->Show();
+        });
+    }
+    
+    CallAfter([this, updater_packages, version, base_package_name, manual_url, by_user]() {
+        if (!g_update_progress_dlg) {
+            g_update_progress_dlg = new AppUpdateProgressDialog(this->mainframe);
+            g_update_progress_dlg->Bind(wxEVT_CLOSE_WINDOW, [](wxCloseEvent& e) {
+                if (AppUpdater::getInstance().is_downloading()) {
+                    AppUpdater::getInstance().cancel_download();
+                    if (g_update_progress_dlg)
+                        g_update_progress_dlg->close_imgui_notification();
+                    if (g_update_progress_dlg)
+                        g_update_progress_dlg->Hide();
+                    e.Veto();
+                } else {
+                    e.Skip();
+                }
+            });
+            g_update_progress_dlg->Bind(wxEVT_BUTTON, [](wxCommandEvent& e) {
+                if (e.GetId() != wxID_CANCEL)
+                    return;
+                if (AppUpdater::getInstance().is_downloading()) {
+                    AppUpdater::getInstance().cancel_download();
+                    if (g_update_progress_dlg)
+                        g_update_progress_dlg->close_imgui_notification();
+                    if (g_update_progress_dlg)
+                        g_update_progress_dlg->Hide();
+                } else if (g_update_progress_dlg) {
+                    g_update_progress_dlg->close_imgui_notification();
+                    g_update_progress_dlg->Hide();
+                }
+            }, wxID_CANCEL);
+        }
+        
+        if (AppUpdater::getInstance().prepare_cached_hot_update(updater_packages, version, base_package_name, manual_url)) {
+            if (by_user == 0) {
+                if (g_update_progress_dlg) {
+                    g_update_progress_dlg->close_imgui_notification();
+                    g_update_progress_dlg->Hide();
+                }
+                return;
+            }
+            if (g_update_progress_dlg) {
+                g_update_progress_dlg->close_imgui_notification();
+                g_update_progress_dlg->Hide();
+            }
+            const int res = show_update_ready_dialog_guarded(this->mainframe);
+            if (res == wxID_YES) {
+                clear_pending_app_update(this->app_config);
+                set_install_attempted(version);
+                AppUpdater::getInstance().install_update();
+            } else {
+                set_pending_app_update(this->app_config, version);
+            }
+            return;
+        }
+        
+        g_update_progress_dlg->update_progress(0, _L("Preparing to download..."));
+        g_update_progress_dlg->Show();
+        AppUpdater::getInstance().start_download(updater_packages, version, base_package_name, manual_url);
+    });
+#else
+    (void)updater_packages;
+    (void)version;
+    (void)base_package_name;
+    (void)show_tips;
+    (void)by_user;
+#endif
 }
 void GUI_App::check_new_version_sf(bool show_tips, int by_user)
 {
@@ -7800,9 +8788,9 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
             // metadata
             std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
 
-            Semver           current_version = get_version(CREALITYPRINT_VERSION, matcher);
-            Semver best_pre(1, 0, 0);
-            Semver best_release(1, 0, 0);
+            const int   current_build_id     = parse_build_id_string(std::string(SLIC3R_BUILD_ID));
+            std::string best_pre_version     = "1.0.0";
+            std::string best_release_version = "1.0.0";
             std::string best_pre_url;
             std::string best_release_url;
             std::string best_release_content;
@@ -7814,18 +8802,19 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
                     tag.erase(0, 1);
                 for (std::regex_iterator it = std::sregex_iterator(tag.begin(), tag.end(), reg_num); it != std::sregex_iterator(); ++it) {}
                 Semver tag_version = get_version(tag, matcher);
-                if (root.get<bool>("prerelease")) {
-                    if (best_pre < tag_version) {
-                        best_pre         = tag_version;
-                        best_pre_url     = root.get<std::string>("html_url");
-                        best_pre_content = root.get<std::string>("body");
-                        best_pre.set_prerelease("Preview");
-                    }
-                } else {
-                    if (best_release < tag_version) {
-                        best_release         = tag_version;
-                        best_release_url     = root.get<std::string>("html_url");
-                        best_release_content = root.get<std::string>("body");
+                if (tag_version != Semver::invalid()) {
+                    if (root.get<bool>("prerelease")) {
+                        if (compare_creality_versions(tag, best_pre_version) > 0) {
+                            best_pre_version = tag;
+                            best_pre_url     = root.get<std::string>("html_url");
+                            best_pre_content = root.get<std::string>("body");
+                        }
+                    } else {
+                        if (compare_creality_versions(tag, best_release_version) > 0) {
+                            best_release_version = tag;
+                            best_release_url     = root.get<std::string>("html_url");
+                            best_release_content = root.get<std::string>("body");
+                        }
                     }
                 }
             } else {
@@ -7836,16 +8825,17 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
                     for (std::regex_iterator it = std::sregex_iterator(tag.begin(), tag.end(), reg_num); it != std::sregex_iterator();
                          ++it) {}
                     Semver tag_version = get_version(tag, matcher);
+                    if (tag_version == Semver::invalid())
+                        continue;
                     if (json_version.second.get<bool>("prerelease")) {
-                        if (best_pre < tag_version) {
-                            best_pre         = tag_version;
+                        if (compare_creality_versions(tag, best_pre_version) > 0) {
+                            best_pre_version = tag;
                             best_pre_url     = json_version.second.get<std::string>("html_url");
                             best_pre_content = json_version.second.get<std::string>("body");
-                            best_pre.set_prerelease("Preview");
                         }
                     } else {
-                        if (best_release < tag_version) {
-                            best_release         = tag_version;
+                        if (compare_creality_versions(tag, best_release_version) > 0) {
+                            best_release_version = tag;
                             best_release_url     = json_version.second.get<std::string>("html_url");
                             best_release_content = json_version.second.get<std::string>("body");
                         }
@@ -7854,25 +8844,26 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
             }
 
             // if release is more recent than beta, use release anyway
-            if (best_pre < best_release) {
-                best_pre         = best_release;
+            if (compare_creality_versions(best_pre_version, best_release_version) < 0) {
+                best_pre_version = best_release_version;
                 best_pre_url     = best_release_url;
                 best_pre_content = best_release_content;
             }
             // if we're the most recent, don't do anything
-            if ((check_stable_only ? best_release : best_pre) <= current_version) {
+            const std::string& latest_version = check_stable_only ? best_release_version : best_pre_version;
+            if (compare_creality_versions(latest_version, std::string(CREALITYPRINT_VERSION), -1, current_build_id) <= 0) {
                 if (by_user != 0)
                     this->no_new_version();
                 return;
             }
 
             version_info.url           = check_stable_only ? best_release_url : best_pre_url;
-            version_info.version_str   = check_stable_only ? best_release.to_string_sf() : best_pre.to_string();
+            version_info.version_str   = latest_version;
             version_info.description   = check_stable_only ? best_release_content : best_pre_content;
             version_info.force_upgrade = false;
 
             wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
-            evt->SetString((check_stable_only ? best_release : best_pre).to_string());
+            evt->SetString(GUI::from_u8(version_info.version_str));
             GUI::wxGetApp().QueueEvent(evt);
           } catch (...) {}
         })
@@ -7911,13 +8902,23 @@ void GUI_App::show_check_privacy_dlg(wxCommandEvent& evt)
     PrivacyUpdateDialog privacy_dlg(this->mainframe, wxID_ANY, _L("User Experience Improvement Program"));
     privacy_dlg.Bind(EVT_PRIVACY_UPDATE_CONFIRM, [this, online_login](wxCommandEvent &e) {
         std::string version = std::string(CREALITYPRINT_VERSION);
+        bool found = false;
         if (privacyData.contains("list") && !privacyData["list"].is_null()) {
             for (auto& v : privacyData["list"]) {
                 if (v["version"] == version) {
                     v["check"] = true;
+                    found = true;
                     break;
                 } 
             }
+        }
+        if (!found) {
+            if (!privacyData.contains("list") || privacyData["list"].is_null())
+                privacyData["list"] = nlohmann::json::array();
+            nlohmann::json item;
+            item["version"] = version;
+            item["check"]   = true;
+            privacyData["list"].push_back(item);
         }
         save_privacy_version();
         save_app_first_launch_info();
@@ -7931,6 +8932,9 @@ void GUI_App::show_check_privacy_dlg(wxCommandEvent& evt)
             wxTimer* upload_timer = new wxTimer();
             upload_timer->Bind(wxEVT_TIMER, [upload_timer](wxTimerEvent&) {
                 AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_FIRST_LAUNCH, { AnalyticsDataEventType::ANALYTICS_FIRST_LAUNCH });
+                AnalyticsEventPayload payload;
+                payload.type = AnalyticsDataEventType::ANALYTICS_FIRST_LAUNCH;
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
                 upload_timer->Stop();
                 delete upload_timer;
             });
@@ -7939,6 +8943,26 @@ void GUI_App::show_check_privacy_dlg(wxCommandEvent& evt)
 
         });
     privacy_dlg.Bind(EVT_PRIVACY_UPDATE_CANCEL, [this](wxCommandEvent &e) {
+            std::string version = std::string(CREALITYPRINT_VERSION);
+            bool found = false;
+            if (privacyData.contains("list") && !privacyData["list"].is_null()) {
+                for (auto& v : privacyData["list"]) {
+                    if (v["version"] == version) {
+                        v["check"] = false;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                if (!privacyData.contains("list") || privacyData["list"].is_null())
+                    privacyData["list"] = nlohmann::json::array();
+                nlohmann::json item;
+                item["version"] = version;
+                item["check"]   = false;
+                privacyData["list"].push_back(item);
+            }
+            save_privacy_version();
             app_config->set_bool("privacy_update_checked", false);
             if (m_agent) {
                 m_agent->user_logout();
@@ -8104,15 +9128,35 @@ void GUI_App::check_creality_privacy_version(bool bShowDlg)
     bool                    needUpdate  = true;
     boost::filesystem::path device_file = boost::filesystem::path(Slic3r::data_dir()) / "privacyInfo.json";
     std::string             version     = std::string(CREALITYPRINT_VERSION);
+    auto parse_major_version = [](const std::string& ver, int& major_out) -> bool {
+        size_t i = 0;
+        while (i < ver.size() && !std::isdigit(static_cast<unsigned char>(ver[i])))
+            ++i;
+        if (i >= ver.size())
+            return false;
+
+        size_t j = i;
+        while (j < ver.size() && std::isdigit(static_cast<unsigned char>(ver[j])))
+            ++j;
+
+        try {
+            major_out = std::stoi(ver.substr(i, j - i));
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+
+    int  cur_major    = 0;
+    bool has_cur_major = parse_major_version(version, cur_major);
     if (!boost::filesystem::exists(device_file)) {
-        if(!bShowDlg)
-        {
+        
+        std::string    res = app_config->get("is_first_install");
+        std::cout<<"is_first_install"<<res<<bShowDlg<<std::endl;
+        if (res == "1" && !bShowDlg)
+            bShowDlg = true;
+        else
             return;
-        }
-        save_privacy_version();  
-        if (privacyData.is_null()) {
-            privacyData["list"] = nlohmann::json::array();
-        }
        
     } else {
         try{
@@ -8123,31 +9167,45 @@ void GUI_App::check_creality_privacy_version(bool bShowDlg)
         privacyData = json::parse(buffer);
         if (privacyData.contains("list")) {
             for (auto& v : privacyData["list"]) {
-                if (v["version"] == version) {
-                    m_privacy_checked = v["check"].get<bool>();
+                if (!v.contains("version") || !v["version"].is_string()) {
+                    needUpdate = true;
+                    continue;
+                }
+
+                const std::string stored_version = v["version"].get<std::string>();
+                int               stored_major   = 0;
+                const bool        has_stored_major = parse_major_version(stored_version, stored_major);
+                const bool        match_major      = has_cur_major && has_stored_major && stored_major == cur_major;
+                const bool        match_exact      = (!has_cur_major || !has_stored_major) && stored_version == version;
+
+                if (match_major) {
+                    if (v.contains("check") && v["check"].is_boolean())
+                        m_privacy_checked = v["check"].get<bool>();
+                    if(!match_exact)
+                    {
+                        v["version"] = version;
+                        save_privacy_version();
+                    }
                     needUpdate = false;
                     break;
-                } else {
-                    needUpdate = true;
                 }
+
+                needUpdate = true;
             }
         }
         }catch(...){
             
         }
-     needUpdate = false; // 不跟版本走了，只弹一次
+        if(needUpdate)
+        {
+            bShowDlg = true;
+        }
+
     }
     if(!bShowDlg)
     {
         return;
     }
-    if (needUpdate) {
-        nlohmann::json item;
-        item["version"] = version;
-        item["check"]   = false;
-        privacyData["list"].push_back(item);
-    }
-    save_privacy_version();
     if (needUpdate) {
         on_show_check_privacy_dlg();
     }

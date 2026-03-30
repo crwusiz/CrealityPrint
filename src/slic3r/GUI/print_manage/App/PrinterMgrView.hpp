@@ -52,6 +52,11 @@ namespace Slic3r {
             void ExecuteScriptCommand(const std::string& commandInfo, bool async = false);
             void RegisterHandler(const std::string& command, std::function<void(const nlohmann::json&)> handler);
             void UnregisterHandler(const std::string& command);
+            std::string get_error_code(int statusCode, const std::string& status_msg);
+            void fire_print_send_event(const nlohmann::json& frontend_data, const std::string& error_code);
+            void fire_print_begin_event(const std::string& ip, const nlohmann::json& webview_data);
+            void add_device_info_to_payload(nlohmann::json& payload, const std::string& ip);
+            std::string bool_to_string(bool value);
             virtual bool Show(bool show = true) wxOVERRIDE;
             void run_script(std::string content);
             
@@ -118,6 +123,9 @@ namespace Slic3r {
             std::unordered_map<std::string, ProgressInfo> m_uploadProgressMap;
             std::mutex m_uploadProgressMutex;
             bool m_bHasError = false;
+            bool m_webview_loaded_successfully = false;
+            std::set<std::string> m_print_send_fired_ips;
+            std::string m_last_send_format;
             // DECLARE_EVENT_TABLE()
         };
 

@@ -78,6 +78,7 @@
 #include "Widgets/WebView.hpp"
 #include "DailyTips.hpp"
 #include "LoadOldPresets.hpp"
+#include "ReleaseNote.hpp"
 #include "LoadOldPresetsFromFolder.hpp"
 #include "slic3r/GUI/print_manage/Utils.hpp"
 #ifdef _WIN32
@@ -93,6 +94,7 @@
 #include "CommunicateWithCXCloud.hpp"
 #include "slic3r/Utils/TestHelper.hpp"
 #include "slic3r/GUI/AnalyticsDataUploadManager.hpp"
+#include "slic3r/GUI/print_manage/data/DataCenter.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -605,10 +607,14 @@ MainFrame::MainFrame()
             m_print_enable = get_enable_print_status();
             m_print_btn->Enable(m_print_enable);
             if (m_print_enable) {
-                if (wxGetApp().preset_bundle->use_bbl_network())
-                    wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_PRINT_PLATE));
-                else
-                    wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SEND_GCODE));
+                const DM::Device& current_device = DM::DataCenter::Ins().get_current_device_data();
+                if (current_device.deviceType == 1001) // fluidd 设备
+                {
+                    wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_FLUIDD_PRINT_MACHINE));
+                }else
+                {
+                    wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SEND_TO_LOCAL_NET_PRINTER));
+                }
             }
             evt.Skip();
             return;
@@ -875,30 +881,30 @@ void MainFrame::update_layout()
         m_tabpanel->Bind(wxCUSTOMEVT_NOTEBOOK_SEL_CHANGED, [this](wxCommandEvent& evt)
         {
             if (evt.GetId() == tp3DEditor){
-                AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
-                    AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-                    { AnalyticsDataEventType::ANALYTICS_PREPARE });
+                AnalyticsEventPayload payload;
+                payload.type = AnalyticsDataEventType::ANALYTICS_PREPARE;
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
                 m_plater->update(true);
 
                 if (!preview_only_hint())
                     return;
             }
             else if (evt.GetId() == tpPreview) {
-                AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
-                    AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-                    { AnalyticsDataEventType::ANALYTICS_PREVIEW });
+                AnalyticsEventPayload payload;
+                payload.type = AnalyticsDataEventType::ANALYTICS_PREVIEW;
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
             }
             else if (evt.GetId() == tpDeviceMgr){ 
-                AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
-                    AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-                    { AnalyticsDataEventType::ANALYTICS_DEVICE });
+                AnalyticsEventPayload payload;
+                payload.type = AnalyticsDataEventType::ANALYTICS_DEVICE;
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
                 if (m_printer_mgr_view) {
                     m_printer_mgr_view->on_switch_to_device_page();
                 }
             } else if (evt.GetId() == tpOnlineModel) {
-                AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
-                    AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-                    { AnalyticsDataEventType::ANALYTICS_ONLINE_MODELS });
+                AnalyticsEventPayload payload;
+                payload.type = AnalyticsDataEventType::ANALYTICS_ONLINE_MODELS;
+                AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
                 if (m_webmodellibrary_view) {
                     //click online  models
                     AnalyticsDataUploadManager::uploadSlice822ClickEvent("online_models");
@@ -1120,8 +1126,28 @@ void MainFrame::init_tabpanel() {
         //BBS
         wxWindow* panel = m_tabpanel->GetCurrentPage();
         int sel = m_tabpanel->GetSelection();
+        std::cout<<"select:"<<sel<<std::endl;
         //wxString page_text = m_tabpanel->GetPageText(sel);
         m_last_selected_tab = m_tabpanel->GetSelection();
+        // Keep topbar tabs (BBLTopbar::m_tabCtrol) in sync with the current notebook page.
+        if (m_topbar) {
+            size_t topbar_sel = static_cast<size_t>(sel);
+            if (panel == m_printer_mgr_view)
+                topbar_sel = static_cast<size_t>(tpDeviceMgr);
+            else if (panel == m_webmodellibrary_view)
+            {
+                topbar_sel = static_cast<size_t>(tpOnlineModel);
+                if (!m_webmodellibrary_view->IsInitialized()) {
+                        // 在首次加载模型库前，主动刷新 UA 与 Cookies，避免未授权请求导致首屏 401/403
+                        // m_webmodellibrary_view->UpdateUserAgent();
+                        wxString url = get_cloud_webaddress() + "model-category/3d-print-all";
+                        m_webmodellibrary_view->load_url(url);
+                    }
+            }
+            else if (panel == m_webview)
+                topbar_sel = static_cast<size_t>(tpHome);
+            m_topbar->SetSelection(topbar_sel);
+        }
         if (panel == m_plater) {
             if (sel == tp3DEditor) {
                 if (m_tab_event_enabled)
@@ -1208,7 +1234,7 @@ void MainFrame::init_tabpanel() {
     //m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
     //m_monitor->SetBackgroundColour(*wxWHITE);
     //m_tabpanel->AddPage(m_monitor, _L("Device"), std::string("tab_monitor_active"), std::string("tab_monitor_active"), false);
-
+    /*
     m_printer_view = new PrinterWebView(m_tabpanel);
     Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent &evt) {
         wxString url = evt.GetString();
@@ -1217,7 +1243,7 @@ void MainFrame::init_tabpanel() {
         m_printer_view->load_url(url, key);
     });
     m_printer_view->Hide();
-    
+    */
     m_webmodellibrary_view = new WebModelLibraryView(m_tabpanel);
     m_webmodellibrary_view->SetId(MainFrame::tpOnlineModel);
     m_webmodellibrary_view->Hide();
@@ -1266,10 +1292,10 @@ void MainFrame::show_device(bool bBBLPrinter) {
         //if (m_tabpanel->FindPage(m_monitor) != wxNOT_FOUND)
         //    return;
         // Remove printer view
-        if ((idx = m_tabpanel->FindPage(m_printer_view)) != wxNOT_FOUND) {
-            m_printer_view->Show(false);
-            m_tabpanel->RemovePage(idx);
-        }
+        //if ((idx = m_tabpanel->FindPage(m_printer_view)) != wxNOT_FOUND) {
+        //    m_printer_view->Show(false);
+        //    m_tabpanel->RemovePage(idx);
+        //}
 
         // Create/insert monitor page
         /*if (!m_monitor) {
@@ -1303,8 +1329,8 @@ void MainFrame::show_device(bool bBBLPrinter) {
 #endif // _MSW_DARK_MODE
 
     } else {
-        if (m_tabpanel->FindPage(m_printer_view) != wxNOT_FOUND)
-            return;
+        //if (m_tabpanel->FindPage(m_printer_view) != wxNOT_FOUND)
+        //    return;
 
         //if ((idx = m_tabpanel->FindPage(m_calibration)) != wxNOT_FOUND) {
         //    m_calibration->Show(false);
@@ -1317,7 +1343,7 @@ void MainFrame::show_device(bool bBBLPrinter) {
         /*if ((idx = m_tabpanel->FindPage(m_monitor)) != wxNOT_FOUND) {
             m_monitor->Show(false);
             m_tabpanel->RemovePage(idx);
-        }*/
+        }
         if (m_printer_view == nullptr) {
             m_printer_view = new PrinterWebView(m_tabpanel);
             Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent& evt) {
@@ -1330,6 +1356,7 @@ void MainFrame::show_device(bool bBBLPrinter) {
         m_printer_view->Show(false);
         m_tabpanel->InsertPage(tpMonitor, m_printer_view, _L("Device"), std::string("tab_monitor_active"),
                                std::string("tab_monitor_active"));
+                               */
     }
 }
 
@@ -2511,7 +2538,9 @@ static wxMenu* generate_help_menu(MainFrame* mainframe)
     // Check New Version
     append_menu_item(helpMenu, wxID_ANY, _L("Check for Update"), _L("Check for Update"),
         [](wxCommandEvent&) {
+
             wxGetApp().check_new_version_cx(true, 1);
+
         }, "", nullptr, []() {
             return true;
         });
@@ -2550,6 +2579,10 @@ static wxMenu* generate_help_menu(MainFrame* mainframe)
 #endif
 #if !defined(CUSTOMIZED) || defined(CUSTOM_FEEDBOOK_ENABLED)
     append_menu_item(helpMenu, wxID_ANY, _L("User Feedback"), _L("User Feedback"), [](wxCommandEvent&) {
+        AnalyticsEventPayload payload;
+        payload.type = AnalyticsDataEventType::ANALYTICS_GOTO_SUPPORT;
+        payload.data["entry"] = "menu";
+        AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
         wxLaunchDefaultBrowser(user_feedback_website(), wxBROWSER_NEW_WINDOW);
     });
 #endif
@@ -4065,6 +4098,12 @@ void MainFrame::load_config_file()
     if (dlg.ShowModal() != wxID_OK)
         return;
     dlg.GetPaths(files);
+    
+    // Fire import_preset analytics event when user selects preset files and clicks OK
+    if (!files.empty()) {
+        wxGetApp().plater()->import_preset_event("");
+    }
+    
     std::vector<std::string> cfiles;
     for (auto file : files) {
         cfiles.push_back(into_u8(file));

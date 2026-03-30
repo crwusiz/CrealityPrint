@@ -33,6 +33,7 @@ static int __cdecl g_cp_sized_new_handler_adapter(size_t bytes) noexcept {
 #include <string>
 #include <cstring>
 #include <iostream>
+#include <fstream>
 #include <math.h>
 
 #if defined(__linux__) || defined(__LINUX__)
@@ -94,10 +95,27 @@ using namespace nlohmann;
 #include "BaseException.h"
 #include "CxMiniDump.h"
 #include "libslic3r/UnittestFlow.hpp"
+#include <stdlib.h>  // _set_invalid_parameter_handler
     #ifdef USE_BREAKPAD
     #include "client/windows/handler/exception_handler.h"
     #endif
 #endif
+
+static std::string get_cpu_model_string()
+{
+#ifdef WIN32
+    constexpr DWORD bufsize_ = 500;
+    DWORD           bufsize  = bufsize_ - 1;
+    char            buf[bufsize_] = "";
+    memset(buf, 0, sizeof(buf));
+    const std::string reg_path = "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0";
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, reg_path.c_str(), "ProcessorNameString",
+        RRF_RT_REG_SZ, NULL, &buf, &bufsize) == ERROR_SUCCESS) {
+        return std::string(buf);
+    }
+#endif
+    return std::string();
+}
 
 
 #include "slic3r/GUI/PartPlate.hpp"
@@ -6310,6 +6328,110 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
     return EXCEPTION_CONTINUE_SEARCH;
 }*/
 
+// ---- Enhanced CRT invalid-parameter stack capture ----
+// When CRT detects an invalid parameter (e.g. NULL passed to printf/sprintf),
+// it invokes _invalid_parameter_handler as a plain C callback, NOT an SEH exception.
+// Breakpad's default handler generates a minidump in this callback, but the resulting
+// dump often has an incomplete stack because the callback context doesn't carry proper
+// EXCEPTION_POINTERS for reliable unwinding.
+//
+// This handler runs BEFORE Breakpad: it calls CaptureStackBackTrace (which uses the
+// OS-level .pdata unwind info and is very reliable on x64) to capture the full call
+// chain while all caller frames are still intact, writes module+RVA for every frame
+// to a log file, then chains to Breakpad's handler so the dump is still generated.
+//
+// To resolve addresses offline:
+//   symbol = PDB_lookup(module_name, RVA)
+//   e.g.  CrealityPrint_Slicer.DLL + 0x00123456  ->  look up RVA 0x00123456 in PDB
+#if defined(WIN32) && defined(USE_BREAKPAD)
+static _invalid_parameter_handler g_prev_invalid_param_handler = nullptr;
+static volatile LONG              g_in_invalid_param_handler   = 0;
+
+static void __cdecl CrealityInvalidParameterHandler(
+    const wchar_t* expression,
+    const wchar_t* function,
+    const wchar_t* file,
+    unsigned int   line,
+    uintptr_t      pReserved)
+{
+    // Re-entrancy guard: if we somehow trigger another invalid-parameter inside
+    // this handler, skip straight to Breakpad to avoid infinite recursion.
+    if (InterlockedCompareExchange(&g_in_invalid_param_handler, 1, 0) != 0) {
+        if (g_prev_invalid_param_handler)
+            g_prev_invalid_param_handler(expression, function, file, line, pReserved);
+        return;
+    }
+
+    // 1. Capture full stack backtrace -- all caller frames are still intact at this point.
+    enum { kMaxFrames = 128 };
+    void*  stackFrames[kMaxFrames];
+    USHORT frameCount = CaptureStackBackTrace(0, kMaxFrames, stackFrames, NULL);
+
+    // 2. Write to a log file in temp dir, using only Win32 API to avoid CRT re-entrance.
+    wchar_t logPath[MAX_PATH] = {0};
+    GetTempPathW(MAX_PATH, logPath);
+    lstrcatW(logPath, L"crealityprint_invalid_param_stack.log");
+
+    HANDLE hFile = CreateFileW(logPath, FILE_APPEND_DATA,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        char  buf[512];
+        DWORD written = 0;
+        int   len     = 0;
+
+        // Header with timestamp and thread ID
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        len = wsprintfA(buf,
+            "\r\n=== InvalidParameter [%04d-%02d-%02d %02d:%02d:%02d] TID=%lu ===\r\n",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+            GetCurrentThreadId());
+        WriteFile(hFile, buf, (DWORD)len, &written, NULL);
+
+        len = wsprintfA(buf, "Frames: %d\r\n", (int)frameCount);
+        WriteFile(hFile, buf, (DWORD)len, &written, NULL);
+
+        // Each frame: absolute address, module short name, RVA
+        for (USHORT i = 0; i < frameCount; ++i) {
+            HMODULE hMod = NULL;
+            char    modPath[MAX_PATH];
+            modPath[0] = '\0';
+
+            if (GetModuleHandleExA(
+                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    (LPCSTR)stackFrames[i], &hMod) && hMod) {
+                GetModuleFileNameA(hMod, modPath, MAX_PATH);
+            }
+
+            // Find short module name (after last path separator)
+            const char* shortName = modPath;
+            for (const char* p = modPath; *p != '\0'; ++p) {
+                if (*p == '\\' || *p == '/')
+                    shortName = p + 1;
+            }
+            if (*shortName == '\0')
+                shortName = "<unknown>";
+
+            ULONG_PTR rva = hMod ? ((ULONG_PTR)stackFrames[i] - (ULONG_PTR)hMod) : 0;
+            len = wsprintfA(buf, "  [%02d] %p  %s + %p\r\n",
+                           (int)i, stackFrames[i], shortName, (void*)rva);
+            WriteFile(hFile, buf, (DWORD)len, &written, NULL);
+        }
+
+        CloseHandle(hFile);
+    }
+
+    InterlockedExchange(&g_in_invalid_param_handler, 0);
+
+    // 3. Delegate to Breakpad's original handler -- dump is generated as usual.
+    if (g_prev_invalid_param_handler) {
+        g_prev_invalid_param_handler(expression, function, file, line, pReserved);
+    }
+}
+#endif // defined(WIN32) && defined(USE_BREAKPAD)
+
 #if defined(_MSC_VER) || defined(__MINGW32__)
 extern "C" {
     __declspec(dllexport) int __stdcall crealityprint_main(int argc, wchar_t **argv)
@@ -6374,6 +6496,15 @@ extern "C" {
                 if (boost::filesystem::exists(oldPath))
                 {
                     boost::filesystem::rename(oldPath, logPath);
+#ifdef _WIN32
+                    std::string cpu_model = get_cpu_model_string();
+                    if (!cpu_model.empty()) {
+                        std::ofstream ofs(logPath.string(), std::ios::binary | std::ios::app);
+                        if (ofs.is_open()) {
+                            ofs << "\nCPU_MODEL: " << cpu_model << "\n";
+                        }
+                    }
+#endif
                     wxString command = "%s.exe \"minidump://file=%s\"";
                     command = command.Format(command, SLIC3R_PROCESS_NAME, logPath.wstring().c_str());
                     wxExecute(command, wxEXEC_ASYNC);
@@ -6395,6 +6526,9 @@ extern "C" {
             google_breakpad::ExceptionHandler* pCrashHandel =
                 new google_breakpad::ExceptionHandler(tempPath.wstring(), NULL, dmpCallBack, NULL,
                                                       google_breakpad::ExceptionHandler::HANDLER_ALL, NULL);
+            // Enhance CRT invalid-parameter crashes with full stack capture.
+            // Chains to Breakpad's handler afterwards so dump is still generated.
+            g_prev_invalid_param_handler = _set_invalid_parameter_handler(CrealityInvalidParameterHandler);
              #endif
         }
         

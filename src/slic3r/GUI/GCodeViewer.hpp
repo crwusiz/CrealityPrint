@@ -7,6 +7,8 @@
 #include "IMSlider.hpp"
 #include "GLModel.hpp"
 #include "I18N.hpp"
+#include "HybridIndexBuffer.hpp"
+#include "HybridVertexBuffer.hpp"
 
 #include <boost/iostreams/device/mapped_file.hpp>
 
@@ -14,6 +16,9 @@
 #include <float.h>
 #include <set>
 #include <unordered_set>
+
+#define ENABLE_VECTOR_HYBRID_BACKEND   1
+
 
 namespace Slic3r {
 
@@ -41,9 +46,13 @@ static bool role_been_filtered_in_lite_mode(ExtrusionRole role)
 class GCodeViewer
 {
     using IBufferType = unsigned short;
-    using VertexBuffer = std::vector<float>;
+    using VertexBuffer = HybridVertexVector;  //replace using VertexBuffer = std::vector<float>;
     using MultiVertexBuffer = std::vector<VertexBuffer>;
-    using IndexBuffer = std::vector<IBufferType>;
+#if ENABLE_VECTOR_HYBRID_BACKEND
+	using IndexBuffer = HybridIndexBuffer;  // replace using IndexBuffer = std::vector<IBufferType>;
+#else
+	using IndexBuffer = std::vector<IBufferType>;
+#endif
     using MultiIndexBuffer = std::vector<IndexBuffer>;
     using InstanceBuffer = std::vector<float>;
     using InstanceIdBuffer = std::vector<size_t>;
@@ -474,6 +483,7 @@ public:
         LayerTime,
         LayerTimeLog,
         Acceleration,
+        Custom, // Creality:for appearance shortage
         Count
     };
 
@@ -691,7 +701,7 @@ public:
             m_valid          = false;
             m_dynamic_stride = 0;
             m_layers_z_range.fill(0);
-            m_layers_z_offset.clear();
+            m_layers_z_offset = std::vector<double>();
         }
 
         bool check_valid(const int dynamic_stride, const std::array<unsigned int, 2>& layers_z_range)
@@ -717,6 +727,8 @@ public:
 
     //BBS
     ConflictResultOpt m_conflict_result;
+    ToolpathOutsideResultOpt m_toolpath_outside_result;
+
     bool m_showBed{ true }, m_showMark{ true }, m_showColor{true}, m_bLoaded{true};
 private:
     std::vector<int> m_plater_extruder;
@@ -769,6 +781,13 @@ private:
     EViewType m_view_type{ EViewType::FeatureType };
     std::vector<EMoveType> options_items;
 
+    // Creality:for appearance shortage
+    // Cached "interest region" mask used by EViewType::Custom.
+    // Indexed by ssid (end vertex index). Value = 0 for normal segments,
+    // non-zero for segments belonging to an interest object.
+    mutable unsigned int               m_custom_interest_cache_result_id{ 0 };
+    mutable std::vector<unsigned char> m_custom_interest_by_ssid;
+
     bool m_legend_enabled{ true };
     float m_legend_height;
     PrintEstimatedStatistics m_print_statistics;
@@ -784,7 +803,8 @@ private:
     FilterLayerResult m_filter_layer_result;
 
     bool m_contained_in_bed{ true };
-mutable bool m_no_render_path { false };
+ 
+    mutable bool m_no_render_path { false };
     bool m_is_dark = false;
     bool m_is_lite_mode {false};
     bool m_is_belt {false};
@@ -793,6 +813,8 @@ mutable bool m_no_render_path { false };
 	float m_stride_factor {12.50f};
     int   m_filter_stride {0};
     std::set<int> m_top_surface_layer;
+
+	bool m_is_mem_optim;
 
 public:
     GCodeViewer();
@@ -879,6 +901,7 @@ public:
     void update_marker_curr_move();
 
     bool is_contained_in_bed() const { return m_contained_in_bed; }
+ 
     //BBS: add only gcode mode
     bool is_only_gcode_in_preview() const { return m_only_gcode_in_preview; }
 
@@ -926,6 +949,8 @@ private:
     //BBS: always load shell at preview
     //void load_shells(const Print& print);
     void refresh_render_paths(bool keep_sequential_current_first, bool keep_sequential_current_last) const;
+    // Creality:for appearance shortage
+    void update_custom_interest_regions() const;
     void render_toolpaths();
     void render_shells(int canvas_width, int canvas_height);
 
@@ -953,6 +978,10 @@ private:
     int get_layer_index(const Path& path) const;
 
     const std::vector<double>& get_filtered_layers_z_offset(const int dynamic_stride);
+
+	Vec3f encode_position(const Vec3f& position);
+	bool should_enable_memory_optimize(const GCodeProcessorResult& gcode_result);
+
 };
 
 } // namespace GUI

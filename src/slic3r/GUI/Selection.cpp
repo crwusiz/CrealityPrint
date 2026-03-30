@@ -796,11 +796,10 @@ bool Selection::contains_any_volume(const std::vector<unsigned int>& volume_idxs
 
 bool Selection::contains_sinking_volumes(bool ignore_modifiers) const
 {
-    for (const GLVolume* v : *m_volumes) {
-        if (!ignore_modifiers || !v->is_modifier) {
-            if (v->is_sinking())
-                return true;
-        }
+    for (unsigned int idx : m_list) {
+        const GLVolume* v = (*m_volumes)[idx];
+        if ((!ignore_modifiers || !v->is_modifier) && v->is_sinking())
+            return true;
     }
     return false;
 }

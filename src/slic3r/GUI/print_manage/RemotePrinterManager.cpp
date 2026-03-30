@@ -28,8 +28,7 @@ RemotePrinterManager::RemotePrinterManager():stop_flag(false)
     m_pKlipper4408Interface = new Klipper4408Interface();
     m_pKlipperCXInterface = new KlipperCXInterface();
 
-    auto	t = std::thread(&RemotePrinterManager::uploadThread, this);
-	t.detach();
+    m_uploadThread = std::thread(&RemotePrinterManager::uploadThread, this);
     for (int i = 0; i < 3; ++i) {
             m_multUploadThreads.emplace_back([this] { workerThread(); });
         }
@@ -45,7 +44,7 @@ void RemotePrinterManager::workerThread()
                     return stop_flag || !tasks.empty();
                 });
                 
-                if (stop_flag && tasks.empty()) {
+                if (stop_flag) {
                     return;
                 }
                 
@@ -58,16 +57,30 @@ void RemotePrinterManager::workerThread()
 }
 RemotePrinterManager::~RemotePrinterManager()
 {
-    m_bExit = true;
-    stop_flag = true;
+    m_bExit.store(true, std::memory_order_relaxed);
+    stop_flag.store(true, std::memory_order_relaxed);
+
+    {
+        std::lock_guard<std::mutex> lock(m_mtxUpload);
+        m_uploadTasks.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        std::queue<std::function<void()>> empty;
+        tasks.swap(empty);
+    }
+
     m_cvUpload.notify_all();
     condition.notify_all();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    for (int i = 0; i < 3; ++i) {
-            if (m_multUploadThreads[i].joinable()) {
-                m_multUploadThreads[i].join();
-            }
-     }
+
+    if (m_uploadThread.joinable()) {
+        m_uploadThread.join();
+    }
+    for (auto& t : m_multUploadThreads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
 //     delete m_pLanPrinterInterface;
 //     delete m_pOctoPrinterInterface;
     delete m_pKlipperInterface;
@@ -77,11 +90,12 @@ RemotePrinterManager::~RemotePrinterManager()
 
 void RemotePrinterManager::uploadThread() 
 {
-    while (!m_bExit) {
+    while (!m_bExit.load(std::memory_order_relaxed)) {
         std::unique_lock<std::mutex> lock(m_mtxUpload);
-        m_cvUpload.wait(lock, [this] { return !m_uploadTasks.empty() || m_bExit; });
+        m_cvUpload.wait(lock, [this] { return !m_uploadTasks.empty() || m_bExit.load(std::memory_order_relaxed); });
 
-        if (m_bExit) break;
+        if (m_bExit.load(std::memory_order_relaxed))
+            break;
 
         auto task = std::move(m_uploadTasks.front());
         m_uploadTasks.pop_front();
@@ -100,13 +114,24 @@ void RemotePrinterManager::uploadThread()
 
 void RemotePrinterManager::pushUploadTasks(const std::string& ipAddress, const std::string& fileName, const std::string& filePath, std::function<void(std::string, float,double)> progressCallback, std::function<void(std::string, int)> uploadStatusCallback, std::function<void(std::string, std::string)> onCompleteCallback) 
 {
+    if (m_bExit.load(std::memory_order_relaxed))
+        return;
+
     std::lock_guard<std::mutex> lock(m_mtxUpload);
+    if (m_bExit.load(std::memory_order_relaxed))
+        return;
     m_uploadTasks.emplace_back(ipAddress, fileName, filePath, progressCallback, uploadStatusCallback, onCompleteCallback);
     m_cvUpload.notify_one();
 }
 void RemotePrinterManager::addDownloadTask(const std::function<void()>& task) {
+        if (stop_flag.load(std::memory_order_relaxed)) {
+            return;
+        }
         {
             std::unique_lock<std::mutex> lock(queue_mutex);
+            if (stop_flag.load(std::memory_order_relaxed)) {
+                return;
+            }
             tasks.push(task);
         }
         condition.notify_one();
@@ -185,12 +210,9 @@ void RemotePrinterManager::pushFile(const std::string& ipAddress, const std::str
     m_lastUploadMap[ipAddress]   = {fileName, filePath, progressCallback, uploadStatusCallback, onCompleteCallback};
     RemotePrinerType printerType = determinePrinterType(ipAddress);
 
-    bool uploadCompleted  = false;
-    auto lastProgressTime = std::chrono::steady_clock::now();
     auto sendFile = [&](auto* printerInterface, auto&&... args) {
         std::future<void> future = printerInterface->sendFileToDevice(std::forward<decltype(args)>(args)...,
-            [=, &lastProgressTime](float progress, double speed) {
-                lastProgressTime = std::chrono::steady_clock::now();
+            [=](float progress, double speed) {
                 if (progressCallback) {
                     progressCallback(ipAddress, progress,speed);
                 }
@@ -200,9 +222,7 @@ void RemotePrinterManager::pushFile(const std::string& ipAddress, const std::str
                     uploadStatusCallback(ipAddress, statusCode);
                 }
             },
-            [=, &uploadCompleted](std::string body) {
-                uploadCompleted = true;
-                m_retryCountMap.erase(ipAddress);
+            [=](std::string body) {
                 if(onCompleteCallback)onCompleteCallback(ipAddress, body);
             }
         );
@@ -243,10 +263,39 @@ void RemotePrinterManager::pushFile(const std::string& ipAddress, const std::str
             break;
         }
 #else
+        auto shutdown_wait_start = std::chrono::steady_clock::time_point{};
         while (true) {
             auto status = future.wait_for(std::chrono::milliseconds(100));
             if (status == std::future_status::ready)
                 break;
+
+            if (!m_bExit.load(std::memory_order_relaxed))
+                continue;
+
+            if (shutdown_wait_start == std::chrono::steady_clock::time_point{}) {
+                shutdown_wait_start = std::chrono::steady_clock::now();
+                switch (printerType) {
+                case RemotePrinerType::REMOTE_PRINTER_TYPE_KLIPPER4408:
+                    m_pKlipper4408Interface->cancelSendFileToDevice(ipAddress);
+                    break;
+                case RemotePrinerType::REMOTE_PRINTER_TYPE_KLIPPER:
+                    m_pKlipperInterface->cancelSendFileToDevice();
+                    break;
+                case RemotePrinerType::REMOTE_PRINTER_TYPE_CX:
+                    m_pKlipperCXInterface->cancelSendFileToDevice();
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            const auto waited_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - shutdown_wait_start)
+                                       .count();
+            if (waited_ms >= 5000) {
+                BOOST_LOG_TRIVIAL(warning) << "Upload thread forced to stop waiting during shutdown, ip: " << ipAddress;
+                break;
+            }
         }
 #endif
 

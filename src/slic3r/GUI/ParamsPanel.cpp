@@ -1407,6 +1407,11 @@ void ParamsPanel::OnToggled(wxCommandEvent& event)
 
     Slic3r::GUI::wxGetApp().save_mode(mode_id);
 
+    if (m_mode_region && m_mode_region->GetValue() && m_current_tab) {
+        wxWindowUpdateLocker locker(GetParent());
+        set_active_tab(nullptr);
+    }
+
     m_page_view->Update();
     m_page_view->Refresh();
 }

@@ -182,6 +182,8 @@ CxSentToPrinterDialog::~CxSentToPrinterDialog()
     UnregisterHandler("get_machine_list");
     UnregisterHandler("get_webrtc_local_param");
     UnregisterHandler("get_region");
+    UnregisterHandler("save_user_operation_state");
+    UnregisterHandler("request_user_operation_state");
 
 }
 void CxSentToPrinterDialog::OnCloseWindow(wxCloseEvent& event)
@@ -230,6 +232,40 @@ void CxSentToPrinterDialog::bind_events()
     RegisterHandler("send_start_print_cmd", [this](const nlohmann::json& json_data) {
         this->handle_send_start_print_cmd(json_data);
     });
+    /*
+    // Handle new device_detail_print command (same as DeviceMgrRoutes)
+    RegisterHandler("send_page_print", [this](const nlohmann::json& json_data) {
+        // Send ANALYTICS_PRINT_BEGIN event directly (no forwarding)
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": RAW json_data - " << json_data.dump();
+        boost::log::core::get()->flush();
+
+        fire_print_begin_event(json_data);
+    });
+
+    // Handle new send_page_send_file command for ANALYTICS_PRINT_SEND event
+    RegisterHandler("send_page_send_file", [this](const nlohmann::json& json_data) {
+        // Extract error_code from data field
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": RAW json_data - " << json_data.dump();
+        boost::log::core::get()->flush();
+        std::string error_code;
+        if (json_data.contains("data")) {
+            nlohmann::json data_field;
+            if (json_data["data"].is_string()) {
+                try {
+                    data_field = nlohmann::json::parse(json_data["data"].get<std::string>());
+                } catch (...) {
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to parse data string";
+                }
+            } else {
+                data_field = json_data["data"];
+            }
+            error_code = data_field.value("error_code", "");
+        }
+        
+        // Send ANALYTICS_PRINT_SEND event directly
+        fire_print_send_event(json_data, error_code);
+    });
+    */
     RegisterHandler("start_heartbeat_cmd", [this](const nlohmann::json& json_data) {
         this->handle_start_heartbeat_cmd(json_data);
     });
@@ -238,6 +274,14 @@ void CxSentToPrinterDialog::bind_events()
     });
 
     RegisterHandler("set_error_cmd", [this](const nlohmann::json& json_data) { this->handle_set_error_cmd(json_data); });
+
+    RegisterHandler("save_user_operation_state", [this](const nlohmann::json& json_data) {
+        this->handle_save_user_operation_state(json_data);
+    });
+
+    RegisterHandler("request_user_operation_state", [this](const nlohmann::json& json_data) {
+        this->handle_request_user_operation_state(json_data);
+    });
 
     RegisterHandler("request_update_plate_thumbnail", [this](const nlohmann::json& json_data) {
         this->handle_request_update_plate_thumbnail(json_data);
@@ -436,6 +480,9 @@ void CxSentToPrinterDialog::handle_send_start_print_cmd(const nlohmann::json& js
     commandJson["data"]    = json_data["data"].dump(-1, ' ', true);
 
     wxGetApp().mainframe->get_printer_mgr_view()->ExecuteScriptCommand(RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
+
+    // Send print_begin analytics event (only success path reaches here — synchronous, no cancel/failure)
+    fire_print_begin_event(json_data);
 }
 void CxSentToPrinterDialog::handle_set_error_cmd(const nlohmann::json& json_data)
 {
@@ -520,7 +567,17 @@ void CxSentToPrinterDialog::handle_request_update_plate_thumbnail(const nlohmann
 void CxSentToPrinterDialog::handle_get_webrtc_local_param(const nlohmann::json& json_data){
     std::string url = json_data["url"].get<std::string>();
     std::string  sdp = json_data["sdp"].get<std::string>();
-    Slic3r::Http http = Slic3r::Http::post(url);
+    bool videoEncryption = false;
+    auto videoEncryptionIt = json_data.find("videoEncryption");
+    if (videoEncryptionIt != json_data.end() && videoEncryptionIt->is_boolean()) {
+        videoEncryption = videoEncryptionIt->get<bool>();
+    }
+
+    std::string videoToken;
+    auto tokenIt = json_data.find("token");
+    if (tokenIt != json_data.end() && tokenIt->is_string()) {
+        videoToken = tokenIt->get<std::string>();
+    }
 
     std::string localip = "";
     try {
@@ -568,44 +625,68 @@ void CxSentToPrinterDialog::handle_get_webrtc_local_param(const nlohmann::json& 
     nlohmann::json j;
     j["type"] = "offer";
     j["sdp"] = sdp;
+    if (!videoToken.empty()) {
+        j["token"] = videoToken;
+    }
 
     std::string d = j.dump();
     std::string e = cereal::base64::encode((unsigned char const*)d.c_str(), d.length());
 
-    http.header("Content-Type", "application/json")
-        .set_post_body(e)
-        .on_complete([&](std::string body, unsigned status) {
-        if (status != 200) {
-            return;
-        }
+    if (!videoEncryption && url.rfind("https://", 0) == 0) {
+        videoEncryption = true;
+    }
 
-        nlohmann::json data;
-        data["body"] = body;
-        data["ret"] = true;
+    std::string responseBody;
+    std::string responseError;
+    unsigned responseStatus = 0;
 
-        nlohmann::json commandJson;
-        commandJson["command"] = "get_webrtc_local_param";
-        commandJson["data"] = data;
-
-        // AppUtils::PostMsg(browse, wxString::Format("window.handleStudioCmd('%s');", commandJson.dump(-1, ' ', true)).ToStdString());
-        wxString strJS = wxString::Format("window.handleStudioCmd('%s');", commandJson.dump(-1, ' ', true));
-        run_script(strJS.ToStdString());
-
-        })
-        .on_error([&](std::string body, std::string error, unsigned status) {
-                nlohmann::json data;
-                data["body"] = body;
-                data["ret"] = false;
-
-                nlohmann::json commandJson;
-                commandJson["command"] = "get_webrtc_local_param";
-                commandJson["data"] = data;
-                // AppUtils::PostMsg(browse,
-                //     wxString::Format("window.handleStudioCmd('%s');", commandJson.dump(-1, ' ', true)).ToStdString());
-                wxString strJS = wxString::Format("window.handleStudioCmd('%s');", commandJson.dump(-1, ' ', true));
-                run_script(strJS.ToStdString());
-            })
+    if (videoEncryption) {
+        try {
+            Http::post(url)
+                .timeout_connect(5)
+                .timeout_max(15)
+                .header("Content-Type", "plain/text")
+                .set_post_body(e)
+                .ca_file(Slic3r::resources_dir() + "/cert/ca.crt")
+                .ssl_verify_peer(true)
+                .ssl_verify_host(false)
+                .on_complete([&](std::string body, unsigned http_status) {
+                    responseBody = body;
+                    responseStatus = http_status;
+                })
+                .on_error([&](std::string body, std::string error, unsigned http_status) {
+                    responseBody = body;
+                    responseError = error;
+                    responseStatus = http_status;
+                })
                 .perform_sync();
+        } catch (const std::exception& ex) {
+            responseError = ex.what();
+        }
+    }
+
+    nlohmann::json out_data;
+    if (videoEncryption) {
+        if (!responseBody.empty()) {
+            out_data["sdp"] = responseBody;
+        } else {
+            out_data["status"] = responseStatus;
+            out_data["error"] = responseError;
+        }
+    } else {
+        out_data["sdp"] = e;
+    }
+    out_data["url"] = url;
+    out_data["videoEncryption"] = videoEncryption;
+    out_data["status"] = responseStatus;
+
+    nlohmann::json commandJson;
+    commandJson["command"] = "get_webrtc_local_param";
+    commandJson["data"] = out_data;
+
+    auto encoded = RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true));
+    wxString strJS = wxString::Format("window.handleStudioCmd('%s');", encoded);
+    run_script(strJS.ToStdString());
 
 }
 
@@ -727,6 +808,11 @@ void CxSentToPrinterDialog::handle_receive_color_match_info(const nlohmann::json
 
 void CxSentToPrinterDialog::handle_send_3mf(const nlohmann::json& json_data)
 {
+    // Fire click_send_single analytics event when user clicks "Send Only" button (3MF path)
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_CLICK_SEND_SINGLE;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+
     if(!m_plater)
         return;
 
@@ -754,17 +840,24 @@ void CxSentToPrinterDialog::handle_send_3mf(const nlohmann::json& json_data)
     if (tmp_3mf_path.empty())
         return;
 
+    m_last_send_format = "3MF";
+    m_print_send_fired = false;
+
     {
         // upload analytics data here
         auto device = DM::DataCenter::Ins().get_printer_data(ipAddress.ToStdString());
-        check_upload_analytics_data(device.mac);
+        if (device.valid && !device.mac.empty()) {
+            check_upload_analytics_data(device.mac);
+        } else {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": Invalid device data for IP=" << ipAddress.ToStdString();
+        }
     }
     
 
     m_uploadingIp = ipAddress;
     RemotePrint::RemotePrinterManager::getInstance().pushUploadTasks(
         ipAddress.ToStdString(), upload3mfName, tmp_3mf_path,
-        [this](std::string ip, float progress,double speed) {
+        [this, json_data](std::string ip, float progress,double speed) {
             nlohmann::json top_level_json;
             top_level_json["printer_ip"] = ip;
             top_level_json["progress"]   = progress;
@@ -778,30 +871,24 @@ void CxSentToPrinterDialog::handle_send_3mf(const nlohmann::json& json_data)
 
             wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
 
-            wxTheApp->CallAfter([this, strJS]() {
-                try
-                {
-                    if (!m_browser->IsBusy()) {
-                        run_script(strJS.ToStdString());
-                    }
-                }
-                catch (...)
-                {
-                }
-            });
+            post_script(strJS);
         },
-        [this](std::string ip, int statusCode) {
+        [this, json_data](std::string ip, int statusCode) {
             nlohmann::json top_level_json;
             top_level_json["printer_ip"]  = ip;
             top_level_json["status_code"] = statusCode;
-            if(m_isClosed)
-            {
+
+            // Fire print_send event for non-success cases (cancel/close or network failure)
+            // Success case (statusCode==0) is handled in completion callback with richer error info
+            if (m_isClosed) {
+                fire_print_send_event(json_data, "Cancel");
                 m_uploadingIp = wxEmptyString;
-                wxTheApp->CallAfter([this]() {
-                        Close(false);
-                    });
-                    return;
-                }
+                post_close();
+                return;
+            } else if (statusCode != 0) {
+                fire_print_send_event(json_data, std::to_string(statusCode));
+            }
+
             std::string json_str = top_level_json.dump();
 
             // create command to send to the webview
@@ -811,19 +898,9 @@ void CxSentToPrinterDialog::handle_send_3mf(const nlohmann::json& json_data)
 
             wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
             
-            wxTheApp->CallAfter([this, strJS]() {
-                try
-                {
-                    if (!m_browser->IsBusy()) {
-                        run_script(strJS.ToStdString());
-                    }
-                }
-                catch (...)
-                {
-                }
-            });
+            post_script(strJS);
             m_uploadingIp = wxEmptyString;
-        }, [this,tmp_3mf_path](std::string ip, std::string body) {
+        }, [this,tmp_3mf_path, json_data](std::string ip, std::string body) {
 
             int statusCode = 1;
             std::string status_msg = "";
@@ -835,14 +912,20 @@ void CxSentToPrinterDialog::handle_send_3mf(const nlohmann::json& json_data)
                 status_msg = jBody["message"];
             }
 
+            // Send print_send analytics event
+            {
+                std::string err = (statusCode == 0) ? "0" : (status_msg.empty() ? std::to_string(statusCode) : status_msg);
+                fire_print_send_event(json_data, err);
+            }
+
             nlohmann::json commandJson;
             commandJson["command"] = "notify_send_complete";
             wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
 
-            wxTheApp->CallAfter([this, strJS,tmp_3mf_path, statusCode, status_msg]() {
+            CallAfter([this, strJS,tmp_3mf_path, statusCode, status_msg]() {
                 try
                     {
-                        if (!m_browser->IsBusy()) {
+                        if (m_browser != nullptr && !m_browser->IsBeingDeleted() && !m_browser->IsBusy()) {
                             run_script(strJS.ToStdString());
                         }
 
@@ -878,6 +961,9 @@ void CxSentToPrinterDialog::handle_cancel_send(const nlohmann::json& json_data) 
     int      plateIndex = json_data["plateIndex"];
     wxString ipAddress  = json_data["ipAddress"];
     RemotePrint::RemotePrinterManager::getInstance().cancelUpload(ipAddress.ToStdString());
+
+    // Send print_send analytics event for cancel case
+    fire_print_send_event(json_data, "Cancel");
 }
 void CxSentToPrinterDialog::handle_start_heartbeat_cmd(const nlohmann::json& json_data) {
     // create command to send to the webview
@@ -906,11 +992,20 @@ void CxSentToPrinterDialog::handle_register_complete(const nlohmann::json& json_
 
 void CxSentToPrinterDialog::handle_send_gcode(const nlohmann::json& json_data) 
 {
+    // Fire click_send_single analytics event when user clicks "Send Only" button
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_CLICK_SEND_SINGLE;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+
     int      plateIndex = json_data["plateIndex"];
     wxString ipAddress  = json_data["ipAddress"];
     std::string uploadName = json_data["uploadName"];  // convert from wxString to std::string would cause exception
     bool oldPrinter = json_data["oldPrinter"];
     int  moonrakerPort = json_data["moonrakerPort"];
+    std::string uploadTaskId;
+    if (json_data.contains("uploadTaskId") && json_data["uploadTaskId"].is_string())
+        uploadTaskId = json_data["uploadTaskId"].get<std::string>();
+    const bool is_wan_upload = !oldPrinter && ipAddress.ToStdString().find('.') == std::string::npos;
 
     if (oldPrinter)
     {
@@ -930,12 +1025,25 @@ void CxSentToPrinterDialog::handle_send_gcode(const nlohmann::json& json_data)
     PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plateIndex);
     if (plate) {
 
+        m_last_send_format = "GCode";
+        m_print_send_fired = false;
+
         {
             // upload analytics data here
             auto device = DM::DataCenter::Ins().get_printer_data(ipAddress.ToStdString());
+            if (!device.valid || device.mac.empty()) {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": Invalid device data for IP=" << ipAddress.ToStdString();
+                return;
+            }
             AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_CLICK_START_PRINT_CMD,
                                                                             {AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS,
                                                                              AnalyticsDataEventType::ANALYTICS_OBJECT_PRINT_PARAMS}, plateIndex,device.mac);
+            AnalyticsEventPayload payload1;
+            payload1.type = AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS;
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload1, plateIndex, device.mac);
+            AnalyticsEventPayload payload2;
+            payload2.type = AnalyticsDataEventType::ANALYTICS_OBJECT_PRINT_PARAMS;
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload2, plateIndex, device.mac);
         }
 
         std::string gcodeFilePath;
@@ -958,12 +1066,14 @@ void CxSentToPrinterDialog::handle_send_gcode(const nlohmann::json& json_data)
         m_uploadingIp = ipAddress;
         RemotePrint::RemotePrinterManager::getInstance().pushUploadTasks(
             ipAddress.ToStdString(), uploadName, gcodeFilePath,
-            [this](std::string ip, float progress,double speed) {
+            [this, uploadTaskId, is_wan_upload, json_data](std::string ip, float progress,double speed) {
 
                 nlohmann::json top_level_json;
                 top_level_json["printer_ip"] = ip;
                 top_level_json["progress"]  = progress;
                 top_level_json["speed"]  = round(speed);
+                if (is_wan_upload && !uploadTaskId.empty())
+                    top_level_json["uploadTaskId"] = uploadTaskId;
 
                 std::string json_str = top_level_json.dump();
 
@@ -974,29 +1084,24 @@ void CxSentToPrinterDialog::handle_send_gcode(const nlohmann::json& json_data)
 
                 wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
 
-                wxTheApp->CallAfter([this, strJS]() {
-                    try
-                    {
-                        if (!m_browser->IsBusy()) {
-                            run_script(strJS.ToStdString());
-                        }
-                    }
-                    catch (...)
-                    {
-                    }
-                });
+                post_script(strJS);
             },
-            [this](std::string ip, int statusCode) {
-                if(m_isClosed)
-                {
+            [this, uploadTaskId, is_wan_upload, json_data](std::string ip, int statusCode) {
+                // Fire print_send event for non-success cases (cancel/close or network failure)
+                // Success case (statusCode==0) is handled in completion callback with richer error info
+                if (m_isClosed) {
+                    fire_print_send_event(json_data, "Cancel");
                     m_uploadingIp = wxEmptyString;
-                    wxTheApp->CallAfter([this]() {
-                        Close(false);
-                    });
+                    post_close();
                     return;
+                } else if (statusCode != 0) {
+                    fire_print_send_event(json_data, std::to_string(statusCode));
                 }
+
                 nlohmann::json top_level_json;
                 top_level_json["status_code"]  = statusCode;
+                if (is_wan_upload && !uploadTaskId.empty())
+                    top_level_json["uploadTaskId"] = uploadTaskId;
                 std::string json_str = top_level_json.dump();
                 
                 nlohmann::json commandJson;
@@ -1004,20 +1109,10 @@ void CxSentToPrinterDialog::handle_send_gcode(const nlohmann::json& json_data)
                 commandJson["data"] = RemotePrint::Utils::url_encode(json_str);
                 wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
                 
-                wxTheApp->CallAfter([this, strJS]() {
-                    try
-                    {
-                        if (!m_browser->IsBusy()) {
-                            run_script(strJS.ToStdString());
-                        }
-                    }
-                    catch (...)
-                    {
-                    }
-                });
+                post_script(strJS);
                 m_uploadingIp = wxEmptyString;
             },
-            [this, gcodeFilePath](std::string ip, std::string body){
+            [this, gcodeFilePath, uploadTaskId, json_data](std::string ip, std::string body){
                 int deviceType = 0;//local device
                 int statusCode = 1;
                 std::string status_msg = "";
@@ -1027,6 +1122,12 @@ void CxSentToPrinterDialog::handle_send_gcode(const nlohmann::json& json_data)
                 }
                 if(jBody.contains("message") && jBody["message"].is_string()) {
                     status_msg = jBody["message"];
+                }
+
+                // Send print_send analytics event
+                {
+                    std::string err = (statusCode == 0) ? "0" : (status_msg.empty() ? std::to_string(statusCode) : status_msg);
+                    fire_print_send_event(json_data, err);
                 }
 
                 nlohmann::json top_level_json;
@@ -1041,6 +1142,8 @@ void CxSentToPrinterDialog::handle_send_gcode(const nlohmann::json& json_data)
                     if(jBody["result"]["list"][0].contains("name"))top_level_json["name"]=jBody["result"]["list"][0]["name"];
                     if(jBody["result"]["list"][0].contains("type"))top_level_json["type"]=jBody["result"]["list"][0]["type"];
                     if(jBody["result"]["list"][0].contains("filekey"))top_level_json["filekey"]=jBody["result"]["list"][0]["filekey"];
+                    if (!uploadTaskId.empty())
+                        top_level_json["uploadTaskId"] = uploadTaskId;
                 }
                 
 
@@ -1054,10 +1157,10 @@ void CxSentToPrinterDialog::handle_send_gcode(const nlohmann::json& json_data)
 
                 wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
 
-                wxTheApp->CallAfter([this, strJS, statusCode, status_msg, gcodeFilePath]() {
+                CallAfter([this, strJS, statusCode, status_msg, gcodeFilePath]() {
                     try
                     {
-                        if (!m_browser->IsBusy()) {
+                        if (m_browser != nullptr && !m_browser->IsBeingDeleted() && !m_browser->IsBusy()) {
                             run_script(strJS.ToStdString());
                         }
 
@@ -1384,8 +1487,100 @@ void CxSentToPrinterDialog::check_upload_analytics_data(const std::string& devic
             AnalyticsDataUploadManager::getInstance().triggerUploadTasks(AnalyticsUploadTiming::ON_CLICK_START_PRINT_CMD,
                                                                         {AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS,
                                                                          AnalyticsDataEventType::ANALYTICS_OBJECT_PRINT_PARAMS}, plate->get_index(), device_ip);
+            AnalyticsEventPayload payload1;
+            payload1.type = AnalyticsDataEventType::ANALYTICS_GLOBAL_PRINT_PARAMS;
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload1, plate->get_index(), device_ip);
+            AnalyticsEventPayload payload2;
+            payload2.type = AnalyticsDataEventType::ANALYTICS_OBJECT_PRINT_PARAMS;
+            AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload2, plate->get_index(), device_ip);
         }
     }
+}
+
+void CxSentToPrinterDialog::fire_print_send_event(const nlohmann::json& frontend_data, const std::string& error_code)
+{
+    // Log input parameters for debugging
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": frontend_data - " << frontend_data.dump();
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": error_code - " << error_code << "  m_print_send_fired " << m_print_send_fired;
+    boost::log::core::get()->flush();
+    
+    if (m_print_send_fired) return;
+    m_print_send_fired = true;
+
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_PRINT_SEND;
+    
+    // Build event data from frontend JSON (empty string if field not provided)
+    nlohmann::json data;
+    data["printer"] = frontend_data.value("printer", "");      // Printer model from frontend
+    data["format"] = frontend_data.value("format", "");        // "GCode" or "3MF" from frontend
+    data["network"] = frontend_data.value("network", "");      // "Local" or "Global" from frontend
+    data["entry"] = frontend_data.value("entry", "");          // "SendSingle" or "SendMulti" from frontend
+    
+    // Priority: C++ error_code (real upload result) > frontend error_code (fallback)
+    if (!error_code.empty()) {
+        data["error_code"] = error_code;  // Use C++ error_code
+    } else {
+        data["error_code"] = frontend_data.value("error_code", "");  // Fallback to frontend
+    }
+    
+    // Convert "0" to "OK" for better readability (unified conversion)
+    if (data["error_code"] == "0") {
+        data["error_code"] = "OK";
+    }
+    
+    payload.data = data;
+
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Analytics payload - " << payload.data.dump();
+    boost::log::core::get()->flush();
+
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
+}
+
+void CxSentToPrinterDialog::fire_print_begin_event(const nlohmann::json& json_data)
+{
+    // Log the raw json_data to see its structure
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": RAW json_data - " << json_data.dump();
+    boost::log::core::get()->flush();
+    
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_PRINT_BEGIN;
+    
+    // Extract parameters from json_data["data"]
+    nlohmann::json data;
+    
+    // Get the "data" field first (where actual parameters are located)
+    nlohmann::json data_field;
+    if (json_data.contains("data") && !json_data["data"].is_null()) {
+        if (json_data["data"].is_string()) {
+            // If data is a string, parse it
+            try {
+                data_field = nlohmann::json::parse(json_data["data"].get<std::string>());
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Failed to parse data string";
+            }
+        } else {
+            // If data is already an object
+            data_field = json_data["data"];
+        }
+    }
+    
+    // Build event data from frontend JSON (empty string if field not provided)
+    data["printer"] = data_field.value("printer", "");           // Printer model from frontend
+    data["calibration"] = data_field.value("calibration", "");   // "0" or "1" from frontend
+    data["time_lapse"] = data_field.value("time_lapse", "");     // "0" or "1" from frontend
+    data["format"] = data_field.value("format", "");             // "GCode" or "3MF" from frontend
+    data["network"] = data_field.value("network", "");           // "Local" or "Global" from frontend
+    data["filament_device"] = data_field.value("filament_device", ""); // From frontend
+    data["entry"] = data_field.value("entry", "");               // Entry point from frontend
+    data["error_code"] = data_field.value("error_code", "");     // Error code from frontend
+    
+    payload.data = data;
+
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Analytics payload - " << payload.data.dump();
+    boost::log::core::get()->flush();
+
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
 }
 
 std::string CxSentToPrinterDialog::get_plate_data_on_show()
@@ -1581,7 +1776,31 @@ void CxSentToPrinterDialog::update_send_page_content()
 
 void CxSentToPrinterDialog::run_script(std::string content)
 {
+    if (m_browser == nullptr || m_browser->IsBeingDeleted())
+        return;
+
     WebView::RunScript(m_browser, from_u8(content));
+}
+
+void CxSentToPrinterDialog::post_script(const wxString& script)
+{
+    CallAfter([this, script]() {
+        if (m_browser == nullptr || m_browser->IsBeingDeleted())
+            return;
+
+        if (!m_browser->IsBusy())
+            run_script(script.ToStdString());
+    });
+}
+
+void CxSentToPrinterDialog::post_close()
+{
+    CallAfter([this]() {
+        if (IsBeingDeleted())
+            return;
+
+        Close(false);
+    });
 }
 
 void CxSentToPrinterDialog::reload()
@@ -1754,7 +1973,6 @@ void CxSentToPrinterDialog::get_filament_length_info(std::vector<int> plate_extr
 
         std::vector<float> filaments  = gcode_process_result->filament_diameters;
         std::map<size_t, double> total_volumes = ps.total_volumes_per_extruder;
-        std::map<size_t, double> flush_volumes = ps.flush_per_filament;
         if (idx >= filaments.size()|| total_volumes.find(idx) == total_volumes.end()) 
         {
             continue;
@@ -1762,11 +1980,9 @@ void CxSentToPrinterDialog::get_filament_length_info(std::vector<int> plate_extr
 
         double diameter = filaments[idx];
         double totalVolume = total_volumes[idx];
-        double filamentVolume = flush_volumes[idx];
-        double allVolume = totalVolume + filamentVolume;
         double s = PI * sqr(0.5 * diameter);
 
-        double length = allVolume / s;
+        double length = totalVolume / s;
 
         json jsonObj;
         jsonObj["length"] = length;
@@ -1865,6 +2081,128 @@ void CxSentToPrinterDialog::get_temperature_info(std::vector<int> plate_extruder
     return ;
 }
 
+std::string CxSentToPrinterDialog::get_user_operation_state_file_path() const
+{
+    return (fs::path(data_dir()) / "cache" / "send_to_printer" / "user_operation_state.json").make_preferred().string();
+}
+
+bool CxSentToPrinterDialog::save_user_operation_state(const nlohmann::json& state_data)
+{
+    try {
+        const auto path = fs::path(get_user_operation_state_file_path());
+        const auto dir  = path.parent_path();
+        if (!dir.empty() && !fs::exists(dir))
+            fs::create_directories(dir);
+
+        boost::nowide::ofstream out(path.string(), std::ios::out | std::ios::trunc);
+        if (!out.is_open()) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to open file: " << path.string();
+            return false;
+        }
+
+        out << state_data.dump(-1, ' ', true);
+        return true;
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to save state, error=" << e.what();
+        return false;
+    }
+}
+
+nlohmann::json CxSentToPrinterDialog::load_user_operation_state() const
+{
+    nlohmann::json default_state = {
+        {"print_calibration", 1}
+    };
+
+    try {
+        const auto path = fs::path(get_user_operation_state_file_path());
+        if (!fs::exists(path))
+            return default_state;
+
+        boost::nowide::ifstream in(path.string());
+        if (!in.is_open()) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to open file: " << path.string();
+            return default_state;
+        }
+
+        std::stringstream buffer;
+        buffer << in.rdbuf();
+        if (buffer.str().empty())
+            return default_state;
+
+        auto parsed = nlohmann::json::parse(buffer.str(), nullptr, false);
+        if (parsed.is_discarded() || !parsed.is_object()) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": invalid state file: " << path.string();
+            return default_state;
+        }
+
+        int print_calibration = 0;
+        if (parsed.contains("print_calibration")) {
+            try {
+                if (parsed["print_calibration"].is_boolean())
+                    print_calibration = parsed["print_calibration"].get<bool>() ? 1 : 0;
+                else if (parsed["print_calibration"].is_number_integer())
+                    print_calibration = parsed["print_calibration"].get<int>();
+            } catch (...) {
+                print_calibration = 0;
+            }
+        }
+
+        parsed["print_calibration"] = (print_calibration == 1) ? 1 : 0;
+        return parsed;
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to load state, error=" << e.what();
+        return default_state;
+    }
+}
+
+void CxSentToPrinterDialog::handle_save_user_operation_state(const nlohmann::json& json_data)
+{
+    const nlohmann::json payload = json_data.contains("data") ? json_data["data"] : json_data;
+
+    int print_calibration = 0;
+    try {
+        if (payload.is_object() && payload.contains("print_calibration")) {
+            if (payload["print_calibration"].is_boolean())
+                print_calibration = payload["print_calibration"].get<bool>() ? 1 : 0;
+            else if (payload["print_calibration"].is_number_integer())
+                print_calibration = payload["print_calibration"].get<int>();
+        } else if (payload.is_number_integer()) {
+            print_calibration = payload.get<int>();
+        }
+    } catch (...) {
+        print_calibration = 0;
+    }
+
+    nlohmann::json state_data = load_user_operation_state();
+    if (!state_data.is_object())
+        state_data = nlohmann::json::object();
+    state_data["print_calibration"] = (print_calibration == 1) ? 1 : 0;
+
+    const bool ok = save_user_operation_state(state_data);
+
+    nlohmann::json commandJson;
+    commandJson["command"] = "save_user_operation_state";
+    commandJson["data"]    = {
+        {"success", ok},
+        {"print_calibration", state_data["print_calibration"]}
+    };
+
+    wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
+    run_script(strJS.ToStdString());
+}
+
+void CxSentToPrinterDialog::handle_request_user_operation_state(const nlohmann::json& json_data)
+{
+    (void)json_data;
+
+    nlohmann::json commandJson;
+    commandJson["command"] = "request_user_operation_state";
+    commandJson["data"]    = load_user_operation_state();
+
+    wxString strJS = wxString::Format("window.handleStudioCmd('%s');", RemotePrint::Utils::url_encode(commandJson.dump(-1, ' ', true)));
+    run_script(strJS.ToStdString());
+}
 bool CxSentToPrinterDialog::LoadFile(std::string jPath, std::string &sContent)
 {
     try {

@@ -1430,43 +1430,39 @@ void PartPlate::check_gcode_path_contain_in_bed()
 	BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(",paths_bounding_box {%1%, %2%}-{%3%, %4%}\n")
 		% m_gcode_paths_bounding_box.min.x() % m_gcode_paths_bounding_box.min.y() % m_gcode_paths_bounding_box.max.x() % m_gcode_paths_bounding_box.max.y();
 
-	//// if is cr30, gcode bounding box need calc inverse matrix, because it will effect collsion check between bed and toolpath
- //   if (wxGetApp().preset_bundle->machine_is_belt()) {
- //       Transform3d transform = Transform3d::Identity();
- //       transform             = m_plater->get_current_canvas3D()->get_preview_extra_transform();
+		//// if is cr30, gcode bounding box need calc inverse matrix, because it will effect collsion check between bed and toolpath
+	 //   if (wxGetApp().preset_bundle->machine_is_belt()) {
+	 //       Transform3d transform = Transform3d::Identity();
+	 //       transform             = m_plater->get_current_canvas3D()->get_preview_extra_transform();
 
- //       auto min  = transform * m_gcode_paths_bounding_box.min;
- //       auto max  = transform * m_gcode_paths_bounding_box.max;
- //       m_gcode_paths_bounding_box.reset();
- //       m_gcode_paths_bounding_box.max = max;
- //       m_gcode_paths_bounding_box.min = min;
- //   }
+	 //       auto min  = transform * m_gcode_paths_bounding_box.min;
+	 //       auto max  = transform * m_gcode_paths_bounding_box.max;
+	 //       m_gcode_paths_bounding_box.reset();
+	 //       m_gcode_paths_bounding_box.max = max;
+	 //       m_gcode_paths_bounding_box.min = min;
+	 //   }
 
 	// use convex_hull for toolpath outside check
-	contained_in_bed = bed_build_volume.all_paths_inside(*m_gcode_result, m_gcode_paths_bounding_box);
+    contained_in_bed = bed_build_volume.all_paths_inside(*m_gcode_result, m_gcode_paths_bounding_box);
 
-	if (contained_in_bed)
-	{
-		const std::vector<BoundingBoxf3>& exclude_bounding_box = get_exclude_areas();
-		if (exclude_bounding_box.size() > 0)
-		{
-			int index;
-			Slic3r::Polygon convex_hull_2d = Slic3r::Geometry::convex_hull(std::move(pts));
-			for (index = 0; index < exclude_bounding_box.size(); index++)
-			{
-				Slic3r::Polygon p = exclude_bounding_box[index].polygon(true);  // instance convex hull is scaled, so we need to scale here
-				if (intersection({ p }, { convex_hull_2d }).empty() == false)
-				{
-					contained_in_bed = false;
-					break;
-				}
-			}
-		}
-	}
+    if (contained_in_bed) {
+        const std::vector<BoundingBoxf3>& exclude_bounding_box = get_exclude_areas();
+        if (exclude_bounding_box.size() > 0) {
+            int             index;
+            Slic3r::Polygon convex_hull_2d = Slic3r::Geometry::convex_hull(std::move(pts));
+            for (index = 0; index < exclude_bounding_box.size(); index++) {
+                Slic3r::Polygon p = exclude_bounding_box[index].polygon(true); // instance convex hull is scaled, so we need to scale here
+                if (intersection({p}, {convex_hull_2d}).empty() == false) {
+                    contained_in_bed = false;
+                    break;
+                }
+            }
+        }
+    }
 
-	m_gcode_result->toolpath_outside = !contained_in_bed;
+    m_gcode_result->toolpath_outside = !contained_in_bed;
 
-	auto compute_end = std::chrono::high_resolution_clock::now();
+    auto compute_end = std::chrono::high_resolution_clock::now();
 
 	std::chrono::duration<double> elapsed = compute_end - compute_start;
 	auto duration = std::chrono::duration_cast<std::chrono::microseconds>(elapsed);
@@ -1491,12 +1487,15 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
 	int glb_support_extr = glb_config.opt_int("support_filament");
 	bool glb_support = glb_config.opt_bool("enable_support");
     glb_support |= glb_config.opt_int("raft_layers") > 0;
+    double max_model_height = 0.0;
 
 	for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
 		if (!contain_instance_totally(obj_idx, 0))
 			continue;
 
 		ModelObject* mo = m_model->objects[obj_idx];
+        BoundingBoxf3 bbox = mo->bounding_box_exact();
+        max_model_height = std::max(max_model_height, bbox.size().z());
 		for (ModelVolume* mv : mo->volumes) {
 			std::vector<int> volume_extruders = mv->get_extruders();
 			plate_extruders.insert(plate_extruders.end(), volume_extruders.begin(), volume_extruders.end());
@@ -1551,7 +1550,7 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
             nums_extruders = color_option->values.size();
 			if (m_model->plates_custom_gcodes.find(m_plate_index) != m_model->plates_custom_gcodes.end()) {
 				for (auto item : m_model->plates_custom_gcodes.at(m_plate_index).gcodes) {
-					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
+					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders && item.print_z <= max_model_height + 1e-6)
 						plate_extruders.push_back(item.extruder);
 				}
 			}
@@ -2892,7 +2891,7 @@ bool PartPlate::intersects(const BoundingBoxf3& bb) const
 }
 
 void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projection_matrix
-	, bool bottom, bool only_body, HeightLimitMode mode, int hover_id,int vender, bool show_logo)
+	, bool bottom, bool only_body, HeightLimitMode mode, int hover_id,int vender, bool show_logo, bool show_grid)
 {
     glsafe(::glEnable(GL_DEPTH_TEST));
     GLShaderProgram *shader = wxGetApp().get_shader("flat");
@@ -2908,7 +2907,8 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
             //render_background(only_body);
             render_exclude_area();
         }
-        render_grid(bottom);
+		if (show_grid)
+			render_grid(bottom);
 
         render_height_limit(mode);
 
@@ -4940,7 +4940,7 @@ void PartPlateList::on_change_color_mode(bool is_dark)
 /*rendering related functions*/
 //render
 void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_current, bool only_body, int hover_id,
-	bool show_logo)
+	bool show_logo, bool show_grid)
 {
 	const std::lock_guard<std::mutex> local_lock(m_plates_mutex);
 	std::vector<PartPlate*>::iterator it = m_plate_list.begin();
@@ -4961,15 +4961,15 @@ void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& pr
 		if (current_index == m_current_plate) {
 			PartPlate::HeightLimitMode height_mode = (only_current)?PartPlate::HEIGHT_LIMIT_NONE:m_height_limit_mode;
 			if (plate_hover_index == current_index)
-                (*it)->render(view_matrix, projection_matrix, bottom, only_body, height_mode, plate_hover_action,m_verder, show_logo);
+                (*it)->render(view_matrix, projection_matrix, bottom, only_body, height_mode, plate_hover_action,m_verder, show_logo, show_grid);
 			else
-                (*it)->render(view_matrix, projection_matrix, bottom, only_body, height_mode, -1,m_verder, show_logo);
+                (*it)->render(view_matrix, projection_matrix, bottom, only_body, height_mode, -1,m_verder, show_logo, show_grid);
 		}
 		else {
 			if (plate_hover_index == current_index)
-				(*it)->render(view_matrix, projection_matrix, bottom, only_body, PartPlate::HEIGHT_LIMIT_NONE, plate_hover_action,m_verder, show_logo);
+				(*it)->render(view_matrix, projection_matrix, bottom, only_body, PartPlate::HEIGHT_LIMIT_NONE, plate_hover_action,m_verder, show_logo, show_grid);
 			else
-                (*it)->render(view_matrix, projection_matrix, bottom, only_body, PartPlate::HEIGHT_LIMIT_NONE, -1, m_verder, show_logo);
+                (*it)->render(view_matrix, projection_matrix, bottom, only_body, PartPlate::HEIGHT_LIMIT_NONE, -1, m_verder, show_logo, show_grid);
 		}
 	}
 }

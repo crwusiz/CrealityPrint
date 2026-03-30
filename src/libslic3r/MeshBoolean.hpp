@@ -17,13 +17,9 @@ TriangleMesh eigen_to_triangle_mesh(const EigenMesh &emesh);
 EigenMesh triangle_mesh_to_eigen(const TriangleMesh &mesh);
 
 void minus(EigenMesh &A, const EigenMesh &B);
-void plus(EigenMesh& A, const EigenMesh& B);
-void intersect(EigenMesh& A, const EigenMesh& B);
-void self_union(EigenMesh& A);
+void self_union(EigenMesh &A);
     
 void minus(TriangleMesh& A, const TriangleMesh& B);
-void plus(TriangleMesh& A, const TriangleMesh& B);
-void intersect(TriangleMesh& A, const TriangleMesh& B);
 void self_union(TriangleMesh& mesh);
 
 namespace cgal {
@@ -88,16 +84,19 @@ bool empty(const McutMesh &mesh);
 McutMeshPtr  triangle_mesh_to_mcut(const indexed_triangle_set &M);
 TriangleMesh mcut_to_triangle_mesh(const McutMesh &mcutmesh);
 
+using BooleanCancelCB = std::function<bool()>;
+using BooleanProgressCB = std::function<void(float)>;
+using BooleanFailedCB = std::function<void()>;
 // do boolean and save result to srcMesh
 // return true if sucessful
-bool do_boolean_single(McutMesh& srcMesh, const McutMesh& cutMesh, const std::string& boolean_opts);
+bool do_boolean_single(McutMesh& srcMesh, const McutMesh& cutMesh, const std::string& boolean_opts, const BooleanCancelCB& cancel_cb = nullptr, const BooleanProgressCB& progress_cb = nullptr);
 // do boolean of mesh with multiple volumes and save result to srcMesh
 // Both srcMesh and cutMesh may have multiple volumes.
-void do_boolean(McutMesh &srcMesh, const McutMesh &cutMesh, const std::string &boolean_opts);
+bool do_boolean(McutMesh &srcMesh, const McutMesh &cutMesh, const std::string &boolean_opts, const BooleanCancelCB& cancel_cb = nullptr, const BooleanProgressCB& progress_cb = nullptr, const BooleanFailedCB& failed_cb = nullptr);
 
 
 // do boolean and convert result to TriangleMesh
-void make_boolean(const TriangleMesh &src_mesh, const TriangleMesh &cut_mesh, std::vector<TriangleMesh> &dst_mesh, const std::string &boolean_opts);
+void make_boolean(const TriangleMesh &src_mesh, const TriangleMesh &cut_mesh, std::vector<TriangleMesh> &dst_mesh, const std::string &boolean_opts, const BooleanCancelCB& calcen_cb = nullptr, const BooleanProgressCB& progress_cb = nullptr, const BooleanFailedCB& failed_cb = nullptr);
 } // namespace mcut
 
 } // namespace MeshBoolean

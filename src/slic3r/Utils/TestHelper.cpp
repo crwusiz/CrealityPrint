@@ -809,7 +809,6 @@ static int new_project(nlohmann::json arg, std::string& payload, std::string& er
     });
     return -1;
 }
-
 static int trigger_slice(nlohmann::json arg, std::string& payload, std::string& error)
 {
     call_when_target_eventloop_exec("trigger_slice", arg, [](nlohmann::json arg) {
@@ -820,12 +819,42 @@ static int trigger_slice(nlohmann::json arg, std::string& payload, std::string& 
             output["ret"] = 0;
             Test::Visitor().call_cmd("cmd_respone", output.dump(-1, ' ', true));
         });
-        // Slice complete
-        call_when_event_spread("slice_compete", arg, [](nlohmann::json arg) {
-            // if (!arg["param"].get<std::string>().empty())
-            status.set_cmd_status("trigger_slice", Status::Finished);
-        });
         wxGetApp().mainframe->slice_plate(MainFrame::eSliceAll); // Default: slice all plates
+    });
+    return -1;
+}
+
+static int get_slicing_progress(nlohmann::json arg, std::string& payload, std::string& error)
+{
+    call_when_target_eventloop_exec("get_slicing_progress", arg, [](nlohmann::json) {
+        nlohmann::json ret;
+        auto*          nm = wxGetApp().notification_manager();
+        if (!nm) {
+            ret["ret"]   = 1;
+            ret["error"] = "no notification manager";
+        } else {
+            auto*  plater              = wxGetApp().plater();
+            bool   all_plate_finished  = true;
+            size_t slicable_plate_cnt  = 0;
+            auto   plate_count         = plater->get_partplate_list().get_plate_count();
+            for (int i = 0; i < plate_count; ++i) {
+                auto* plate = plater->get_partplate_list().get_plate(i);
+                if (plate == nullptr || plate->empty() || !plate->has_printable_instances())
+                    continue;
+                ++slicable_plate_cnt;
+                if (!plate->is_slice_result_ready_for_print()) {
+                    all_plate_finished = false;
+                    break;
+                }
+            }
+            if (slicable_plate_cnt == 0)
+                all_plate_finished = false;
+
+            ret["ret"]                = 0;
+            ret["progress"]           = nm->get_slicing_progress_snapshot();
+            ret["all_plate_finished"] = all_plate_finished;
+        }
+        Test::Visitor().call_cmd("cmd_respone", ret.dump(-1, ' ', true));
     });
     return -1;
 }
@@ -1145,6 +1174,7 @@ void TestHelper::register_cmd()
     m_cmd2func["get_widget_geometry"]  = get_widget_geometry;
     m_cmd2func["new_project"]          = new_project;
     m_cmd2func["trigger_slice"]        = trigger_slice;
+    m_cmd2func["get_slicing_progress"] = get_slicing_progress;
     m_cmd2func["select_printer"]       = select_printer;
     m_cmd2func["binding_phy_printer"]  = binding_phy_printer;
     m_cmd2func["trigger_send_to_print"] = trigger_send_to_print;

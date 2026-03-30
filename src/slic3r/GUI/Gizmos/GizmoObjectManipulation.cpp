@@ -70,9 +70,9 @@ void GizmoObjectManipulation::on_move_operation_performed()
     if (m_move_analytics_reported)
         return;
 
-    AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
-        AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-        { AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_MOVE });
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_MOVE;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
 
     m_move_analytics_reported = true;
 }
@@ -87,9 +87,9 @@ void GizmoObjectManipulation::on_rotate_operation_performed()
     if (m_rotate_analytics_reported)
         return;
 
-    AnalyticsDataUploadManager::getInstance().triggerUploadTasks(
-        AnalyticsUploadTiming::ON_SOFTWARE_LAUNCH,
-        { AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ROTATE });
+    AnalyticsEventPayload payload;
+    payload.type = AnalyticsDataEventType::ANALYTICS_MODEL_ACTION_ROTATE;
+    AnalyticsDataUploadManager::getInstance().triggerUploadTasksWithPayload(payload);
 
     m_rotate_analytics_reported = true;
 }

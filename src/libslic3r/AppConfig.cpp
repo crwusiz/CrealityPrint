@@ -711,7 +711,10 @@ void AppConfig::set_defaults()
 
 	// Preview page LOD was enabled by default during beta; default may change in 7.0
 	if (get("enable_preview_lod").empty())
-        set_bool("enable_preview_lod", true);
+        set_bool("enable_preview_lod", false);
+
+	if (get("enable_preview_mem_opt").empty())
+        set_bool("enable_preview_mem_opt", false);	
 
     erase("app", "main_frame_maximized");
     erase("app", "main_frame_pos");

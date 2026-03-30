@@ -127,6 +127,7 @@ public:
 
 	void Popup(wxPoint position = wxDefaultPosition);
 	void Dismiss();
+    void msw_rescale();
     void sys_color_changed();
     void setFilamentItem(FilamentItem* pFilamentItem) { m_pFilamentItem = pFilamentItem; }
 	void on_left_down(wxMouseEvent &evt);

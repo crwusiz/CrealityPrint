@@ -254,6 +254,7 @@ bool Check3mfVendor::get3mfConfig(const DynamicPrintConfig& config_loaded, Dynam
                 setDiff.insert(vtDiff.begin(), vtDiff.end());
             }
         }
+        bool has_enable_support_diff = false;
         for (auto iter = processPreset->config.cbegin(); iter != processPreset->config.cend(); ++iter) {
             auto opt = config_loaded.optptr(iter->first);
             if (opt != nullptr) {
@@ -261,7 +262,17 @@ bool Check3mfVendor::get3mfConfig(const DynamicPrintConfig& config_loaded, Dynam
                     if (setDiff.find(iter->first) != setDiff.end()) {
                         new_config_loaded.optptr(iter->first, true)->set(opt);
                         m_process_config.optptr(iter->first, true)->set(opt);
+                        if (iter->first == "enable_support") {
+                            has_enable_support_diff = true;
+                            auto support_type_opt   = config_loaded.optptr("support_type");
+                            if (support_type_opt != nullptr) {
+                                new_config_loaded.optptr("support_type", true)->set(support_type_opt);
+                                m_process_config.optptr("support_type", true)->set(support_type_opt);
+                            }
+                        }
                     } else {
+                        if (has_enable_support_diff && iter->first == "support_type")
+                            continue;
                         new_config_loaded.optptr(iter->first, true)->set(iter->second.get());
                         m_process_config.optptr(iter->first, true)->set(iter->second.get());
                     }

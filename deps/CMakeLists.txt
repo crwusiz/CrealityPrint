@@ -295,6 +295,7 @@ include(CGAL/CGAL.cmake)
 
 include(NLopt/NLopt.cmake)
 include(Assimp/Assimp.cmake)
+include(libnoise/libnoise.cmake)
 
 
 # I *think* 1.1 is used for *just* md5 hashing?
@@ -394,6 +395,7 @@ if(ENABLE_BREAKPAD)
         dep_FFmpeg
         dep_MQTTC
         dep_MQTT
+        dep_libnoise
         )
 else()
     message(STATUS "Breakpad is disabled...")

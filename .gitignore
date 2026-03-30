@@ -51,6 +51,8 @@ resources/i18n/*/*.*
 __pycache__
 /customized
 /cmmid
+/customized
+/_tmp
 /docs/cmake_structure.md
 /docs/filament_parameters_validation.md
 /docs/gcode_output_post_process_notes_summary.md
@@ -62,3 +64,4 @@ __pycache__
 /docs/printer_settings_ui_parameters.md
 docs
 flatbuild
+/.edge-zentao-profile

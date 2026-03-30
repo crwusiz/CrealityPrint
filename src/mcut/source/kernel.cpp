@@ -3403,7 +3403,16 @@ void dispatch(output_t& output, const input_t& input)
         const fd_t cm_face = cutpath_edge_creation_info_iter->first.second;
         MCUT_ASSERT(!ps_is_cutmesh_face(sm_face, sm_face_count));
         const std::vector<vd_t>& intersection_test_ivtx_list = cutpath_edge_creation_info_iter->second;
-        MCUT_ASSERT((int)intersection_test_ivtx_list.size() >= 2); // edge-case scenario: an edge intersects with another edge exactly
+      //  MCUT_ASSERT((int)intersection_test_ivtx_list.size() >= 2); // edge-case scenario: an edge intersects with another edge exactly
+
+        if (intersection_test_ivtx_list.size() < 2) {
+           /* context_uptr->dbg_cb(MC_DEBUG_SOURCE_KERNEL, MC_DEBUG_TYPE_OTHER, 0, MC_DEBUG_SEVERITY_NOTIFICATION,
+                                 "cutpath edge has less than 2 intersection vertices (face sm=" + std::to_string(sm_face) +
+                                     ", cm=" + std::to_string(cm_face) + ")");*/
+            continue; // Ìø¹ýÕâÌõ cutpath edge
+        }
+
+
         const uint32_t new_ivertices_count = (uint32_t)intersection_test_ivtx_list.size();
 
         if (new_ivertices_count == 2) { // one edge

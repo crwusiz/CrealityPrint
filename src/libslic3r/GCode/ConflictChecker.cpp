@@ -281,6 +281,79 @@ ConflictResultOpt ConflictChecker::find_inter_of_lines_in_diff_objs(PrintObjectP
         return {};
 }
 
+ToolpathOutsideResultOpt ConflictChecker::find_toolpath_outside(const PrintObjectPtrs&                     objs,
+                                                                const Polygons&                            bed_poly)
+{
+    if (bed_poly.empty() || objs.empty())
+        return std::nullopt;
+
+    std::mutex                           result_mutex;
+    std::optional<ToolpathOutsideResult> result = std::nullopt;
+
+    auto is_point_inside_bed = [&](const Point& p) {
+        for (const Polygon& poly : bed_poly) {
+            if (poly.contains(p)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, objs.size()), [&](const tbb::blocked_range<size_t>& range) {
+        {
+            std::lock_guard<std::mutex> lock(result_mutex);
+            if (result.has_value())
+                return;
+        }
+
+        for (size_t i = range.begin(); i < range.end(); ++i) {
+            {
+                std::lock_guard<std::mutex> lock(result_mutex);
+                if (result.has_value())
+                    return;
+            }
+
+            PrintObject* obj = objs[i];
+            ObjectExtrusions obj_extrusions = getAllLayersExtrusionPathsFromObject(obj);
+
+            for (const PrintInstance& instance : obj->instances()) {
+                Point shift = instance.shift; 
+
+                auto check_layers = [&](const ExtrusionLayers& layers) -> bool {
+                    for (const auto& layer : layers) {
+                        for (const auto& path : layer.paths) {
+                            for (const Point& pt_local : path.polyline.points) {
+                                Point pt_world = pt_local + shift;
+
+                                if (!is_point_inside_bed(pt_world)) {
+                                    return true; 
+                                }
+                            }
+                        }
+                    }
+                    return false;
+                };
+
+                bool is_outside = check_layers(obj_extrusions.perimeters) || check_layers(obj_extrusions.support);
+
+                if (is_outside) {
+                    std::lock_guard<std::mutex> lock(result_mutex);
+                    if (!result.has_value()) {
+                        const void* ptr1 = static_cast<const void*>(obj);
+                        result           = std::make_optional<ToolpathOutsideResult>(obj->model_object()->name, ptr1);
+                    }
+                    return; 
+                }
+            }
+        }
+    });
+
+    return result;
+}
+
+
+
+
 ConflictComputeOpt ConflictChecker::line_intersect(const LineWithID &l1, const LineWithID &l2)
 {
     constexpr double SUPPORT_THRESHOLD = 100;  // this large almost disables conflict check of supports
